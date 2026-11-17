@@ -7,14 +7,15 @@ mod services;
 mod settings;
 mod tools;
 
-use crate::{cmd, fleet::Fleet};
+use crate::{cmd, edit::Add, fleet::Fleet};
 use anyhow::{Result, bail};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// Declared in report order.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Kind {
     Package,
     Tool,
@@ -29,7 +30,6 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// Report order.
     const ALL: [Kind; 10] = [
         Kind::Package,
         Kind::Tool,
@@ -59,7 +59,7 @@ impl Kind {
         }
     }
 
-    fn title(self) -> &'static str {
+    pub fn title(self) -> &'static str {
         match self {
             Kind::Package => "Packages",
             Kind::Tool => "Tools outside pacman",
@@ -85,6 +85,8 @@ pub struct Item {
     pub subject: String,
     pub detail: String,
     pub secret: bool,
+    /// None when the fleet has no place for it yet.
+    pub add: Option<Add>,
 }
 
 impl Item {
@@ -94,13 +96,30 @@ impl Item {
             subject: subject.into(),
             detail: detail.into(),
             secret: false,
+            add: None,
         }
+    }
+
+    fn with(mut self, add: Add) -> Self {
+        self.add = Some(add);
+        self
     }
 }
 
-pub fn run() -> Result<()> {
+/// The line in ignore.txt that matches exactly this item.
+pub fn ignore_line(item: &Item) -> String {
+    format!("{} {}", item.kind.name(), globset::escape(&item.subject))
+}
+
+pub struct Report {
+    pub fleet: Fleet,
+    pub shown: Vec<Item>,
+    pub ignored: usize,
+}
+
+pub fn collect() -> Result<Report> {
     if !Path::new("/usr/bin/pacman").exists() {
-        bail!("mothership scan only knows Arch machines for now");
+        bail!("mothership only knows Arch machines for now");
     }
     let fleet = Fleet::load()?;
     let managed: Vec<PathBuf> = cmd::stdout(
@@ -126,11 +145,25 @@ pub fn run() -> Result<()> {
     items.extend(account::scan(&fleet)?);
     items.extend(settings::scan(&managed)?);
 
-    let (ignored, shown): (Vec<Item>, Vec<Item>) = items
+    let (ignored, mut shown): (Vec<Item>, Vec<Item>) = items
         .into_iter()
         .partition(|item| fleet.ignore.matches(item));
+    shown.sort_by_key(|item| item.kind);
+    Ok(Report {
+        fleet,
+        shown,
+        ignored: ignored.len(),
+    })
+}
+
+pub fn run() -> Result<()> {
+    let report = collect()?;
     for kind in Kind::ALL {
-        let group: Vec<&Item> = shown.iter().filter(|item| item.kind == kind).collect();
+        let group: Vec<&Item> = report
+            .shown
+            .iter()
+            .filter(|item| item.kind == kind)
+            .collect();
         if group.is_empty() {
             continue;
         }
@@ -149,9 +182,9 @@ pub fn run() -> Result<()> {
     }
     println!(
         "{} differences, {} ignored by {}",
-        shown.len(),
-        ignored.len(),
-        crate::fleet::tilde(&fleet.type_dir.join("ignore.txt"))
+        report.shown.len(),
+        report.ignored,
+        crate::fleet::tilde(&report.fleet.ignore_path())
     );
     Ok(())
 }

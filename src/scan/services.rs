@@ -1,12 +1,17 @@
 use super::{Item, Kind};
-use crate::{cmd, fleet::Fleet};
+use crate::{
+    cmd,
+    edit::{Add, Key},
+    fleet::Fleet,
+};
 use anyhow::Result;
 use std::path::Path;
 
 pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
-    let mut items = check(Kind::Service, &[], &fleet.system.services)?;
+    let mut items = check(Kind::Service, Key::Services, &[], &fleet.system.services)?;
     items.extend(check(
         Kind::UserService,
+        Key::UserServices,
         &["--user"],
         &fleet.system.user_services,
     )?);
@@ -14,7 +19,7 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
 }
 
 /// Units enabled by hand. Units a package enables by default (its preset) don't count.
-fn check(kind: Kind, scope: &[&str], declared: &[String]) -> Result<Vec<Item>> {
+fn check(kind: Kind, key: Key, scope: &[&str], declared: &[String]) -> Result<Vec<Item>> {
     let mut args = scope.to_vec();
     args.extend(["list-unit-files", "--state=enabled", "--no-legend"]);
     let listing = cmd::stdout("systemctl", &args)?;
@@ -28,13 +33,23 @@ fn check(kind: Kind, scope: &[&str], declared: &[String]) -> Result<Vec<Item>> {
     let mut items: Vec<Item> = enabled
         .iter()
         .filter(|(unit, preset)| *preset != "enabled" && !declared.iter().any(|d| d == unit))
-        .map(|(unit, _)| Item::new(kind, *unit, "enabled, not declared"))
+        .map(|(unit, _)| {
+            Item::new(kind, *unit, "enabled, not declared").with(Add::Declare {
+                key,
+                name: unit.to_string(),
+            })
+        })
         .collect();
     items.extend(
         declared
             .iter()
             .filter(|unit| !enabled.iter().any(|(e, _)| e == unit))
-            .map(|unit| Item::new(kind, unit, "declared, not enabled")),
+            .map(|unit| {
+                Item::new(kind, unit, "declared, not enabled").with(Add::Undeclare {
+                    key,
+                    name: unit.clone(),
+                })
+            }),
     );
     Ok(items)
 }

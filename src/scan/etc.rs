@@ -1,5 +1,5 @@
 use super::{Item, Kind, looks_secret, services};
-use crate::{cmd, fleet::Fleet, walk};
+use crate::{cmd, edit::Add, fleet::Fleet, walk};
 use anyhow::{Context, Result};
 use std::{
     collections::{BTreeSet, HashSet},
@@ -31,18 +31,25 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
     let mut items = Vec::new();
     for rel in &declared {
         let path = Path::new("/etc").join(rel);
-        if let Some(detail) = compare(&fleet_etc.join(rel), &path)? {
-            items.push(Item::new(Kind::Etc, path.display().to_string(), detail));
-        }
+        let item = |detail| Item::new(Kind::Etc, path.display().to_string(), detail);
+        items.extend(match compare(&fleet_etc.join(rel), &path)? {
+            Compare::Same => None,
+            Compare::Differs => {
+                Some(item("differs from the fleet").with(Add::CopyEtc(path.clone())))
+            }
+            Compare::Missing => {
+                Some(item("missing, the fleet has it").with(Add::RemoveEtc(path.clone())))
+            }
+            Compare::Unreadable => Some(item("unreadable without root")),
+        });
     }
 
     for path in modified_backups()? {
         if !declared_paths.contains(Path::new(&path)) && !ACCOUNT_FILES.contains(&path.as_str()) {
-            items.push(Item::new(
-                Kind::Etc,
-                path,
-                "changed from the package's version",
-            ));
+            items.push(
+                Item::new(Kind::Etc, &path, "changed from the package's version")
+                    .with(Add::CopyEtc(PathBuf::from(&path))),
+            );
         }
     }
 
@@ -65,7 +72,8 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
     )?;
     items.extend(walk.unknown.iter().map(|path| {
         looks_secret(
-            Item::new(Kind::Etc, path.display().to_string(), "from no package"),
+            Item::new(Kind::Etc, path.display().to_string(), "from no package")
+                .with(Add::CopyEtc(path.clone())),
             path,
         )
     }));
@@ -79,17 +87,24 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
     Ok(items)
 }
 
-fn compare(source: &Path, path: &Path) -> Result<Option<&'static str>> {
+enum Compare {
+    Same,
+    Differs,
+    Missing,
+    Unreadable,
+}
+
+fn compare(source: &Path, path: &Path) -> Result<Compare> {
     let same = if fs::symlink_metadata(source)?.is_symlink() {
         fs::read_link(path).map(|target| target == fs::read_link(source).unwrap_or_default())
     } else {
         fs::read(path).map(|bytes| bytes == fs::read(source).unwrap_or_default())
     };
     Ok(match same {
-        Ok(true) => None,
-        Ok(false) => Some("differs from the fleet"),
-        Err(e) if e.kind() == ErrorKind::NotFound => Some("missing, the fleet has it"),
-        Err(e) if e.kind() == ErrorKind::PermissionDenied => Some("unreadable without root"),
+        Ok(true) => Compare::Same,
+        Ok(false) => Compare::Differs,
+        Err(e) if e.kind() == ErrorKind::NotFound => Compare::Missing,
+        Err(e) if e.kind() == ErrorKind::PermissionDenied => Compare::Unreadable,
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     })
 }

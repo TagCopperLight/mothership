@@ -1,5 +1,6 @@
 use super::{Item, Kind, looks_secret, services};
 use crate::{
+    edit::Add,
     fleet::{self, Fleet},
     walk,
 };
@@ -52,7 +53,8 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
         .iter()
         .map(|path| {
             looks_secret(
-                Item::new(Kind::Home, fleet::tilde(path), "not in the fleet"),
+                Item::new(Kind::Home, fleet::tilde(path), "not in the fleet")
+                    .with(Add::Track(path.clone())),
                 path,
             )
         })

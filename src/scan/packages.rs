@@ -1,5 +1,5 @@
 use super::{Item, Kind};
-use crate::{cmd, fleet::Fleet};
+use crate::{cmd, edit::Add, fleet::Fleet};
 use anyhow::Result;
 use std::collections::BTreeSet;
 
@@ -17,13 +17,15 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
     let installed = pacman(&["-Qq"])?;
     let mut items: Vec<Item> = explicit
         .difference(&listed)
-        .map(|name| Item::new(Kind::Package, name, "installed, not listed"))
+        .map(|name| {
+            Item::new(Kind::Package, name, "installed, not listed")
+                .with(Add::ListPackage(name.clone()))
+        })
         .collect();
-    items.extend(
-        listed
-            .difference(&installed)
-            .map(|name| Item::new(Kind::Package, name, "listed, not installed")),
-    );
+    items.extend(listed.difference(&installed).map(|name| {
+        Item::new(Kind::Package, name, "listed, not installed")
+            .with(Add::UnlistPackage(name.clone()))
+    }));
     Ok(items)
 }
 

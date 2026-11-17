@@ -1,6 +1,7 @@
 use super::{Item, Kind};
 use crate::{
     cmd,
+    edit::{Add, Key},
     fleet::{self, Fleet, Tool},
 };
 use anyhow::Result;
@@ -21,9 +22,9 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
         .map(str::to_owned)
         .collect();
 
-    let mut items = compare("cargo", &tools.cargo, &cargo);
-    items.extend(compare("uv", &tools.uv, &uv));
-    items.extend(compare("bun", &tools.bun, &bun_globals()?));
+    let mut items = compare(Key::Cargo, &tools.cargo, &cargo);
+    items.extend(compare(Key::Uv, &tools.uv, &uv));
+    items.extend(compare(Key::Bun, &tools.bun, &bun_globals()?));
     items.extend(
         fleet
             .system
@@ -36,12 +37,13 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
                     installer.name.as_str(),
                     "declared, not installed",
                 )
+                .with(Add::UndeclareInstaller(installer.name.clone()))
             }),
     );
     Ok(items)
 }
 
-fn compare(manager: &str, declared: &[Tool], installed: &BTreeSet<String>) -> Vec<Item> {
+fn compare(key: Key, declared: &[Tool], installed: &BTreeSet<String>) -> Vec<Item> {
     let declared: BTreeSet<&str> = declared.iter().map(Tool::name).collect();
     let mut items: Vec<Item> = installed
         .iter()
@@ -49,9 +51,13 @@ fn compare(manager: &str, declared: &[Tool], installed: &BTreeSet<String>) -> Ve
         .map(|name| {
             Item::new(
                 Kind::Tool,
-                format!("{manager} {name}"),
+                format!("{} {name}", key.name()),
                 "installed, not declared",
             )
+            .with(Add::Declare {
+                key,
+                name: name.clone(),
+            })
         })
         .collect();
     items.extend(
@@ -61,9 +67,13 @@ fn compare(manager: &str, declared: &[Tool], installed: &BTreeSet<String>) -> Ve
             .map(|name| {
                 Item::new(
                     Kind::Tool,
-                    format!("{manager} {name}"),
+                    format!("{} {name}", key.name()),
                     "declared, not installed",
                 )
+                .with(Add::Undeclare {
+                    key,
+                    name: name.to_string(),
+                })
             }),
     );
     items

@@ -1,5 +1,9 @@
 use super::{Item, Kind};
-use crate::{cmd, fleet::Fleet};
+use crate::{
+    cmd,
+    edit::{Add, Key},
+    fleet::Fleet,
+};
 use anyhow::{Context, Result};
 use std::env;
 
@@ -10,11 +14,14 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
         let entry = cmd::stdout("getent", &["passwd", &user])?;
         let actual = entry.trim().rsplit(':').next().unwrap_or_default();
         if actual != shell {
-            items.push(Item::new(
-                Kind::Account,
-                format!("shell {actual}"),
-                format!("the fleet says {shell}"),
-            ));
+            items.push(
+                Item::new(
+                    Kind::Account,
+                    format!("shell {actual}"),
+                    format!("the fleet says {shell}"),
+                )
+                .with(Add::Shell(actual.to_owned())),
+            );
         }
     }
     let groups = cmd::stdout("id", &["-nG", &user])?;
@@ -24,7 +31,14 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
         actual
             .iter()
             .filter(|g| **g != user && !declared.iter().any(|d| d == *g))
-            .map(|g| Item::new(Kind::Account, format!("group {g}"), "member, not declared")),
+            .map(|g| {
+                Item::new(Kind::Account, format!("group {g}"), "member, not declared").with(
+                    Add::Declare {
+                        key: Key::Groups,
+                        name: g.to_string(),
+                    },
+                )
+            }),
     );
     items.extend(
         declared
@@ -36,6 +50,10 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
                     format!("group {g}"),
                     "declared, not a member",
                 )
+                .with(Add::Undeclare {
+                    key: Key::Groups,
+                    name: g.clone(),
+                })
             }),
     );
     Ok(items)

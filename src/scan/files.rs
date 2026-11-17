@@ -1,5 +1,5 @@
 use super::{Item, Kind};
-use crate::cmd;
+use crate::{cmd, edit::Add, fleet};
 use anyhow::Result;
 
 /// Files chezmoi manages that differ from the repo.
@@ -17,7 +17,11 @@ pub fn scan() -> Result<Vec<Item>> {
         } else {
             "changed in the repo, not applied"
         };
-        items.push(Item::new(Kind::File, format!("~/{}", &line[3..]), detail));
+        let path = &line[3..];
+        items.push(
+            Item::new(Kind::File, format!("~/{path}"), detail)
+                .with(Add::Update(fleet::home().join(path))),
+        );
     }
     Ok(items)
 }

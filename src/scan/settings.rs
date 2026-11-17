@@ -1,5 +1,5 @@
 use super::{Item, Kind};
-use crate::cmd;
+use crate::{cmd, edit::Add};
 use anyhow::Result;
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
@@ -39,14 +39,17 @@ fn prefs(user_js: &PathBuf) -> Result<Vec<Item>> {
     let actual = parse(&fs::read_to_string(user_js.with_file_name("prefs.js"))?);
     Ok(actual
         .iter()
-        .filter_map(|(key, value)| match wanted.get(key) {
-            None => Some(Item::new(Kind::Pref, key, "set in the app, not in user.js")),
-            Some(w) if w != value => Some(Item::new(
-                Kind::Pref,
-                key,
-                "changed in the app, user.js resets it",
-            )),
-            Some(_) => None,
+        .filter_map(|(key, value)| {
+            let detail = match wanted.get(key) {
+                None => "set in the app, not in user.js",
+                Some(w) if w != value => "changed in the app, user.js resets it",
+                Some(_) => return None,
+            };
+            Some(Item::new(Kind::Pref, key, detail).with(Add::Pref {
+                user_js: user_js.clone(),
+                key: key.clone(),
+                value: value.clone(),
+            }))
         })
         .collect())
 }

@@ -57,6 +57,8 @@ impl Tool {
     }
 }
 
+const IGNORE: &str = "ignore.txt";
+
 impl Fleet {
     /// The machine's device type is the chezmoi profile it was set up with.
     pub fn load() -> Result<Self> {
@@ -73,7 +75,7 @@ impl Fleet {
                 .with_context(|| format!("reading {}", system_path.display()))?,
         )
         .with_context(|| format!("parsing {}", system_path.display()))?;
-        let ignore = Ignore::load(&type_dir.join("ignore.txt"))?;
+        let ignore = Ignore::load(&type_dir.join(IGNORE))?;
         Ok(Fleet {
             dir,
             type_dir,
@@ -82,9 +84,17 @@ impl Fleet {
         })
     }
 
+    pub fn ignore_path(&self) -> PathBuf {
+        self.type_dir.join(IGNORE)
+    }
+
+    pub fn package_path(&self, list: &str) -> PathBuf {
+        self.dir.join("packages").join(format!("{list}.txt"))
+    }
+
     /// Package names in `packages/<name>.txt`.
     pub fn package_list(&self, name: &str) -> Result<Vec<String>> {
-        let path = self.dir.join("packages").join(format!("{name}.txt"));
+        let path = self.package_path(name);
         let text =
             fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
         Ok(text

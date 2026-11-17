@@ -48,6 +48,16 @@ cargo run -- scan
 
 It runs as your user. Parts of `/etc` that only root can read show up as "unreadable without root".
 
+## `mothership review`
+
+`cargo run -- review` goes through the scan's items one at a time and asks what to do with each:
+
+- **add**: change the fleet checkout so it matches the machine. It lists a package, declares a service or group, runs `chezmoi add` on a new config file, copies an `/etc` file into `types/<type>/etc/`, or writes a browser pref into `user.js`. When the fleet has something the machine lacks, add removes it from the fleet.
+- **ignore**: append the item to `ignore.txt`, so no scan reports it again.
+- **later**: hide the item for a week. It then comes back with how long it has waited. This list lives in `~/.local/state/mothership/later.json`, on the machine only.
+
+Review never commits: check `git diff` in the fleet checkout and commit yourself. It won't add an item marked `[secret]`, an `/etc` file only root can read, or a dconf section, which the fleet has no place for yet. Chezmoi templates have to be edited by hand.
+
 ## The fleet repo
 
 mothership reads the fleet repo from chezmoi's source directory (`chezmoi source-path`). The machine's device type is the `profile` value in its chezmoi data, which `.chezmoi.toml.tmpl` can ask for once with `promptChoiceOnce`.
@@ -87,3 +97,7 @@ home ~/.cache
 home ~/.*_history
 package linux-firmware-*
 ```
+
+## Development
+
+`./ci.sh` runs the checks CI runs: rustfmt, clippy with warnings as errors, and the tests.
