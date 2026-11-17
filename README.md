@@ -55,6 +55,7 @@ It runs as your user. Parts of `/etc` that only root can read show up as "unread
 - **add**: change the fleet checkout so it matches the machine. It lists a package, declares a service or group, runs `chezmoi add` on a new config file, copies an `/etc` file into `types/<type>/etc/`, or writes a browser pref into `user.js`. When the fleet has something the machine lacks, add removes it from the fleet.
 - **ignore**: append the item to `ignore.txt`, so no scan reports it again.
 - **later**: hide the item for a week. It then comes back with how long it has waited. This list lives in `~/.local/state/mothership/later.json`, on the machine only.
+- **pass**: skip the item for this review only. The next review asks again.
 
 Review never commits: check `git diff` in the fleet checkout and commit yourself. It won't add an item marked `[secret]`, an `/etc` file only root can read, or a dconf section, which the fleet has no place for yet. Chezmoi templates have to be edited by hand.
 

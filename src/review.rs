@@ -35,7 +35,7 @@ pub fn run() -> Result<()> {
     };
 
     let mut prompt = Prompt::new();
-    let (mut added, mut ignored, mut put_off) = (0, 0, 0);
+    let (mut added, mut ignored, mut put_off, mut passed) = (0, 0, 0, 0);
     'items: for (n, item) in due.iter().enumerate() {
         if terminal {
             print!("\x1b[2J\x1b[3J\x1b[H");
@@ -57,9 +57,9 @@ pub fn run() -> Result<()> {
             println!("  add: {}", add.describe());
         }
         let choices = if add.is_some() {
-            "(a)dd (i)gnore (l)ater (q)uit"
+            "(a)dd (i)gnore (l)ater (p)ass (q)uit"
         } else {
-            "(i)gnore (l)ater (q)uit"
+            "(i)gnore (l)ater (p)ass (q)uit"
         };
         loop {
             match prompt.ask(&format!("  {choices}?"))?.as_deref() {
@@ -86,6 +86,7 @@ pub fn run() -> Result<()> {
                     later.put_off(item, now);
                     put_off += 1;
                 }
+                Some("p") => passed += 1,
                 _ => continue,
             }
             break;
@@ -96,7 +97,7 @@ pub fn run() -> Result<()> {
     if terminal {
         print!("\x1b[2J\x1b[3J\x1b[H");
     }
-    println!("{added} added, {ignored} ignored, {put_off} put off for later");
+    println!("{added} added, {ignored} ignored, {put_off} put off for later, {passed} passed");
     if waiting > 0 {
         println!("{waiting} put off before and not due yet");
     }
