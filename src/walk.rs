@@ -60,16 +60,25 @@ fn visit(
         let is_dir = entry.file_type()?.is_dir();
         if open.contains(&path) && is_dir {
             visit(&path, known, open, skip, walk)?;
-        } else if !(is_dir && is_empty(&path)) {
+        } else if !is_dir || holds_config(&path, skip) {
             walk.unknown.push(path);
         }
     }
     Ok(())
 }
 
-/// An empty folder holds no config. One we can't read isn't known to be empty.
-fn is_empty(dir: &Path) -> bool {
-    fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_none())
+/// A folder holding only skipped paths and empty folders holds no config. One we can't read
+/// isn't known to be empty.
+fn holds_config(dir: &Path, skip: &dyn Fn(&Path) -> bool) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return true;
+    };
+    entries.into_iter().any(|entry| {
+        let Ok(entry) = entry else { return true };
+        let path = entry.path();
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+        !skip(&path) && (!is_dir || holds_config(&path, skip))
+    })
 }
 
 pub fn files(root: &Path) -> Result<Vec<PathBuf>> {
@@ -88,3 +97,7 @@ pub fn files(root: &Path) -> Result<Vec<PathBuf>> {
     found.sort();
     Ok(found)
 }
+
+#[cfg(test)]
+#[path = "../tests/walk.rs"]
+mod tests;

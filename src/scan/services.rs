@@ -26,15 +26,22 @@ const USER_PRESETS: [&str; 3] = [
 ];
 
 pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
-    let system = [PathBuf::from("/etc/systemd/system")];
+    let system = [
+        PathBuf::from("/etc/systemd/system"),
+        PathBuf::from("/run/systemd/system"),
+        PathBuf::from("/usr/lib/systemd/system"),
+    ];
     let user = [
-        PathBuf::from("/etc/systemd/user"),
         fleet::home().join(".config/systemd/user"),
+        PathBuf::from("/etc/systemd/user"),
+        PathBuf::from("/run/systemd/user"),
+        PathBuf::from("/usr/lib/systemd/user"),
     ];
     let mut items = check(
         Kind::Service,
         Key::Services,
         &system,
+        &[&system[0]],
         &SYSTEM_PRESETS,
         &fleet.system.services,
     )?;
@@ -42,26 +49,30 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
         Kind::UserService,
         Key::UserServices,
         &user,
+        &[&user[0], &user[1]],
         &USER_PRESETS,
         &fleet.system.user_services,
     )?);
     Ok(items)
 }
 
-/// Units a package enables by default (its preset) don't count. `systemctl list-unit-files`
-/// says the same, but systemd takes half a second to answer.
+/// Units a package enables by default (its preset) don't count, nor the ones enabling a declared
+/// unit brings along. `systemctl list-unit-files` says the same, but systemd takes half a second
+/// to answer.
 fn check(
     kind: Kind,
     key: Key,
     unit_dirs: &[PathBuf],
+    enable_dirs: &[&PathBuf],
     preset_dirs: &[&str],
     declared: &[String],
 ) -> Result<Vec<Item>> {
-    let enabled = enabled(unit_dirs)?;
+    let enabled = enabled(enable_dirs)?;
     let presets = Presets::load(preset_dirs)?;
+    let covered = with_also(declared, unit_dirs)?;
     let mut items: Vec<Item> = enabled
         .iter()
-        .filter(|unit| !presets.enables(unit) && !declared.contains(unit))
+        .filter(|unit| !presets.enables(unit) && !covered.contains(*unit))
         .map(|unit| {
             Item::new(kind, unit, "enabled, not declared")
                 .with(Add::Declare {
@@ -88,8 +99,40 @@ fn check(
     Ok(items)
 }
 
+/// `systemctl enable` also enables the units in `Also=`, and theirs in turn.
+fn with_also(declared: &[String], unit_dirs: &[PathBuf]) -> Result<BTreeSet<String>> {
+    let mut covered: BTreeSet<String> = declared.iter().cloned().collect();
+    let mut todo = declared.to_vec();
+    while let Some(unit) = todo.pop() {
+        for other in also(&unit, unit_dirs)? {
+            if covered.insert(other.clone()) {
+                todo.push(other);
+            }
+        }
+    }
+    Ok(covered)
+}
+
+/// The first folder that has the unit wins, like systemd's own lookup.
+fn also(unit: &str, unit_dirs: &[PathBuf]) -> Result<Vec<String>> {
+    let Some(path) = unit_dirs.iter().map(|d| d.join(unit)).find(|p| p.exists()) else {
+        return Ok(Vec::new());
+    };
+    let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let mut install = false;
+    let mut units = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            install = line == "[Install]";
+        } else if install && let Some(names) = line.strip_prefix("Also=") {
+            units.extend(names.split_whitespace().map(str::to_owned));
+        }
+    }
+    Ok(units)
+}
+
 /// A template's instances count as the template, the way systemd lists them.
-fn enabled(unit_dirs: &[PathBuf]) -> Result<BTreeSet<String>> {
+fn enabled(unit_dirs: &[&PathBuf]) -> Result<BTreeSet<String>> {
     let mut units = BTreeSet::new();
     for dir in unit_dirs {
         let entries = match fs::read_dir(dir) {
@@ -197,3 +240,7 @@ pub fn is_enablement(path: &Path) -> bool {
             .any(|s| name.ends_with(s))
             || path.is_symlink())
 }
+
+#[cfg(test)]
+#[path = "../../tests/services.rs"]
+mod tests;
