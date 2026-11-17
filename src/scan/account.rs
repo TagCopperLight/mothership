@@ -1,18 +1,25 @@
 use super::{Item, Kind};
 use crate::{
-    cmd,
     edit::{Add, Key},
     fleet::Fleet,
 };
 use anyhow::{Context, Result};
-use std::env;
+use std::{env, fs};
+
+// Read directly: getent and id also ask systemd, which stalls while it lists unit files.
 
 pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
     let user = env::var("USER").context("USER is not set")?;
     let mut items = Vec::new();
     if let Some(shell) = &fleet.system.shell {
-        let entry = cmd::stdout("getent", &["passwd", &user])?;
-        let actual = entry.trim().rsplit(':').next().unwrap_or_default();
+        let passwd = fs::read_to_string("/etc/passwd")?;
+        let actual = passwd
+            .lines()
+            .find(|line| line.split(':').next() == Some(&user))
+            .with_context(|| format!("{user} is not in /etc/passwd"))?
+            .rsplit(':')
+            .next()
+            .unwrap_or_default();
         if actual != shell {
             items.push(
                 Item::new(
@@ -24,13 +31,21 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
             );
         }
     }
-    let groups = cmd::stdout("id", &["-nG", &user])?;
-    let actual: Vec<&str> = groups.split_whitespace().collect();
+    // Member lists leave out my own primary group.
+    let groups = fs::read_to_string("/etc/group")?;
+    let actual: Vec<&str> = groups
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split(':').collect();
+            let members = fields.get(3)?;
+            members.split(',').any(|m| m == user).then_some(fields[0])
+        })
+        .collect();
     let declared = &fleet.system.groups;
     items.extend(
         actual
             .iter()
-            .filter(|g| **g != user && !declared.iter().any(|d| d == *g))
+            .filter(|g| !declared.iter().any(|d| d == *g))
             .map(|g| {
                 Item::new(Kind::Account, format!("group {g}"), "member, not declared").with(
                     Add::Declare {

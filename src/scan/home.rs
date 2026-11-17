@@ -2,6 +2,7 @@ use super::{Item, Kind, looks_secret, services};
 use crate::{
     edit::Add,
     fleet::{self, Fleet},
+    preview::Preview,
     walk,
 };
 use anyhow::Result;
@@ -10,8 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Config in ~ that nothing in the fleet accounts for. Only dotfiles at the top of ~ count:
-/// the visible folders hold data, not config.
+/// Only dotfiles at the top of ~ count: the visible folders hold data, not config.
 pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
     let home = fleet::home();
     let tools = &fleet.system.tools;
@@ -54,7 +54,8 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
         .map(|path| {
             looks_secret(
                 Item::new(Kind::Home, fleet::tilde(path), "not in the fleet")
-                    .with(Add::Track(path.clone())),
+                    .with(Add::Track(path.clone()))
+                    .showing(Preview::Contents(path.clone())),
                 path,
             )
         })

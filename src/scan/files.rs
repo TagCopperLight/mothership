@@ -1,8 +1,7 @@
 use super::{Item, Kind};
-use crate::{cmd, edit::Add, fleet};
+use crate::{cmd, edit::Add, fleet, preview::Preview};
 use anyhow::Result;
 
-/// Files chezmoi manages that differ from the repo.
 pub fn scan() -> Result<Vec<Item>> {
     let mut items = Vec::new();
     for line in cmd::stdout("chezmoi", &["status"])?.lines() {
@@ -20,7 +19,8 @@ pub fn scan() -> Result<Vec<Item>> {
         let path = &line[3..];
         items.push(
             Item::new(Kind::File, format!("~/{path}"), detail)
-                .with(Add::Update(fleet::home().join(path))),
+                .with(Add::Update(fleet::home().join(path)))
+                .showing(Preview::Chezmoi(fleet::home().join(path))),
         );
     }
     Ok(items)

@@ -8,7 +8,6 @@ use std::{
 };
 use toml_edit::{Array, DocumentMut, Value, value};
 
-/// A string array in system.toml.
 #[derive(Clone, Copy)]
 pub enum Key {
     Services,
@@ -165,7 +164,6 @@ pub fn ignore(fleet: &Fleet, line: &str) -> Result<()> {
     append_line(&fleet.ignore_path(), line)
 }
 
-/// Takes the name off every list of the type, keeping the comments lined up.
 fn unlist_package(fleet: &Fleet, name: &str) -> Result<()> {
     let mut found = false;
     for list in fleet
@@ -289,7 +287,6 @@ fn copy_etc(dest: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Removes the file, then the folders it leaves empty.
 fn remove_etc(fleet: &Fleet, dest: &Path) -> Result<()> {
     fs::remove_file(dest).with_context(|| format!("removing {}", dest.display()))?;
     let root = fleet.type_dir.join("etc");

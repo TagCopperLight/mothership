@@ -12,7 +12,6 @@ impl Prompt {
         }
     }
 
-    /// Answers each question with the next line of `answers`.
     #[cfg(test)]
     pub fn answering(answers: &'static str) -> Self {
         Prompt {

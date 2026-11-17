@@ -6,7 +6,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// The fleet repo, seen from the device type this machine runs.
 pub struct Fleet {
     pub dir: PathBuf,
     pub type_dir: PathBuf,
@@ -14,7 +13,6 @@ pub struct Fleet {
     pub ignore: Ignore,
 }
 
-/// `types/<type>/system.toml`: what the device type has outside chezmoi's files.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields, default)]
 pub struct System {
@@ -62,9 +60,13 @@ const IGNORE: &str = "ignore.txt";
 impl Fleet {
     /// The machine's device type is the chezmoi profile it was set up with.
     pub fn load() -> Result<Self> {
-        let dir = PathBuf::from(cmd::stdout("chezmoi", &["source-path"])?.trim());
         let data: serde_json::Value =
             serde_json::from_str(&cmd::stdout("chezmoi", &["data", "--format", "json"])?)?;
+        let dir = PathBuf::from(
+            data["chezmoi"]["sourceDir"]
+                .as_str()
+                .context("chezmoi data has no sourceDir")?,
+        );
         let device_type = data["profile"]
             .as_str()
             .context("chezmoi data has no profile")?;
@@ -92,7 +94,6 @@ impl Fleet {
         self.dir.join("packages").join(format!("{list}.txt"))
     }
 
-    /// Package names in `packages/<name>.txt`.
     pub fn package_list(&self, name: &str) -> Result<Vec<String>> {
         let path = self.package_path(name);
         let text =
@@ -117,7 +118,6 @@ pub fn expand(path: &str) -> PathBuf {
     }
 }
 
-/// How a path is written in reports and in ignore.txt.
 pub fn tilde(path: &Path) -> String {
     match path.strip_prefix(home()) {
         Ok(rest) => format!("~/{}", rest.display()),

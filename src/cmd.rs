@@ -1,8 +1,11 @@
 use anyhow::{Context, Result, bail};
 use std::process::Command;
 
-/// Runs a program and returns its stdout, failing when it exits non-zero.
 pub fn stdout(program: &str, args: &[&str]) -> Result<String> {
+    Ok(String::from_utf8(bytes(program, args)?)?)
+}
+
+pub fn bytes(program: &str, args: &[&str]) -> Result<Vec<u8>> {
     let out = Command::new(program)
         .args(args)
         .output()
@@ -14,7 +17,7 @@ pub fn stdout(program: &str, args: &[&str]) -> Result<String> {
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
-    Ok(String::from_utf8(out.stdout)?)
+    Ok(out.stdout)
 }
 
 /// Runs a program in this terminal, so it can ask its own questions.

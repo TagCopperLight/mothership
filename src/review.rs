@@ -9,16 +9,14 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs,
-    io::ErrorKind,
+    io::{ErrorKind, IsTerminal},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const DAY: u64 = 24 * 60 * 60;
-/// An item put off for later comes back after this.
 const LATER: u64 = 7 * DAY;
 
-/// Goes through what the scan finds and edits the fleet checkout with each answer.
 pub fn run() -> Result<()> {
     let report = scan::collect()?;
     let mut later = Later::load()?;
@@ -28,24 +26,23 @@ pub fn run() -> Result<()> {
         .iter()
         .filter(|item| later.due(item, now))
         .collect();
-    println!(
-        "{} to review, {} put off for later\n",
-        due.len(),
-        report.shown.len() - due.len()
-    );
+    let waiting = report.shown.len() - due.len();
+    let terminal = std::io::stdout().is_terminal();
+    let (bold, plain) = if terminal {
+        ("\x1b[1m", "\x1b[0m")
+    } else {
+        ("", "")
+    };
 
     let mut prompt = Prompt::new();
     let (mut added, mut ignored, mut put_off) = (0, 0, 0);
     'items: for (n, item) in due.iter().enumerate() {
+        if terminal {
+            print!("\x1b[2J\x1b[3J\x1b[H");
+        }
         let secret = if item.secret { "  [secret]" } else { "" };
-        println!(
-            "[{}/{}] {}: {}  {}{secret}",
-            n + 1,
-            due.len(),
-            item.kind.title(),
-            item.subject,
-            item.detail
-        );
+        println!("[{}/{}] {}", n + 1, due.len(), item.kind.title());
+        println!("{bold}{}{plain}  {}{secret}", item.subject, item.detail);
         if let Some(waiting) = later.get(item) {
             println!("  waiting for {} days", (now - waiting.first) / DAY);
         }
@@ -55,6 +52,7 @@ pub fn run() -> Result<()> {
         } else {
             item.add.as_ref()
         };
+        item.preview.show(terminal);
         if let Some(add) = add {
             println!("  add: {}", add.describe());
         }
@@ -92,11 +90,16 @@ pub fn run() -> Result<()> {
             }
             break;
         }
-        println!();
     }
 
     later.save(&report.shown)?;
+    if terminal {
+        print!("\x1b[2J\x1b[3J\x1b[H");
+    }
     println!("{added} added, {ignored} ignored, {put_off} put off for later");
+    if waiting > 0 {
+        println!("{waiting} put off before and not due yet");
+    }
     if added + ignored > 0 {
         println!(
             "Check the changes with `git -C {} diff`, then commit.",
@@ -112,7 +115,6 @@ struct Waiting {
     last: u64,
 }
 
-/// Items put off for later, keyed by their ignore line. Kept on the machine, not in the fleet.
 struct Later {
     path: PathBuf,
     items: BTreeMap<String, Waiting>,
@@ -153,7 +155,6 @@ impl Later {
         self.items.remove(&scan::ignore_line(item));
     }
 
-    /// Drops the items the scan no longer finds.
     fn save(mut self, current: &[Item]) -> Result<()> {
         let keys: Vec<String> = current.iter().map(scan::ignore_line).collect();
         self.items.retain(|key, _| keys.contains(key));

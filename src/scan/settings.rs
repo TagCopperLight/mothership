@@ -1,9 +1,8 @@
 use super::{Item, Kind};
-use crate::{cmd, edit::Add};
+use crate::{cmd, edit::Add, preview::Preview};
 use anyhow::Result;
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
-/// Settings apps keep as data rather than as config files.
 pub fn scan(managed: &[PathBuf]) -> Result<Vec<Item>> {
     let mut items = dconf()?;
     for user_js in managed.iter().filter(|path| path.ends_with("user.js")) {
@@ -28,7 +27,10 @@ fn dconf() -> Result<Vec<Item>> {
     }
     Ok(sections
         .into_iter()
-        .map(|(section, keys)| Item::new(Kind::Dconf, section, format!("{keys} keys set")))
+        .map(|(section, keys)| {
+            Item::new(Kind::Dconf, &section, format!("{keys} keys set"))
+                .showing(Preview::Dconf(section))
+        })
         .collect())
 }
 
@@ -45,11 +47,19 @@ fn prefs(user_js: &PathBuf) -> Result<Vec<Item>> {
                 Some(w) if w != value => "changed in the app, user.js resets it",
                 Some(_) => return None,
             };
-            Some(Item::new(Kind::Pref, key, detail).with(Add::Pref {
-                user_js: user_js.clone(),
-                key: key.clone(),
-                value: value.clone(),
-            }))
+            let mut shown = format!("the app: {value}");
+            if let Some(w) = wanted.get(key) {
+                shown += &format!("\nuser.js: {w}");
+            }
+            Some(
+                Item::new(Kind::Pref, key, detail)
+                    .with(Add::Pref {
+                        user_js: user_js.clone(),
+                        key: key.clone(),
+                        value: value.clone(),
+                    })
+                    .showing(Preview::Text(shown)),
+            )
         })
         .collect())
 }

@@ -7,11 +7,12 @@ mod services;
 mod settings;
 mod tools;
 
-use crate::{cmd, edit::Add, fleet::Fleet};
+use crate::{cmd, edit::Add, fleet::Fleet, pacman::Db, preview::Preview};
 use anyhow::{Result, bail};
 use std::{
     fs,
     path::{Path, PathBuf},
+    thread::{self, ScopedJoinHandle},
 };
 
 /// Declared in report order.
@@ -79,7 +80,6 @@ impl Kind {
     }
 }
 
-/// One difference between this machine and its device type.
 pub struct Item {
     pub kind: Kind,
     pub subject: String,
@@ -87,6 +87,7 @@ pub struct Item {
     pub secret: bool,
     /// None when the fleet has no place for it yet.
     pub add: Option<Add>,
+    pub preview: Preview,
 }
 
 impl Item {
@@ -97,7 +98,13 @@ impl Item {
             detail: detail.into(),
             secret: false,
             add: None,
+            preview: Preview::None,
         }
+    }
+
+    fn showing(mut self, preview: Preview) -> Self {
+        self.preview = preview;
+        self
     }
 
     fn with(mut self, add: Add) -> Self {
@@ -106,7 +113,6 @@ impl Item {
     }
 }
 
-/// The line in ignore.txt that matches exactly this item.
 pub fn ignore_line(item: &Item) -> String {
     format!("{} {}", item.kind.name(), globset::escape(&item.subject))
 }
@@ -121,29 +127,31 @@ pub fn collect() -> Result<Report> {
     if !Path::new("/usr/bin/pacman").exists() {
         bail!("mothership only knows Arch machines for now");
     }
-    let fleet = Fleet::load()?;
-    let managed: Vec<PathBuf> = cmd::stdout(
-        "chezmoi",
-        &[
-            "managed",
-            "--path-style",
-            "absolute",
-            "--include",
-            "files,symlinks",
-        ],
-    )?
-    .lines()
-    .map(PathBuf::from)
-    .collect();
-
-    let mut items = packages::scan(&fleet)?;
-    items.extend(tools::scan(&fleet)?);
-    items.extend(files::scan()?);
-    items.extend(home::scan(&fleet, &managed)?);
-    items.extend(etc::scan(&fleet)?);
-    items.extend(services::scan(&fleet)?);
-    items.extend(account::scan(&fleet)?);
-    items.extend(settings::scan(&managed)?);
+    // The checks mostly wait on programs or the disk, so they run at once. chezmoi status is the
+    // slowest and needs nothing, so it starts first.
+    let (fleet, items) = thread::scope(|s| {
+        let files = s.spawn(files::scan);
+        let fleet = s.spawn(Fleet::load);
+        let db = s.spawn(Db::load);
+        let managed = s.spawn(managed);
+        let fleet = join(fleet)?;
+        let (db, managed) = (join(db)?, join(managed)?);
+        let mut items = thread::scope(|s| {
+            let (fleet, db, managed) = (&fleet, &db, &managed);
+            let checks = vec![
+                s.spawn(move || packages::scan(fleet, db)),
+                s.spawn(move || tools::scan(fleet)),
+                s.spawn(move || home::scan(fleet, managed)),
+                s.spawn(move || etc::scan(fleet, db)),
+                s.spawn(move || services::scan(fleet)),
+                s.spawn(move || account::scan(fleet)),
+                s.spawn(move || settings::scan(managed)),
+            ];
+            checks.into_iter().map(join).collect::<Result<Vec<_>>>()
+        })?;
+        items.push(join(files)?);
+        Ok::<_, anyhow::Error>((fleet, items.into_iter().flatten().collect::<Vec<Item>>()))
+    })?;
 
     let (ignored, mut shown): (Vec<Item>, Vec<Item>) = items
         .into_iter()
@@ -154,6 +162,26 @@ pub fn collect() -> Result<Report> {
         shown,
         ignored: ignored.len(),
     })
+}
+
+fn join<T>(handle: ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
+    handle
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn managed() -> Result<Vec<PathBuf>> {
+    let args = [
+        "managed",
+        "--path-style",
+        "absolute",
+        "--include",
+        "files,symlinks",
+    ];
+    Ok(cmd::stdout("chezmoi", &args)?
+        .lines()
+        .map(PathBuf::from)
+        .collect())
 }
 
 pub fn run() -> Result<()> {

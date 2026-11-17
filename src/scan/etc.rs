@@ -1,12 +1,18 @@
 use super::{Item, Kind, looks_secret, services};
-use crate::{cmd, edit::Add, fleet::Fleet, walk};
+use crate::{
+    edit::Add,
+    fleet::Fleet,
+    pacman::{Db, Package},
+    preview::Preview,
+    walk,
+};
 use anyhow::{Context, Result};
+use md5::{Digest, Md5};
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::HashSet,
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 /// User and group changes rewrite these, and the account check covers them.
@@ -20,7 +26,7 @@ const ACCOUNT_FILES: [&str; 7] = [
     "/etc/shells",
 ];
 
-pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
+pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     let fleet_etc = fleet.type_dir.join("etc");
     let declared: Vec<PathBuf> = walk::files(&fleet_etc)?;
     let declared_paths: HashSet<PathBuf> = declared
@@ -31,33 +37,48 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
     let mut items = Vec::new();
     for rel in &declared {
         let path = Path::new("/etc").join(rel);
+        let source = fleet_etc.join(rel);
         let item = |detail| Item::new(Kind::Etc, path.display().to_string(), detail);
-        items.extend(match compare(&fleet_etc.join(rel), &path)? {
+        items.extend(match compare(&source, &path)? {
             Compare::Same => None,
-            Compare::Differs => {
-                Some(item("differs from the fleet").with(Add::CopyEtc(path.clone())))
-            }
-            Compare::Missing => {
-                Some(item("missing, the fleet has it").with(Add::RemoveEtc(path.clone())))
-            }
+            Compare::Differs => Some(
+                item("differs from the fleet")
+                    .with(Add::CopyEtc(path.clone()))
+                    .showing(Preview::Diff {
+                        old: source,
+                        new: path.clone(),
+                    }),
+            ),
+            Compare::Missing => Some(
+                item("missing, the fleet has it")
+                    .with(Add::RemoveEtc(path.clone()))
+                    .showing(Preview::Contents(source)),
+            ),
             Compare::Unreadable => Some(item("unreadable without root")),
         });
     }
 
-    for path in modified_backups()? {
-        if !declared_paths.contains(Path::new(&path)) && !ACCOUNT_FILES.contains(&path.as_str()) {
-            items.push(
-                Item::new(Kind::Etc, &path, "changed from the package's version")
-                    .with(Add::CopyEtc(PathBuf::from(&path))),
-            );
+    let mut changed = Vec::new();
+    for package in &db.packages {
+        for (path, md5) in &package.backups {
+            if path.starts_with("/etc")
+                && !declared_paths.contains(path)
+                && !ACCOUNT_FILES.contains(&path.to_string_lossy().as_ref())
+            {
+                changed.extend(edited(package, path, md5)?);
+            }
         }
     }
+    changed.sort_by(|a, b| a.subject.cmp(&b.subject));
+    items.extend(changed);
 
-    let owned = cmd::stdout("pacman", &["-Qlq"])?;
-    let (owned_dirs, owned_files): (Vec<&str>, Vec<&str>) = owned
-        .lines()
-        .filter(|line| line.starts_with("/etc/"))
-        .partition(|line| line.ends_with('/'));
+    let (owned_dirs, owned_files): (Vec<&str>, Vec<&str>) = db
+        .packages
+        .iter()
+        .flat_map(|p| &p.files)
+        .map(String::as_str)
+        .filter(|path| path.starts_with("/etc/"))
+        .partition(|path| path.ends_with('/'));
     let mut known: HashSet<PathBuf> = owned_files.into_iter().map(PathBuf::from).collect();
     known.extend(declared_paths);
     let known_dirs = owned_dirs
@@ -73,7 +94,8 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
     items.extend(walk.unknown.iter().map(|path| {
         looks_secret(
             Item::new(Kind::Etc, path.display().to_string(), "from no package")
-                .with(Add::CopyEtc(path.clone())),
+                .with(Add::CopyEtc(path.clone()))
+                .showing(Preview::Contents(path.clone())),
             path,
         )
     }));
@@ -109,19 +131,27 @@ fn compare(source: &Path, path: &Path) -> Result<Compare> {
     })
 }
 
-/// Package config files edited since install, as `pacman -Qkk` reports them.
-fn modified_backups() -> Result<BTreeSet<String>> {
-    // pacman exits non-zero whenever it finds a difference, which is what we're after.
-    let out = Command::new("pacman")
-        .arg("-Qkk")
-        .output()
-        .context("running pacman -Qkk")?;
-    Ok(String::from_utf8(out.stdout)?
-        .lines()
-        .filter_map(|line| line.strip_prefix("backup file: "))
-        .filter_map(|rest| rest.split_once(": ").map(|(_, rest)| rest))
-        .filter_map(|rest| rest.split(" (").next())
-        .filter(|path| path.starts_with("/etc/"))
-        .map(str::to_owned)
-        .collect())
+fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
+    let item = |detail| Item::new(Kind::Etc, path.display().to_string(), detail);
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        // pacman leaves a config file the package no longer ships, or that I deleted.
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+            return Ok(Some(item("unreadable without root")));
+        }
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    let actual: String = Md5::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    Ok((actual != md5).then(|| {
+        item("changed from the package's version")
+            .with(Add::CopyEtc(path.to_path_buf()))
+            .showing(Preview::Original {
+                path: path.to_path_buf(),
+                archive: package.archive(),
+            })
+    }))
 }

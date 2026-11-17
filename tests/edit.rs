@@ -35,7 +35,6 @@ cargo = [
 ]
 "#;
 
-/// A fleet checkout in a temporary folder, for a "workstation" type.
 struct Checkout {
     dir: TempDir,
     fleet: Fleet,
@@ -241,6 +240,7 @@ fn appends_ignore_lines_the_ignore_list_then_matches() {
         detail: String::new(),
         secret: false,
         add: None,
+        preview: crate::preview::Preview::None,
     };
     ignore(&checkout.fleet, &crate::scan::ignore_line(&item)).unwrap();
     let ignore = Ignore::load(&checkout.fleet.ignore_path()).unwrap();

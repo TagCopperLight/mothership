@@ -3,7 +3,6 @@ use anyhow::{Context, Result, anyhow};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use std::{collections::HashMap, fs, io::ErrorKind, path::Path};
 
-/// `types/<type>/ignore.txt`: one `<kind> <glob>` per line, matched against what the scan reports.
 pub struct Ignore {
     sets: HashMap<Kind, GlobSet>,
 }

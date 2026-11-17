@@ -11,9 +11,8 @@ pub struct Walk {
     pub unreadable: Vec<PathBuf>,
 }
 
-/// Paths under `root` that `known` doesn't account for. Folders in `known_dirs`, and folders
-/// that hold a known path, are opened; any other unknown folder is reported whole, so one new
-/// app gives one line.
+/// An unknown folder is reported whole, so one new app gives one line. Folders in `known_dirs`
+/// and folders that hold a known path are opened.
 pub fn unknown(
     root: &Path,
     known: &HashSet<PathBuf>,
@@ -73,7 +72,6 @@ fn is_empty(dir: &Path) -> bool {
     fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_none())
 }
 
-/// Files and symlinks under `root`, relative to it.
 pub fn files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut found = Vec::new();
     let mut dirs = vec![root.to_path_buf()];

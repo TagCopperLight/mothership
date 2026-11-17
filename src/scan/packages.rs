@@ -1,9 +1,9 @@
 use super::{Item, Kind};
-use crate::{cmd, edit::Add, fleet::Fleet};
+use crate::{edit::Add, fleet::Fleet, pacman::Db, preview::Preview};
 use anyhow::Result;
 use std::collections::BTreeSet;
 
-pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
+pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     let mut listed = BTreeSet::new();
     for name in fleet
         .system
@@ -13,25 +13,25 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
     {
         listed.extend(fleet.package_list(name)?);
     }
-    let explicit = pacman(&["-Qqe"])?;
-    let installed = pacman(&["-Qq"])?;
-    let mut items: Vec<Item> = explicit
-        .difference(&listed)
-        .map(|name| {
-            Item::new(Kind::Package, name, "installed, not listed")
-                .with(Add::ListPackage(name.clone()))
+    let installed: BTreeSet<&String> = db.packages.iter().map(|p| &p.name).collect();
+    let mut items: Vec<Item> = db
+        .packages
+        .iter()
+        .filter(|p| p.explicit && !listed.contains(&p.name))
+        .map(|p| {
+            Item::new(Kind::Package, &p.name, "installed, not listed")
+                .with(Add::ListPackage(p.name.clone()))
+                .showing(Preview::Text(p.description.clone()))
         })
         .collect();
-    items.extend(listed.difference(&installed).map(|name| {
-        Item::new(Kind::Package, name, "listed, not installed")
-            .with(Add::UnlistPackage(name.clone()))
-    }));
+    items.extend(
+        listed
+            .iter()
+            .filter(|name| !installed.contains(name))
+            .map(|name| {
+                Item::new(Kind::Package, name, "listed, not installed")
+                    .with(Add::UnlistPackage(name.clone()))
+            }),
+    );
     Ok(items)
-}
-
-fn pacman(args: &[&str]) -> Result<BTreeSet<String>> {
-    Ok(cmd::stdout("pacman", args)?
-        .lines()
-        .map(str::to_owned)
-        .collect())
 }

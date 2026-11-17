@@ -2,6 +2,8 @@ mod cmd;
 mod edit;
 mod fleet;
 mod ignore;
+mod pacman;
+mod preview;
 mod prompt;
 mod review;
 mod scan;
