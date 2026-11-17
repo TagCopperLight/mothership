@@ -2,6 +2,8 @@
 name = "mothership"
 version = "0.1.0"
 edition = "2024"
+# tests/ holds unit tests that the modules include, not standalone test crates.
+autotests = false
 
 [dependencies]
 anyhow = "1.0.104"
@@ -10,3 +12,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 toml = "1.2.1"
 toml_edit = "0.25.19"
+
+[dev-dependencies]
+tempfile = "3.27.0"

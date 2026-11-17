@@ -94,12 +94,9 @@ impl Add {
             Add::UnlistPackage(name) => unlist_package(fleet, name)?,
             Add::Declare { key, name } => edit_system(fleet, |doc| {
                 let array = array(doc, *key)?;
-                let prefix = array
-                    .iter()
-                    .last()
-                    .map(|last| last.decor().prefix().cloned());
+                let prefix = gap(array);
                 array.push(name.as_str());
-                if let Some(Some(prefix)) = prefix {
+                if let Some(prefix) = prefix {
                     let pushed = array.iter_mut().last().expect("just pushed");
                     pushed.decor_mut().set_prefix(prefix);
                 }
@@ -235,6 +232,14 @@ fn array(doc: &mut DocumentMut, key: Key) -> Result<&mut Array> {
         .with_context(|| format!("`{}` in system.toml is not an array", key.path().join(".")))
 }
 
+/// What goes before a new item so it looks like the others. The first item's prefix is the
+/// space after `[`, so it only counts when it starts a new line.
+fn gap(array: &Array) -> Option<toml_edit::RawString> {
+    let last = array.iter().last()?.decor().prefix()?;
+    let one_line = array.len() == 1 && !last.as_str().is_some_and(|p| p.contains('\n'));
+    (!one_line).then(|| last.clone())
+}
+
 /// A tool is either its name or a table with its name and source.
 fn names(entry: &Value, name: &str) -> bool {
     entry.as_str() == Some(name)
@@ -318,3 +323,7 @@ fn set_pref(source: &Path, key: &str, value: &str) -> Result<()> {
         append_line(source, &line)
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/edit.rs"]
+mod tests;

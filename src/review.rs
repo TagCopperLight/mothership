@@ -162,3 +162,7 @@ impl Later {
             .with_context(|| format!("writing {}", self.path.display()))
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/review.rs"]
+mod tests;

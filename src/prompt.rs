@@ -12,6 +12,14 @@ impl Prompt {
         }
     }
 
+    /// Answers each question with the next line of `answers`.
+    #[cfg(test)]
+    pub fn answering(answers: &'static str) -> Self {
+        Prompt {
+            lines: Box::new(answers.lines().map(|line| Ok(line.to_owned()))),
+        }
+    }
+
     /// None once the input ends.
     pub fn ask(&mut self, question: &str) -> Result<Option<String>> {
         print!("{question} ");
