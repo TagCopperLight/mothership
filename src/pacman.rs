@@ -41,6 +41,8 @@ impl Db {
                 dirs.push(dir);
             }
         }
+        // The folder's order depends on the filesystem, and the scan reports in this order.
+        dirs.sort();
         let threads = thread::available_parallelism().map_or(4, usize::from);
         let packages = thread::scope(|s| {
             let parts: Vec<_> = dirs

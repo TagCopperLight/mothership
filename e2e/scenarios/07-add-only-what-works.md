@@ -25,12 +25,6 @@ doesn't offer to add them.
 ```console
 $ printf 'a\na\np\np\np\nq\n' | sudo mothership review
 \[1/\d+\] Packages (re)
-zeta  installed, not listed
-    An app only the AUR has
-  add: add it to `packages` in system.toml
-  revert: uninstall
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? a
-\[2/\d+\] Packages (re)
 omega  installed, not listed
     An app built on this machine
   add: add it to `packages` in system.toml
@@ -38,6 +32,12 @@ omega  installed, not listed
   (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? a
   It is in neither pacman's repos nor the AUR: fake-aur -Si omega failed: -> No AUR package found for omega
   It goes into `built_packages`.
+\[2/\d+\] Packages (re)
+zeta  installed, not listed
+    An app only the AUR has
+  add: add it to `packages` in system.toml
+  revert: uninstall
+  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? a
 \[3/\d+\] /etc (re)
 /etc/systemd/system/mine.service  from no package
 ...
