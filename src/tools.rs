@@ -45,8 +45,9 @@ fn spec(manager: Manager, tool: &Tool) -> Vec<String> {
         ],
         (Manager::Uv, None) => vec![format!("{name} @ git+{}", tool.git)],
         (Manager::Uv, Some(branch)) => vec![format!("{name} @ git+{}@{branch}", tool.git)],
-        (Manager::Bun, None) => vec![format!("{name}@git+{}", tool.git)],
-        (Manager::Bun, Some(branch)) => vec![format!("{name}@git+{}#{branch}", tool.git)],
+        // bun refuses a name before a git source, and takes the one in the package.
+        (Manager::Bun, None) => vec![format!("git+{}", tool.git)],
+        (Manager::Bun, Some(branch)) => vec![format!("git+{}#{branch}", tool.git)],
     }
 }
 

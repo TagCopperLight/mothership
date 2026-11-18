@@ -37,11 +37,8 @@ fn installs_from_git_with_or_without_a_branch() {
         git(Manager::Uv, branch),
         ["x @ git+https://example.com/x@dev"]
     );
-    assert_eq!(git(Manager::Bun, ""), ["x@git+https://example.com/x"]);
-    assert_eq!(
-        git(Manager::Bun, branch),
-        ["x@git+https://example.com/x#dev"]
-    );
+    assert_eq!(git(Manager::Bun, ""), ["git+https://example.com/x"]);
+    assert_eq!(git(Manager::Bun, branch), ["git+https://example.com/x#dev"]);
 }
 
 #[test]

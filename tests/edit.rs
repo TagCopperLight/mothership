@@ -342,3 +342,32 @@ fn writes_prefs_into_user_js() {
         "user_pref(\"a\", 3);\nuser_pref(\"ab\", 2);\nuser_pref(\"c\", \"text\");\n"
     );
 }
+
+#[test]
+fn declaring_a_tool_writes_its_source_and_reads_back_the_same() {
+    let checkout = Checkout::new();
+    let moved = Tool::Git(crate::fleet::GitTool {
+        name: "chromash".into(),
+        git: "https://github.com/me/Chromash".into(),
+        branch: None,
+    });
+    let new = Tool::Git(crate::fleet::GitTool {
+        name: "new".into(),
+        git: "https://example.com/new".into(),
+        branch: Some("dev".into()),
+    });
+    for tool in [&moved, &new] {
+        checkout.apply(
+            Add::DeclareTool {
+                manager: Manager::Cargo,
+                tool: tool.clone(),
+            },
+            "",
+        );
+    }
+    let system: System = toml::from_str(&checkout.system()).unwrap();
+    let cargo = system.tools.of(Manager::Cargo);
+    assert_eq!(cargo.iter().filter(|t| t.name() == "chromash").count(), 1);
+    assert_eq!(system.tools.find(Manager::Cargo, "chromash"), Some(&moved));
+    assert_eq!(system.tools.find(Manager::Cargo, "new"), Some(&new));
+}

@@ -54,8 +54,9 @@ impl Record {
         Ok(match revert {
             Revert::Install(name) => !self.packages.contains(name),
             Revert::Uninstall(name) => self.packages.contains(name),
-            Revert::InstallTool { manager, tool } => self.tool(*manager, tool.name()) != Some(tool),
-            Revert::ReinstallTool { .. } => true,
+            Revert::InstallTool { manager, tool } | Revert::ReinstallTool { manager, tool } => {
+                self.tool(*manager, tool.name()) != Some(tool)
+            }
             Revert::UninstallTool { manager, name } => self.tool(*manager, name).is_some(),
             Revert::RunInstaller(name) => !self.installers.contains(name),
             Revert::Join(group) => !self.groups.contains(group),
@@ -100,7 +101,7 @@ impl Record {
         Ok(())
     }
 
-    pub fn tool(&self, manager: Manager, name: &str) -> Option<&Tool> {
+    fn tool(&self, manager: Manager, name: &str) -> Option<&Tool> {
         self.tools.find(manager, name)
     }
 

@@ -1,6 +1,6 @@
 use crate::{
     cmd,
-    fleet::{Fleet, Manager, Mode},
+    fleet::{Fleet, Manager, Mode, Tool},
     prompt::Prompt,
     user, walk,
 };
@@ -11,7 +11,7 @@ use std::{
     os::unix::{self, fs::PermissionsExt},
     path::{Path, PathBuf},
 };
-use toml_edit::{Array, DocumentMut, Value, value};
+use toml_edit::{Array, DocumentMut, InlineTable, Value, value};
 
 #[derive(Clone, Copy)]
 pub enum Key {
@@ -40,6 +40,11 @@ pub enum Add {
         key: Key,
         name: String,
     },
+    /// Replaces the tool's entry when it has one.
+    DeclareTool {
+        manager: Manager,
+        tool: Tool,
+    },
     Undeclare {
         key: Key,
         name: String,
@@ -65,6 +70,10 @@ impl Add {
             Add::Declare { key, .. } => {
                 format!("add it to `{}` in system.toml", key.path().join("."))
             }
+            Add::DeclareTool { manager, .. } => {
+                let path = Key::Tools(*manager).path().join(".");
+                format!("write this machine's source into `{path}` in system.toml")
+            }
             Add::Undeclare { key, .. } => {
                 format!("remove it from `{}` in system.toml", key.path().join("."))
             }
@@ -88,16 +97,10 @@ impl Add {
                 append_line(&fleet.package_path(list), name)?;
             }
             Add::UnlistPackage(name) => unlist_package(fleet, name)?,
-            Add::Declare { key, name } => edit_system(fleet, |doc| {
-                let array = array(doc, *key)?;
-                let prefix = gap(array);
-                array.push(name.as_str());
-                if let Some(prefix) = prefix {
-                    let pushed = array.iter_mut().last().expect("just pushed");
-                    pushed.decor_mut().set_prefix(prefix);
-                }
-                Ok(())
-            })?,
+            Add::Declare { key, name } => declare(fleet, *key, name, name.into())?,
+            Add::DeclareTool { manager, tool } => {
+                declare(fleet, Key::Tools(*manager), tool.name(), tool_entry(tool))?
+            }
             Add::Undeclare { key, name } => edit_system(fleet, |doc| {
                 let array = array(doc, *key)?;
                 let before = array.len();
@@ -199,6 +202,38 @@ fn unlist_package(fleet: &Fleet, name: &str) -> Result<()> {
         bail!("{name} is in none of the type's lists");
     }
     Ok(())
+}
+
+fn declare(fleet: &Fleet, key: Key, name: &str, entry: Value) -> Result<()> {
+    edit_system(fleet, |doc| {
+        let array = array(doc, key)?;
+        if let Some(old) = array.iter_mut().find(|v| names(v, name)) {
+            let decor = old.decor().clone();
+            *old = entry;
+            *old.decor_mut() = decor;
+            return Ok(());
+        }
+        let prefix = gap(array);
+        array.push(entry);
+        if let Some(prefix) = prefix {
+            let pushed = array.iter_mut().last().expect("just pushed");
+            pushed.decor_mut().set_prefix(prefix);
+        }
+        Ok(())
+    })
+}
+
+fn tool_entry(tool: &Tool) -> Value {
+    let Tool::Git(tool) = tool else {
+        return tool.name().into();
+    };
+    let mut table = InlineTable::new();
+    table.insert("name", tool.name.as_str().into());
+    table.insert("git", tool.git.as_str().into());
+    if let Some(branch) = &tool.branch {
+        table.insert("branch", branch.as_str().into());
+    }
+    table.into()
 }
 
 fn edit_system(fleet: &Fleet, change: impl FnOnce(&mut DocumentMut) -> Result<()>) -> Result<()> {

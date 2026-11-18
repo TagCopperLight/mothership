@@ -16,7 +16,6 @@ pub fn run() -> Result<()> {
     let record = Record::load(record_path)?;
     let mut items = scan::system(&fleet, &db)?;
     items.extend(scan::tools::scan(&fleet)?);
-    items.extend(scan::tools::moved(&fleet, &record, &items));
     items.extend(scan::files::scan()?);
 
     let (mut todo, mut edited, mut left) = (Vec::new(), Vec::new(), 0);

@@ -70,3 +70,25 @@ $ mothership scan | head -2
 Tools outside pacman (1)
   greeter  declared, not installed
 ```
+
+I install `hello` again by hand, from its `loud` branch. Review offers to declare it with that
+source, and once added, the scan finds nothing left to say about it.
+
+```console
+$ cargo install -q --git file:///crates/hello --branch loud hello &>/dev/null
+$ printf 'a\nq\n' | mothership review
+\[1/\d+\] Tools outside pacman (re)
+cargo hello  installed from file:///crates/hello, branch loud, not declared
+  add: write this machine's source into `tools.cargo` in system.toml
+  (a)dd (i)gnore (l)ater (p)ass (q)uit? a
+\[2/\d+\] Tools outside pacman (re)
+greeter  declared, not installed
+  add: remove its installer from system.toml
+  (a)dd (i)gnore (l)ater (p)ass (q)uit? q
+...
+$ grep hello ~/.local/share/chezmoi/types/workstation/system.toml
+cargo = [{ name = "hello", git = "file:///crates/hello", branch = "loud" }]
+$ mothership scan | head -2
+Tools outside pacman (1)
+  greeter  declared, not installed
+```
