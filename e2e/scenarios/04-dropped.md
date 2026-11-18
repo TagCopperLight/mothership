@@ -26,7 +26,7 @@ I edit `/etc/kept.conf`. Then the fleet drops the three files and `alpha`.
 $ echo "mine = yes" | sudo tee -a /etc/kept.conf >/dev/null
 $ cd ~/.local/share/chezmoi &&
 > git rm -q types/workstation/etc/gamma.conf types/workstation/etc/extra.conf types/workstation/etc/kept.conf &&
-> printf 'gamma\n' > packages/apps.txt &&
+> sed -i '/^  "alpha",$/d' types/workstation/system.toml &&
 > git commit -qam "Drop alpha and the files"
 ```
 

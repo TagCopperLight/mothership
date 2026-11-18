@@ -1,13 +1,20 @@
 use super::*;
 use crate::{
     fleet::{Fleet, System},
+    hardware::Hardware,
     ignore::Ignore,
 };
+use std::collections::BTreeSet;
 use tempfile::TempDir;
 
 const SYSTEM: &str = r#"# What a workstation has outside $HOME.
-packages = ["base", "dev"]
-built_packages = ["local"]
+packages = [
+  # Core
+  "vim",
+  "btop",  # system info
+  "zip",   # archives
+]
+built_packages = ["mytool"]
 
 shell = "/usr/bin/bash"
 groups = ["docker"]
@@ -33,6 +40,15 @@ cargo = [
   { name = "chromash", git = "https://example.com/chromash" },
   "sqlx-cli",
 ]
+
+[hardware.battery]
+packages = ["power-profiles-daemon"]
+services = ["power-profiles-daemon.service"]
+etc = ["battery.conf"]
+
+[options.dual-boot]
+packages = ["os-prober"]
+etc = ["grub.d/dual"]
 "#;
 
 struct Checkout {
@@ -41,27 +57,17 @@ struct Checkout {
 }
 
 impl Checkout {
+    /// A machine with a battery, without dual boot.
     fn new() -> Self {
         let dir = TempDir::new().unwrap();
         let type_dir = dir.path().join("types/workstation");
-        fs::create_dir_all(&type_dir).unwrap();
-        fs::create_dir_all(dir.path().join("packages")).unwrap();
+        fs::create_dir_all(type_dir.join("etc/grub.d")).unwrap();
+        fs::write(type_dir.join("etc/battery.conf"), "").unwrap();
+        fs::write(type_dir.join("etc/grub.d/dual"), "").unwrap();
         fs::write(type_dir.join("system.toml"), SYSTEM).unwrap();
         fs::write(type_dir.join("ignore.txt"), "home ~/.cache\n").unwrap();
-        fs::write(
-            dir.path().join("packages/base.txt"),
-            "vim\nfastfetch btop       # system info\nzip\n",
-        )
-        .unwrap();
-        fs::write(dir.path().join("packages/dev.txt"), "rust\nuv  # python\n").unwrap();
-        fs::write(dir.path().join("packages/local.txt"), "mytool\n").unwrap();
-        let system: System = toml::from_str(SYSTEM).unwrap();
-        let fleet = Fleet {
-            dir: dir.path().to_path_buf(),
-            type_dir: type_dir.clone(),
-            system,
-            ignore: Ignore::load(&type_dir.join("ignore.txt")).unwrap(),
-        };
+        let hardware = BTreeSet::from([Hardware::Battery]);
+        let fleet = Fleet::new(dir.path().to_path_buf(), "workstation", &[], &hardware).unwrap();
         Checkout { dir, fleet }
     }
 
@@ -80,55 +86,67 @@ impl Checkout {
 }
 
 #[test]
-fn lists_a_package_in_the_chosen_list() {
+fn lists_a_package_last_and_leaves_the_comments_on_their_lines() {
     let checkout = Checkout::new();
-    assert!(checkout.apply(Add::ListPackage("htop".into()), "2"));
-    assert_eq!(
-        checkout.read("packages/dev.txt"),
-        "rust\nuv  # python\nhtop\n"
+    assert!(checkout.apply(Add::ListPackage("htop".into()), ""));
+    assert!(
+        checkout
+            .system()
+            .contains("  \"zip\",   # archives\n  \"htop\",\n]\nbuilt_packages")
     );
 }
 
 #[test]
-fn listing_a_package_stops_when_no_list_is_chosen() {
+fn unlisting_drops_the_line_and_its_comment_but_not_the_heading() {
     let checkout = Checkout::new();
-    assert!(!checkout.apply(Add::ListPackage("htop".into()), ""));
-    assert!(!checkout.apply(Add::ListPackage("htop".into()), "9"));
-    assert_eq!(checkout.read("packages/dev.txt"), "rust\nuv  # python\n");
-}
-
-#[test]
-fn unlisting_keeps_the_other_names_and_the_comment_in_place() {
-    let checkout = Checkout::new();
-    checkout.apply(Add::UnlistPackage("fastfetch".into()), "");
-    assert_eq!(
-        checkout.read("packages/base.txt"),
-        "vim\nbtop                 # system info\nzip\n"
+    checkout.apply(Add::UnlistPackage("btop".into()), "");
+    assert!(
+        checkout
+            .system()
+            .contains("packages = [\n  # Core\n  \"vim\",\n  \"zip\",   # archives\n]")
+    );
+    checkout.apply(Add::UnlistPackage("vim".into()), "");
+    assert!(
+        checkout
+            .system()
+            .contains("packages = [\n  # Core\n  \"zip\",   # archives\n]")
     );
 }
 
 #[test]
-fn unlisting_the_only_name_drops_the_line_and_its_comment() {
+fn unlisting_the_last_keeps_the_comment_of_the_one_before() {
     let checkout = Checkout::new();
-    checkout.apply(Add::UnlistPackage("uv".into()), "");
-    assert_eq!(checkout.read("packages/dev.txt"), "rust\n");
+    checkout.apply(Add::UnlistPackage("zip".into()), "");
+    assert!(checkout.system().contains("  \"btop\",  # system info\n]"));
 }
 
 #[test]
-fn unlisting_reaches_built_package_lists() {
+fn unlisting_reaches_built_packages_and_the_machines_blocks() {
     let checkout = Checkout::new();
     checkout.apply(Add::UnlistPackage("mytool".into()), "");
-    assert_eq!(checkout.read("packages/local.txt"), "");
+    checkout.apply(Add::UnlistPackage("power-profiles-daemon".into()), "");
+    checkout.apply(
+        Add::Undeclare {
+            key: Key::Services,
+            name: "power-profiles-daemon.service".into(),
+        },
+        "",
+    );
+    let system = checkout.system();
+    assert!(system.contains("built_packages = []\n"));
+    assert!(system.contains("[hardware.battery]\npackages = []\nservices = []\n"));
 }
 
 #[test]
-fn unlisting_an_unknown_package_fails() {
+fn unlisting_an_unknown_package_or_one_of_an_option_off_here_fails() {
     let checkout = Checkout::new();
-    let add = Add::UnlistPackage("nope".into());
-    assert!(
-        add.apply(&checkout.fleet, &mut Prompt::answering(""))
-            .is_err()
-    );
+    for name in ["nope", "os-prober"] {
+        let add = Add::UnlistPackage(name.into());
+        assert!(
+            add.apply(&checkout.fleet, &mut Prompt::answering(""))
+                .is_err()
+        );
+    }
 }
 
 #[test]
@@ -326,9 +344,25 @@ fn removing_from_etc_drops_the_folders_left_empty() {
     fs::create_dir_all(etc.join("a/b")).unwrap();
     fs::write(etc.join("a/b/file"), "").unwrap();
     fs::write(etc.join("kept"), "").unwrap();
-    remove_etc(&checkout.fleet, &etc.join("a/b/file")).unwrap();
+    remove_etc(&checkout.fleet, Path::new("a/b/file")).unwrap();
     assert!(!etc.join("a").exists());
     assert!(etc.join("kept").exists());
+}
+
+#[test]
+fn removing_a_blocks_file_drops_it_from_the_block() {
+    let checkout = Checkout::new();
+    remove_etc(&checkout.fleet, Path::new("battery.conf")).unwrap();
+    assert!(checkout.system().contains("[hardware.battery]\npackages = [\"power-profiles-daemon\"]\nservices = [\"power-profiles-daemon.service\"]\netc = []\n"));
+}
+
+#[test]
+fn copying_over_the_file_of_an_option_off_here_fails() {
+    let checkout = Checkout::new();
+    let machine = checkout.dir.path().join("dual");
+    fs::write(&machine, "mine").unwrap();
+    assert!(copy_etc(&checkout.fleet, Path::new("grub.d/dual"), &machine).is_err());
+    assert_eq!(checkout.read("types/workstation/etc/grub.d/dual"), "");
 }
 
 #[test]

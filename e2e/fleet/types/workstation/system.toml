@@ -1,7 +1,33 @@
-packages = ["base", "apps"]
+packages = [
+  # What every machine needs
+  "base",
+  "base-devel",
+  "git",
+  "sudo",
+  "chezmoi",
+  "rust",
+  "uv",
+  "dconf",
+  # Apps
+  "alpha",
+  "gamma",
+]
 aur_helper = "fake-aur"
 shell = "/bin/bash"
 groups = ["wheel"]
 
 [etc_modes]
 "sudoers.d/wheel" = "440"
+
+# The container sees the host's hardware, so every piece has a block.
+[hardware.cpu-intel]
+[hardware.cpu-amd]
+[hardware.gpu-intel]
+[hardware.gpu-amd]
+[hardware.gpu-nvidia]
+[hardware.battery]
+[hardware.gxfp5130]
+
+[options.extra]
+packages = ["beta"]
+etc = ["option.conf"]

@@ -22,22 +22,19 @@ $ sudo usermod -aG audio me
 ```
 
 Without root, review can add to the fleet, ignore, put off and pass, but not revert. I add
-`beta` to the `apps` list, put `gamma` off, pass on `~/.gitconfig`, add the new app's config
+`beta` to the fleet's packages, put `gamma` off, pass on `~/.gitconfig`, add the new app's config
 and ignore the tokens. Review never shows a secret's contents. Then I quit.
 
 ```console
-$ printf 'a\n2\nl\np\na\ny\ni\nq\n' | mothership review
+$ printf 'a\nl\np\na\ny\ni\nq\n' | mothership review
 [1/10] Packages
 beta  installed, not listed
     An app the fleet never lists
-  add: list it in one of the type's package lists
+  add: add it to `packages` in system.toml
   (a)dd (i)gnore (l)ater (p)ass (q)uit? a
-    1. base
-    2. apps
-  Which list (number, empty to cancel)? 2
 [2/10] Packages
 gamma  listed, not installed
-  add: remove it from the package lists
+  add: remove it from system.toml
   (a)dd (i)gnore (l)ater (p)ass (q)uit? l
 [3/10] Files chezmoi tracks
 ~/.gitconfig  edited here
@@ -76,12 +73,14 @@ Review edited the fleet checkout and committed nothing.
 
 ```console
 $ cd ~/.local/share/chezmoi && git status --short | sort
- M packages/apps.txt
  M types/workstation/ignore.txt
+ M types/workstation/system.toml
 ?? dot_config/
-$ cat ~/.local/share/chezmoi/packages/apps.txt
-alpha gamma
-beta
+$ grep -A3 '"alpha"' ~/.local/share/chezmoi/types/workstation/system.toml
+  "alpha",
+  "gamma",
+  "beta",
+]
 $ tail -1 ~/.local/share/chezmoi/types/workstation/ignore.txt
 home ~/.config/tokens
 ```
@@ -155,7 +154,7 @@ wheel
 $ cd ~/.local/share/chezmoi/types/workstation && stat -c '%U %a %n' etc/profile.d etc/profile.d/proxy.sh
 me 755 etc/profile.d
 me 644 etc/profile.d/proxy.sh
-$ tail -3 ~/.local/share/chezmoi/types/workstation/system.toml
+$ grep -A2 '^\[etc_modes\]' ~/.local/share/chezmoi/types/workstation/system.toml
 [etc_modes]
 "sudoers.d/wheel" = "440"
 "profile.d/proxy.sh" = "600"

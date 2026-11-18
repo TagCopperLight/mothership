@@ -196,7 +196,7 @@ pub fn system(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
 }
 
 /// What a new machine of the type gets before its services and account are set: the files of
-/// the packages its lists install and their dependencies, its etc/, and chezmoi's files. Review only offers to declare
+/// the packages it installs and their dependencies, its etc/, and chezmoi's files. Review only offers to declare
 /// a unit, group or shell that comes from there, so apply can set it up on that machine too.
 pub struct Ships<'a> {
     fleet: &'a Fleet,
@@ -209,7 +209,7 @@ impl<'a> Ships<'a> {
         Ok(Ships {
             fleet,
             db,
-            listed: db.with_depends(&fleet.packages()?),
+            listed: db.with_depends(&fleet.packages()),
         })
     }
 
@@ -224,7 +224,7 @@ impl<'a> Ships<'a> {
             _ => return Ok(false),
         };
         if let Ok(rel) = resolved.strip_prefix("/etc")
-            && fs::symlink_metadata(self.fleet.etc_dir().join(rel)).is_ok()
+            && self.fleet.etc.contains(rel)
         {
             return Ok(true);
         }

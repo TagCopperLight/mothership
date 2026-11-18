@@ -23,7 +23,7 @@ Meanwhile the fleet changes:
 
 ```console
 $ cd ~/.local/share/chezmoi &&
-> printf 'gamma epsilon zeta\n' > packages/apps.txt &&
+> sed -i 's/^  "alpha",$/  "epsilon",\n  "zeta",/' types/workstation/system.toml &&
 > printf 'managed = yes\nlevel = 2\n' > types/workstation/etc/fleet.conf &&
 > printf 'new = yes\n' > types/workstation/etc/new.conf &&
 > sed -i 's|^shell = .*|shell = "/usr/bin/bash"|; s|^groups = .*|groups = ["wheel", "video"]|' types/workstation/system.toml &&

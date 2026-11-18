@@ -4,11 +4,9 @@ use anyhow::Result;
 use std::collections::BTreeSet;
 
 pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
-    let installed_here = fleet.packages()?;
+    let installed_here = fleet.packages();
     let mut listed = installed_here.clone();
-    for name in &fleet.system.built_packages {
-        listed.extend(fleet.package_list(name)?);
-    }
+    listed.extend(fleet.system.built_packages.iter().cloned());
     let installed: BTreeSet<&String> = db.packages.iter().map(|p| &p.name).collect();
     let mut items: Vec<Item> = db
         .packages

@@ -1,9 +1,5 @@
 use super::*;
-use crate::{
-    fleet::System,
-    ignore::Ignore,
-    pacman::{self, Package},
-};
+use crate::pacman::{self, Package};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -235,19 +231,14 @@ fn a_symlink_is_hashed_by_its_target() {
     assert_eq!(hash(&machine.path("missing")).unwrap(), None);
 }
 
-fn fleet(dir: &Path, system: &str) -> Fleet {
+fn fleet(dir: &Path, system: &str, etc: &[&str]) -> Fleet {
     let type_dir = dir.join("types/workstation");
     fs::create_dir_all(type_dir.join("etc")).unwrap();
-    fs::create_dir_all(dir.join("packages")).unwrap();
-    fs::write(dir.join("packages/base.txt"), "vim zip\n").unwrap();
-    fs::write(dir.join("packages/local.txt"), "mytool\n").unwrap();
-    let system: System = toml::from_str(system).unwrap();
-    Fleet {
-        dir: dir.to_path_buf(),
-        type_dir: type_dir.clone(),
-        system,
-        ignore: Ignore::load(&type_dir.join("ignore.txt")).unwrap(),
+    for file in etc {
+        fs::write(type_dir.join("etc").join(file), "fleet").unwrap();
     }
+    fs::write(type_dir.join("system.toml"), system).unwrap();
+    Fleet::new(dir.to_path_buf(), "workstation", &[], &BTreeSet::new()).unwrap()
 }
 
 #[test]
@@ -256,18 +247,15 @@ fn the_new_record_holds_what_the_fleet_declares_and_keeps_edits_as_edits() {
     let fleet = fleet(
         checkout.path(),
         r#"
-packages = ["base"]
-built_packages = ["local"]
+packages = ["vim", "zip"]
+built_packages = ["mytool"]
 shell = "/usr/bin/fish"
 groups = ["docker"]
 services = ["sshd.service"]
 user_services = ["app.service"]
 "#,
+        &["same.conf", "edited.conf", "new.conf"],
     );
-    let etc = fleet.etc_dir();
-    fs::write(etc.join("same.conf"), "fleet").unwrap();
-    fs::write(etc.join("edited.conf"), "fleet").unwrap();
-    fs::write(etc.join("new.conf"), "fleet").unwrap();
 
     let machine = Machine::new();
     machine.write("same.conf", "fleet");

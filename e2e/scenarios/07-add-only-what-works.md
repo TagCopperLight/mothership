@@ -19,30 +19,25 @@ $ sudo groupadd mine && sudo usermod -aG mine me
 ```
 
 `zeta` is in the AUR, so review lists it like any package. `omega` is in neither pacman's
-repos nor the AUR, and this fleet has no list of built packages, so the add fails and review
-asks again. The service's unit file and the group come from nothing the fleet holds, so review
+repos nor the AUR, so it goes into the packages apply checks but never installs. The service's unit file and the group come from nothing the fleet holds, so review
 doesn't offer to add them.
 
 ```console
-$ printf 'a\n2\na\np\np\np\np\nq\n' | sudo mothership review
+$ printf 'a\na\np\np\np\nq\n' | sudo mothership review
 \[1/\d+\] Packages (re)
 zeta  installed, not listed
     An app only the AUR has
-  add: list it in one of the type's package lists
+  add: add it to `packages` in system.toml
   revert: uninstall
   (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? a
-    1. base
-    2. apps
-  Which list (number, empty to cancel)? 2
 \[2/\d+\] Packages (re)
 omega  installed, not listed
     An app built on this machine
-  add: list it in one of the type's package lists
+  add: add it to `packages` in system.toml
   revert: uninstall
   (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? a
   It is in neither pacman's repos nor the AUR: fake-aur -Si omega failed: -> No AUR package found for omega
-  failed: only a `built_packages` list can hold it, and system.toml has none
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? p
+  It goes into `built_packages`.
 \[3/\d+\] /etc (re)
 /etc/systemd/system/mine.service  from no package
 ...
@@ -61,12 +56,12 @@ group mine  member, not declared
 ...
 ```
 
-Only `zeta` reached the fleet.
+Only the packages reached the fleet.
 
 ```console
-$ cat ~/.local/share/chezmoi/packages/apps.txt
-...
-zeta
+$ grep -E 'zeta|omega' ~/.local/share/chezmoi/types/workstation/system.toml
+  "zeta",
+built_packages = ["omega"]
 $ git -C ~/.local/share/chezmoi status --short
- M packages/apps.txt
+ M types/workstation/system.toml
 ```

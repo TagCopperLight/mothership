@@ -1,7 +1,7 @@
 use super::{Item, Kind, looks_secret, services};
 use crate::{
     edit::Add,
-    fleet::Fleet,
+    fleet::{self, Fleet},
     pacman::{self, Db, Package},
     preview::Preview,
     revert::Revert,
@@ -27,15 +27,15 @@ const ACCOUNT_FILES: [&str; 7] = [
 ];
 
 pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
-    let fleet_etc = fleet.type_dir.join("etc");
-    let declared: Vec<PathBuf> = walk::files(&fleet_etc)?;
+    let fleet_etc = fleet.etc_dir();
+    let declared = &fleet.etc;
     let declared_paths: HashSet<PathBuf> = declared
         .iter()
         .map(|rel| Path::new("/etc").join(rel))
         .collect();
 
     let mut items = Vec::new();
-    for rel in &declared {
+    for rel in declared {
         let path = Path::new("/etc").join(rel);
         let source = fleet_etc.join(rel);
         let item = |detail| Item::new(Kind::Etc, path.display().to_string(), detail);
@@ -83,6 +83,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         .partition(|path| path.ends_with('/'));
     let mut known: HashSet<PathBuf> = owned_files.into_iter().map(PathBuf::from).collect();
     known.extend(declared_paths);
+    known.insert(PathBuf::from(fleet::MACHINE));
     let known_dirs = owned_dirs
         .into_iter()
         .map(|dir| PathBuf::from(dir.trim_end_matches('/')))

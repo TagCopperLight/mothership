@@ -37,15 +37,4 @@ impl Prompt {
     pub fn confirm(&mut self, question: &str) -> Result<bool> {
         Ok(self.ask(&format!("{question} [y/N]?"))?.as_deref() == Some("y"))
     }
-
-    pub fn choose<'a>(&mut self, question: &str, options: &'a [String]) -> Result<Option<&'a str>> {
-        for (n, option) in options.iter().enumerate() {
-            println!("    {}. {option}", n + 1);
-        }
-        let answer = self.ask(&format!("{question} (number, empty to cancel)?"))?;
-        Ok(answer
-            .and_then(|a| a.parse::<usize>().ok())
-            .and_then(|n| options.get(n.checked_sub(1)?))
-            .map(String::as_str))
-    }
 }

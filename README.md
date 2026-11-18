@@ -10,22 +10,28 @@ You need Arch, `chezmoi`, `cargo`, `uv` and `dconf`, with the fleet repo as chez
 - `mothership review` asks about each difference: **add** it to the fleet, **ignore** it for good, put it off a week (**later**), or skip it this time (**pass**). It edits the fleet checkout and never commits. Under sudo it can also **revert** the machine to the fleet.
 - `sudo mothership apply` makes the machine follow the fleet. It shows its plan and asks first.
 
-Paths that look like secrets get a `[secret]` mark, and review won't add them. Review offers to declare a service, group or shell only when the fleet's packages, with their dependencies, or its files provide it, and lists a package found in neither pacman's repos nor the AUR only in a `built_packages` list. It adds a tool only when it comes from the registry or from git, with at most a branch: an editable install, a local folder or a tag waits until the fleet can describe it.
+Paths that look like secrets get a `[secret]` mark, and review won't add them. Review offers to declare a service, group or shell only when the fleet's packages, with their dependencies, or its files provide it, and puts a package found in neither pacman's repos nor the AUR into `built_packages`. It adds a tool only when it comes from the registry or from git, with at most a branch: an editable install, a local folder or a tag waits until the fleet can describe it.
 
 ## The fleet repo
 
 ```text
-packages/<list>.txt        package names, # starts a comment
 types/<type>/system.toml   what the type has outside $HOME
 types/<type>/etc/          files for /etc
 types/<type>/ignore.txt    what the scan never reports
 ```
 
-The type is the `profile` value in the machine's chezmoi data.
+The machine names its type and options in `/etc/mothership/machine.toml`:
 
 ```toml
-packages = ["base", "desktop"]        # lists in packages/
-built_packages = ["local"]            # built elsewhere: checked, never installed
+type = "workstation"
+options = ["dual-boot"]
+```
+
+The type's `system.toml`:
+
+```toml
+packages = ["base", "linux"]
+built_packages = ["mydriver"]         # built elsewhere: checked, never installed
 aur_helper = "yay"                    # installs what pacman's repos lack
 shell = "/usr/bin/fish"
 groups = ["docker"]
@@ -42,6 +48,15 @@ creates = "~/.bun"
 
 [tools]                               # cargo, uv and bun, installed as you
 cargo = ["cargo-nextest", { name = "mytool", git = "https://github.com/me/mytool", branch = "dev" }]
+
+[hardware.cpu-intel]                  # on machines with an Intel CPU
+packages = ["intel-ucode"]
+
+[options.dual-boot]                   # on machines whose machine.toml turns it on
+packages = ["os-prober"]
+etc = ["default/grub"]                # files of etc/ only these machines get
 ```
+
+A block takes `packages`, `built_packages`, `services` and `etc`. mothership finds `cpu-intel`, `cpu-amd`, `gpu-intel`, `gpu-amd`, `gpu-nvidia`, `battery` and `gxfp5130` (a fingerprint sensor), and stops when the machine has one its type has no block for, even an empty one.
 
 `ignore.txt` holds `<kind> <glob>` lines, such as `home ~/.cache` or `package linux-firmware-*`. `*` stays in one folder, `**` crosses folders.

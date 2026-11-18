@@ -2,6 +2,7 @@ mod apply;
 mod cmd;
 mod edit;
 mod fleet;
+mod hardware;
 mod ignore;
 mod pacman;
 mod preview;

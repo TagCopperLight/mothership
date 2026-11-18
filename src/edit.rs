@@ -16,6 +16,8 @@ use toml_edit::{Array, DocumentMut, InlineTable, Value, value};
 
 #[derive(Clone, Copy)]
 pub enum Key {
+    Packages,
+    BuiltPackages,
     Services,
     UserServices,
     Groups,
@@ -25,6 +27,8 @@ pub enum Key {
 impl Key {
     fn path(self) -> Vec<&'static str> {
         match self {
+            Key::Packages => vec!["packages"],
+            Key::BuiltPackages => vec!["built_packages"],
             Key::Services => vec!["services"],
             Key::UserServices => vec!["user_services"],
             Key::Groups => vec!["groups"],
@@ -66,8 +70,8 @@ pub enum Add {
 impl Add {
     pub fn describe(&self) -> String {
         match self {
-            Add::ListPackage(_) => "list it in one of the type's package lists".into(),
-            Add::UnlistPackage(_) => "remove it from the package lists".into(),
+            Add::ListPackage(_) => "add it to `packages` in system.toml".into(),
+            Add::UnlistPackage(_) => "remove it from system.toml".into(),
             Add::Declare { key, .. } => {
                 format!("add it to `{}` in system.toml", key.path().join("."))
             }
@@ -91,26 +95,15 @@ impl Add {
     /// Returns false when I cancel along the way.
     pub fn apply(&self, fleet: &Fleet, prompt: &mut Prompt) -> Result<bool> {
         match self {
-            Add::ListPackage(name) => {
-                let Some(list) = prompt.choose("  Which list", package_lists(fleet, name)?)? else {
-                    return Ok(false);
-                };
-                append_line(&fleet.package_path(list), name)?;
+            Add::ListPackage(name) => declare(fleet, package_key(fleet, name)?, name, name.into())?,
+            Add::UnlistPackage(name) => {
+                undeclare(fleet, &[Key::Packages, Key::BuiltPackages], name)?
             }
-            Add::UnlistPackage(name) => unlist_package(fleet, name)?,
             Add::Declare { key, name } => declare(fleet, *key, name, name.into())?,
             Add::DeclareTool { manager, tool } => {
                 declare(fleet, Key::Tools(*manager), tool.name(), tool_entry(tool))?
             }
-            Add::Undeclare { key, name } => edit_system(fleet, |doc| {
-                let array = array(doc, *key)?;
-                let before = array.len();
-                array.retain(|v| !names(v, name));
-                if array.len() == before {
-                    bail!("{name} is not in `{}`", key.path().join("."));
-                }
-                Ok(())
-            })?,
+            Add::Undeclare { key, name } => undeclare(fleet, &[*key], name)?,
             Add::UndeclareInstaller(name) => edit_system(fleet, |doc| {
                 let installers = doc["installers"]
                     .as_array_of_tables_mut()
@@ -139,7 +132,7 @@ impl Add {
                 cmd::run("chezmoi", &["re-add", &path.to_string_lossy()])?;
             }
             Add::CopyEtc(path) => copy_etc(fleet, etc_rel(path), path)?,
-            Add::RemoveEtc(path) => remove_etc(fleet, &fleet.etc_dir().join(etc_rel(path)))?,
+            Add::RemoveEtc(path) => remove_etc(fleet, etc_rel(path))?,
             Add::Pref {
                 user_js,
                 key,
@@ -166,64 +159,43 @@ pub fn ignore(fleet: &Fleet, line: &str) -> Result<()> {
 }
 
 /// Apply installs a package from pacman's repos or the AUR. One found in neither was built
-/// here, and only a list of built packages, which apply never installs, can hold it.
-fn package_lists<'a>(fleet: &'a Fleet, name: &str) -> Result<&'a [String]> {
+/// here, and only `built_packages`, which apply never installs, can hold it.
+fn package_key(fleet: &Fleet, name: &str) -> Result<Key> {
     if pacman::in_repos()?.contains(name) {
-        return Ok(&fleet.system.packages);
+        return Ok(Key::Packages);
     }
     let why = match fleet.system.aur_helper.as_deref() {
         None => "system.toml sets no aur_helper".to_owned(),
         Some(helper) => match cmd::stdout(helper, &["-Si", name]) {
-            Ok(_) => return Ok(&fleet.system.packages),
+            Ok(_) => return Ok(Key::Packages),
             Err(e) => format!("{e:#}"),
         },
     };
     println!("  It is in neither pacman's repos nor the AUR: {why}");
-    if fleet.system.built_packages.is_empty() {
-        bail!("only a `built_packages` list can hold it, and system.toml has none");
-    }
-    println!("  Only a list of built packages can hold it.");
-    Ok(&fleet.system.built_packages)
+    println!("  It goes into `built_packages`.");
+    Ok(Key::BuiltPackages)
 }
 
-fn unlist_package(fleet: &Fleet, name: &str) -> Result<()> {
-    let mut found = false;
-    for list in fleet
-        .system
-        .packages
-        .iter()
-        .chain(&fleet.system.built_packages)
-    {
-        let path = fleet.package_path(list);
-        let text = fs::read_to_string(&path)?;
-        let mut out = String::new();
-        for line in text.lines() {
-            let (code, comment) = line.split_at(line.find('#').unwrap_or(line.len()));
-            let names: Vec<&str> = code.split_whitespace().collect();
-            if !names.contains(&name) {
-                out.push_str(line);
-            } else if names.len() > 1 {
-                found = true;
-                let kept: Vec<&str> = names.into_iter().filter(|n| *n != name).collect();
-                let code = format!("{:width$}", kept.join(" "), width = code.len());
-                out.push_str(if comment.is_empty() {
-                    code.trim_end()
-                } else {
-                    &code
-                });
-                out.push_str(comment);
-            } else {
-                found = true;
-                continue;
+/// The name may come from one of the machine's blocks.
+fn undeclare(fleet: &Fleet, keys: &[Key], name: &str) -> Result<()> {
+    edit_system(fleet, |doc| {
+        let mut found = false;
+        for table in &fleet.tables {
+            for key in keys {
+                if let Some(array) = find_array(doc, table, &key.path()) {
+                    found |= remove(array, name);
+                }
             }
-            out.push('\n');
         }
-        fs::write(&path, out)?;
-    }
-    if !found {
-        bail!("{name} is in none of the type's lists");
-    }
-    Ok(())
+        if !found {
+            let keys: Vec<String> = keys
+                .iter()
+                .map(|k| format!("`{}`", k.path().join(".")))
+                .collect();
+            bail!("{name} is in no {} of system.toml", keys.join(" or "));
+        }
+        Ok(())
+    })
 }
 
 fn declare(fleet: &Fleet, key: Key, name: &str, entry: Value) -> Result<()> {
@@ -235,12 +207,7 @@ fn declare(fleet: &Fleet, key: Key, name: &str, entry: Value) -> Result<()> {
             *old.decor_mut() = decor;
             return Ok(());
         }
-        let prefix = gap(array);
-        array.push(entry);
-        if let Some(prefix) = prefix {
-            let pushed = array.iter_mut().last().expect("just pushed");
-            pushed.decor_mut().set_prefix(prefix);
-        }
+        push(array, entry);
         Ok(())
     })
 }
@@ -285,12 +252,74 @@ fn array(doc: &mut DocumentMut, key: Key) -> Result<&mut Array> {
         .with_context(|| format!("`{}` in system.toml is not an array", key.path().join(".")))
 }
 
-/// What goes before a new item so it looks like the others. The first item's prefix is the
-/// space after `[`, so it only counts when it starts a new line.
-fn gap(array: &Array) -> Option<toml_edit::RawString> {
-    let last = array.iter().last()?.decor().prefix()?;
-    let one_line = array.len() == 1 && !last.as_str().is_some_and(|p| p.contains('\n'));
-    (!one_line).then(|| last.clone())
+fn find_array<'a>(
+    doc: &'a mut DocumentMut,
+    table: &[String],
+    key: &[&str],
+) -> Option<&'a mut Array> {
+    let mut item = doc.as_item_mut();
+    for part in table.iter().map(String::as_str).chain(key.iter().copied()) {
+        item = item.get_mut(part)?;
+    }
+    item.as_array_mut()
+}
+
+/// toml_edit keeps the comment at the end of an item's line before the next item, or in the
+/// array's trailing part after the last one. push and remove keep each comment on its line.
+fn push(array: &mut Array, entry: Value) {
+    // A one-line array has no newline to copy.
+    let indent = array
+        .iter()
+        .last()
+        .map(prefix)
+        .and_then(|p| p.rfind('\n').map(|n| p[n..].to_owned()));
+    array.push(entry);
+    let Some(indent) = indent else {
+        return;
+    };
+    let trailing = raw(array.trailing());
+    let (line_end, rest) = trailing.split_at(trailing.find('\n').unwrap_or(trailing.len()));
+    let pushed = array.iter_mut().last().expect("just pushed");
+    pushed.decor_mut().set_prefix(format!("{line_end}{indent}"));
+    array.set_trailing(rest);
+}
+
+fn remove(array: &mut Array, name: &str) -> bool {
+    let Some(i) = array.iter().position(|v| names(v, name)) else {
+        return false;
+    };
+    let own = prefix(array.get(i).expect("found"));
+    let next = match array.get(i + 1) {
+        Some(next) => prefix(next),
+        None => raw(array.trailing()),
+    };
+    // Lines above the removed item stay, and its own line's comment goes with it.
+    let joined = match next.split_once('\n') {
+        None => own,
+        Some((_, below)) => {
+            let above = own.rfind('\n').map_or(own.as_str(), |n| &own[..=n]);
+            format!("{above}{below}")
+        }
+    };
+    array.remove(i);
+    match array.get_mut(i) {
+        Some(next) => next.decor_mut().set_prefix(joined),
+        None => array.set_trailing(joined),
+    }
+    true
+}
+
+fn prefix(value: &Value) -> String {
+    value
+        .decor()
+        .prefix()
+        .and_then(|p| p.as_str())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn raw(text: &toml_edit::RawString) -> String {
+    text.as_str().unwrap_or_default().to_owned()
 }
 
 /// A tool is either its name or a table with its name and source.
@@ -316,6 +345,12 @@ fn etc_rel(path: &Path) -> &Path {
 
 /// A mode git can't keep goes into `etc_modes`.
 fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path) -> Result<()> {
+    if fleet.etc_elsewhere.contains(rel) {
+        bail!(
+            "etc/{} belongs to hardware or an option this machine doesn't have",
+            rel.display()
+        );
+    }
     let dest = fleet.etc_dir().join(rel);
     let dest = dest.as_path();
     user::create_dir_all(dest.parent().expect("under etc/"))?;
@@ -363,16 +398,26 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn remove_etc(fleet: &Fleet, dest: &Path) -> Result<()> {
-    fs::remove_file(dest).with_context(|| format!("removing {}", dest.display()))?;
-    let root = fleet.type_dir.join("etc");
+/// A block's file also leaves the block's `etc`.
+fn remove_etc(fleet: &Fleet, rel: &Path) -> Result<()> {
+    let dest = fleet.etc_dir().join(rel);
+    fs::remove_file(&dest).with_context(|| format!("removing {}", dest.display()))?;
+    let root = fleet.etc_dir();
     for dir in dest.ancestors().skip(1).take_while(|dir| *dir != root) {
         if fs::read_dir(dir)?.next().is_some() {
             break;
         }
         fs::remove_dir(dir)?;
     }
-    Ok(())
+    let rel = rel.to_string_lossy();
+    edit_system(fleet, |doc| {
+        for table in &fleet.tables[1..] {
+            if let Some(array) = find_array(doc, table, &["etc"]) {
+                remove(array, &rel);
+            }
+        }
+        Ok(())
+    })
 }
 
 fn set_pref(source: &Path, key: &str, value: &str) -> Result<()> {

@@ -121,9 +121,9 @@ impl Record {
     pub fn after(fleet: &Fleet, before: &Record, etc_root: &Path) -> Result<Record> {
         let mut etc = BTreeMap::new();
         let etc_dir = fleet.etc_dir();
-        for rel in walk::files(&etc_dir)? {
-            let path = etc_root.join(&rel);
-            let wanted = hash(&etc_dir.join(&rel))?;
+        for rel in &fleet.etc {
+            let path = etc_root.join(rel);
+            let wanted = hash(&etc_dir.join(rel))?;
             let entry = if hash(&path)? == wanted {
                 wanted
             } else {
@@ -135,7 +135,7 @@ impl Record {
         }
         let system = &fleet.system;
         Ok(Record {
-            packages: fleet.packages()?,
+            packages: fleet.packages(),
             groups: system.groups.iter().cloned().collect(),
             shell: system.shell.clone(),
             services: system.services.iter().cloned().collect(),

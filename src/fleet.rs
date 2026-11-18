@@ -1,5 +1,10 @@
-use crate::{cmd, ignore::Ignore, user};
-use anyhow::{Context, Result};
+use crate::{
+    cmd,
+    hardware::{self, Hardware},
+    ignore::Ignore,
+    user, walk,
+};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -11,7 +16,14 @@ use std::{
 pub struct Fleet {
     pub dir: PathBuf,
     pub type_dir: PathBuf,
+    /// With the blocks of this machine's hardware and options merged in.
     pub system: System,
+    /// Where `system` comes from in system.toml: the top level, then each block merged in.
+    pub tables: Vec<Vec<String>>,
+    /// The files under etc/ this machine gets.
+    pub etc: BTreeSet<PathBuf>,
+    /// The files under etc/ that belong to blocks this machine doesn't have.
+    pub etc_elsewhere: BTreeSet<PathBuf>,
     pub ignore: Ignore,
 }
 
@@ -19,6 +31,7 @@ pub struct Fleet {
 #[serde(deny_unknown_fields, default)]
 pub struct System {
     pub packages: Vec<String>,
+    /// Packages other repos build: checked, never installed.
     pub built_packages: Vec<String>,
     /// Installs the listed packages that aren't in pacman's repos. It takes pacman's `-S --needed`.
     pub aur_helper: Option<String>,
@@ -31,7 +44,32 @@ pub struct System {
     /// Files in etc/ that need another mode than 644, or 755 for executables. git keeps only the
     /// executable bit.
     pub etc_modes: BTreeMap<PathBuf, Mode>,
+    hardware: BTreeMap<Hardware, Block>,
+    options: BTreeMap<String, Block>,
 }
+
+/// What a piece of hardware or an option adds to the type.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, default)]
+struct Block {
+    packages: Vec<String>,
+    built_packages: Vec<String>,
+    services: Vec<String>,
+    /// Files under etc/ that only machines with the block get.
+    etc: Vec<PathBuf>,
+}
+
+/// What the install asks, kept on the machine.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Machine {
+    #[serde(rename = "type")]
+    device_type: String,
+    #[serde(default)]
+    options: Vec<String>,
+}
+
+pub const MACHINE: &str = "/etc/mothership/machine.toml";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Mode(pub u32);
@@ -134,8 +172,11 @@ impl Tool {
 const IGNORE: &str = "ignore.txt";
 
 impl Fleet {
-    /// The machine's device type is the chezmoi profile it was set up with.
     pub fn load() -> Result<Self> {
+        let machine: Machine = toml::from_str(
+            &fs::read_to_string(MACHINE).with_context(|| format!("reading {MACHINE}"))?,
+        )
+        .with_context(|| format!("parsing {MACHINE}"))?;
         let data: serde_json::Value =
             serde_json::from_str(&cmd::stdout("chezmoi", &["data", "--format", "json"])?)?;
         let dir = PathBuf::from(
@@ -143,31 +184,102 @@ impl Fleet {
                 .as_str()
                 .context("chezmoi data has no sourceDir")?,
         );
-        let device_type = data["profile"]
-            .as_str()
-            .context("chezmoi data has no profile")?;
+        let hardware = hardware::detect(Path::new("/"))?;
+        Fleet::new(dir, &machine.device_type, &machine.options, &hardware)
+    }
+
+    /// Every piece of hardware the machine has needs a block, even an empty one, so that new
+    /// hardware never goes without what it needs unnoticed.
+    pub fn new(
+        dir: PathBuf,
+        device_type: &str,
+        options: &[String],
+        hardware: &BTreeSet<Hardware>,
+    ) -> Result<Self> {
         let type_dir = dir.join("types").join(device_type);
         let system_path = type_dir.join("system.toml");
-        let system = toml::from_str(
+        let mut system: System = toml::from_str(
             &fs::read_to_string(&system_path)
                 .with_context(|| format!("reading {}", system_path.display()))?,
         )
         .with_context(|| format!("parsing {}", system_path.display()))?;
+
+        let mut tables = vec![vec![]];
+        let mut active = Vec::new();
+        for piece in hardware {
+            let block = system.hardware.remove(piece).with_context(|| {
+                format!(
+                    "this machine has {0}, and {1} has no [hardware.{0}]",
+                    piece.name(),
+                    system_path.display()
+                )
+            })?;
+            tables.push(vec!["hardware".into(), piece.name().into()]);
+            active.push(block);
+        }
+        for option in options {
+            let block = system.options.remove(option).with_context(|| {
+                format!(
+                    "{MACHINE} turns on {option}, and {} has no [options.{option}]",
+                    system_path.display()
+                )
+            })?;
+            tables.push(vec!["options".into(), option.clone()]);
+            active.push(block);
+        }
+        let inactive: Vec<&Block> = system
+            .hardware
+            .values()
+            .chain(system.options.values())
+            .collect();
+
+        let all: BTreeSet<PathBuf> = walk::files(&type_dir.join("etc"))?.into_iter().collect();
+        let mut owned = BTreeSet::new();
+        for file in active
+            .iter()
+            .chain(inactive.iter().copied())
+            .flat_map(|b| &b.etc)
+        {
+            if !all.contains(file) {
+                bail!(
+                    "{} names etc/{}, which isn't there",
+                    system_path.display(),
+                    file.display()
+                );
+            }
+            if !owned.insert(file.clone()) {
+                bail!(
+                    "two blocks of {} own etc/{}",
+                    system_path.display(),
+                    file.display()
+                );
+            }
+        }
+        let etc_elsewhere: BTreeSet<PathBuf> = inactive
+            .iter()
+            .flat_map(|b| b.etc.iter().cloned())
+            .collect();
+        let etc = all.difference(&etc_elsewhere).cloned().collect();
+
+        for block in active {
+            system.packages.extend(block.packages);
+            system.built_packages.extend(block.built_packages);
+            system.services.extend(block.services);
+        }
         let ignore = Ignore::load(&type_dir.join(IGNORE))?;
         Ok(Fleet {
             dir,
             type_dir,
             system,
+            tables,
+            etc,
+            etc_elsewhere,
             ignore,
         })
     }
 
     pub fn ignore_path(&self) -> PathBuf {
         self.type_dir.join(IGNORE)
-    }
-
-    pub fn package_path(&self, list: &str) -> PathBuf {
-        self.dir.join("packages").join(format!("{list}.txt"))
     }
 
     pub fn etc_dir(&self) -> PathBuf {
@@ -184,25 +296,9 @@ impl Fleet {
         Ok(Mode::default_for(meta.permissions().mode() & 0o111 != 0))
     }
 
-    /// What the type's package lists install, leaving out the built ones.
-    pub fn packages(&self) -> Result<BTreeSet<String>> {
-        let mut names = BTreeSet::new();
-        for list in &self.system.packages {
-            names.extend(self.package_list(list)?);
-        }
-        Ok(names)
-    }
-
-    pub fn package_list(&self, name: &str) -> Result<Vec<String>> {
-        let path = self.package_path(name);
-        let text =
-            fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-        Ok(text
-            .lines()
-            .filter_map(|line| line.split('#').next())
-            .flat_map(str::split_whitespace)
-            .map(str::to_owned)
-            .collect())
+    /// What apply installs, leaving out the built packages.
+    pub fn packages(&self) -> BTreeSet<String> {
+        self.system.packages.iter().cloned().collect()
     }
 }
 
@@ -219,3 +315,7 @@ pub fn tilde(path: &Path) -> String {
         Err(_) => path.display().to_string(),
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/fleet.rs"]
+mod tests;
