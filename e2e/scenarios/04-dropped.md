@@ -50,8 +50,9 @@ error: package 'alpha' was not found
 [exit 1]
 $ cat /etc/gamma.conf
 volume = 5
-$ ls /etc/extra.conf /etc/kept.conf
-ls: cannot access '/etc/extra.conf': No such file or directory
+$ ls /etc/kept.conf
 /etc/kept.conf
+$ ls /etc/extra.conf
+ls: cannot access '/etc/extra.conf': No such file or directory
 [exit 2]
 ```

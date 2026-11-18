@@ -45,7 +45,3 @@ cargo = ["cargo-nextest", { name = "mytool", git = "https://github.com/me/mytool
 ```
 
 `ignore.txt` holds `<kind> <glob>` lines, such as `home ~/.cache` or `package linux-firmware-*`. `*` stays in one folder, `**` crosses folders.
-
-## Development
-
-`./ci.sh` runs what CI runs: rustfmt, clippy and the tests. `e2e/run.py` runs the scenarios in `e2e/scenarios/` on a throwaway Arch container, as a user would, and needs Docker.
