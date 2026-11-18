@@ -13,8 +13,6 @@ packages = [
   "gamma",
 ]
 aur_helper = "fake-aur"
-shell = "/bin/bash"
-groups = ["wheel"]
 
 [etc_modes]
 "sudoers.d/wheel" = "440"

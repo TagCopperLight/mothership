@@ -7,14 +7,22 @@ mod services;
 mod settings;
 pub mod tools;
 
-use crate::{cmd, edit::Add, fleet::Fleet, pacman::Db, preview::Preview, revert::Revert, user};
+use crate::{
+    chezmoi,
+    edit::Add,
+    fleet::{Fleet, Member},
+    ignore::{Level, Paths},
+    pacman::Db,
+    preview::Preview,
+    revert::Revert,
+};
 use anyhow::{Result, bail};
 use std::{
     collections::BTreeSet,
     fs,
     io::ErrorKind,
     os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
+    path::Path,
     thread::{self, ScopedJoinHandle},
 };
 
@@ -47,8 +55,16 @@ impl Kind {
         Kind::Pref,
     ];
 
+    /// The type's own kinds live outside the homes, the rest belong to each user.
+    pub fn level(self) -> Level {
+        match self {
+            Kind::Package | Kind::Etc | Kind::Service => Level::Machine,
+            _ => Level::User,
+        }
+    }
+
     /// The word ignore.txt uses.
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Kind::Package => "package",
             Kind::Tool => "tool",
@@ -97,6 +113,8 @@ pub enum Secret {
 
 pub struct Item {
     pub kind: Kind,
+    /// The index of the type's user it belongs to, None for the machine's own.
+    pub member: Option<usize>,
     pub subject: String,
     pub detail: String,
     pub secret: Secret,
@@ -112,6 +130,7 @@ impl Item {
     fn new(kind: Kind, subject: impl Into<String>, detail: impl Into<String>) -> Self {
         Item {
             kind,
+            member: None,
             subject: subject.into(),
             detail: detail.into(),
             secret: Secret::No,
@@ -163,6 +182,29 @@ pub fn ignore_line(item: &Item) -> String {
     format!("{} {}", item.kind.name(), globset::escape(&item.subject))
 }
 
+/// The ignore line, with the user it belongs to.
+pub fn key(fleet: &Fleet, item: &Item) -> String {
+    match item.member {
+        None => ignore_line(item),
+        Some(i) => format!("{}: {}", fleet.members[i].name, ignore_line(item)),
+    }
+}
+
+/// The kind's title, with the user an item of theirs belongs to.
+pub fn title(fleet: &Fleet, item: &Item) -> String {
+    match item.member {
+        None => item.kind.title().to_owned(),
+        Some(i) => format!("{}, {}", item.kind.title(), fleet.members[i].name),
+    }
+}
+
+pub fn ignored(fleet: &Fleet, item: &Item) -> bool {
+    match item.member {
+        None => fleet.ignore.matches(item),
+        Some(i) => fleet.members[i].ignore.matches(item),
+    }
+}
+
 pub struct Report {
     pub fleet: Fleet,
     pub shown: Vec<Item>,
@@ -173,31 +215,15 @@ pub fn collect() -> Result<Report> {
     if !Path::new("/usr/bin/pacman").exists() {
         bail!("mothership only knows Arch machines for now");
     }
-    // The checks mostly wait on programs or the disk, so they run at once.
-    let (fleet, items) = thread::scope(|s| {
+    let (fleet, db) = thread::scope(|s| {
         let fleet = s.spawn(Fleet::load);
         let db = s.spawn(Db::load);
-        let managed = s.spawn(managed);
-        let fleet = join(fleet)?;
-        let (db, managed) = (join(db)?, join(managed)?);
-        let items = thread::scope(|s| {
-            let (fleet, db, managed) = (&fleet, &db, &managed);
-            let checks = vec![
-                s.spawn(move || files::scan(fleet, managed)),
-                s.spawn(move || system(fleet, db)),
-                s.spawn(move || tools::scan(fleet)),
-                s.spawn(move || home::scan(fleet, managed)),
-                s.spawn(move || settings::scan(managed)),
-            ];
-            checks.into_iter().map(join).collect::<Result<Vec<_>>>()
-        })?;
-        Ok::<_, anyhow::Error>((fleet, items.into_iter().flatten().collect::<Vec<Item>>()))
+        Ok::<_, anyhow::Error>((join(fleet)?, join(db)?))
     })?;
-
-    let (ignored, mut shown): (Vec<Item>, Vec<Item>) = items
-        .into_iter()
-        .partition(|item| fleet.ignore.matches(item));
-    shown.sort_by_key(|item| item.kind);
+    let items = checks(&fleet, &db, Checks::All)?;
+    let (ignored, mut shown): (Vec<Item>, Vec<Item>) =
+        items.into_iter().partition(|item| ignored(&fleet, item));
+    shown.sort_by_key(|item| (item.member, item.kind));
     Ok(Report {
         fleet,
         shown,
@@ -205,25 +231,75 @@ pub fn collect() -> Result<Report> {
     })
 }
 
-/// The checks apply acts on: what lives outside $HOME, apart from tools.
-pub fn system(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
+/// Apply acts on what it can bring back: everything but untracked config and settings.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Checks {
+    All,
+    Apply,
+}
+
+/// The machine's checks, then each user's. They mostly wait on programs or the disk, so they
+/// run at once.
+pub fn checks(fleet: &Fleet, db: &Db, which: Checks) -> Result<Vec<Item>> {
     let ships = Ships::new(fleet, db)?;
     thread::scope(|s| {
         let ships = &ships;
-        let checks = vec![
-            s.spawn(|| packages::scan(fleet, db)),
-            s.spawn(|| etc::scan(fleet, db)),
+        let mut handles = vec![
+            s.spawn(move || packages::scan(fleet, db)),
+            s.spawn(move || etc::scan(fleet, db)),
             s.spawn(move || services::scan(fleet, ships)),
-            s.spawn(move || account::scan(fleet, ships)),
         ];
-        let items = checks.into_iter().map(join).collect::<Result<Vec<_>>>()?;
+        for i in 0..fleet.members.len() {
+            handles.push(s.spawn(move || member(fleet, ships, i, which)));
+        }
+        let items = handles.into_iter().map(join).collect::<Result<Vec<_>>>()?;
         Ok(items.into_iter().flatten().collect())
     })
 }
 
+/// A user the machine lacks has nothing else to check, and a user whose chezmoi doesn't read
+/// the fleet has no files to compare.
+fn member(fleet: &Fleet, ships: &Ships, i: usize, which: Checks) -> Result<Vec<Item>> {
+    let member = &fleet.members[i];
+    let mut items = Vec::new();
+    match &member.user {
+        None => items.push(
+            Item::new(
+                Kind::Account,
+                format!("user {}", member.name),
+                "declared, missing",
+            )
+            .reverting(Revert::CreateUser),
+        ),
+        Some(user) => {
+            items.extend(account::scan(member, ships)?);
+            items.extend(services::scan_user(member, ships)?);
+            items.extend(tools::scan(member)?);
+            if member.chezmoi {
+                let managed = chezmoi::managed(user, "files,symlinks")?;
+                items.extend(files::scan(member, &managed)?);
+                if which == Checks::All {
+                    items.extend(home::scan(fleet, member, &managed)?);
+                    items.extend(settings::scan(member, &managed)?);
+                }
+            } else {
+                items.push(
+                    Item::new(Kind::File, "chezmoi", "doesn't read the fleet")
+                        .reverting(Revert::InitChezmoi),
+                );
+            }
+        }
+    }
+    for item in &mut items {
+        item.member = Some(i);
+    }
+    Ok(items)
+}
+
 /// What a new machine of the type gets before its services and account are set: the files of
-/// the packages it installs and their dependencies, its etc/, and chezmoi's files. Review only offers to declare
-/// a unit, group or shell that comes from there, so apply can set it up on that machine too.
+/// the packages it installs and their dependencies, its etc/, and chezmoi's files. Review only
+/// offers to declare a unit, group or shell that comes from there, so apply can set it up on
+/// that machine too.
 pub struct Ships<'a> {
     fleet: &'a Fleet,
     db: &'a Db,
@@ -240,7 +316,8 @@ impl<'a> Ships<'a> {
     }
 
     /// /bin is a link to /usr/bin, where packages put their files, so the folder is resolved.
-    pub fn path(&self, path: &Path) -> Result<bool> {
+    /// A file in a user's home ships when their chezmoi writes it.
+    pub fn path(&self, path: &Path, member: Option<&Member>) -> Result<bool> {
         let resolved = match (path.parent(), path.file_name()) {
             (Some(dir), Some(name)) => match fs::canonicalize(dir) {
                 Ok(dir) => dir.join(name),
@@ -254,10 +331,11 @@ impl<'a> Ships<'a> {
         {
             return Ok(true);
         }
-        if resolved.starts_with(user::home()) {
+        if let Some(user) = member.and_then(|m| m.user.as_ref())
+            && resolved.starts_with(&user.home)
+        {
             // Fails for a file chezmoi doesn't manage.
-            let file = resolved.to_string_lossy();
-            return Ok(cmd::stdout("chezmoi", &["source-path", &file]).is_ok());
+            return Ok(chezmoi::source_path(user, &resolved).is_ok());
         }
         let file = resolved.to_string_lossy();
         Ok(self
@@ -275,43 +353,24 @@ fn join<T>(handle: ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
-pub fn managed() -> Result<Vec<PathBuf>> {
-    let args = [
-        "managed",
-        "--path-style",
-        "absolute",
-        "--include",
-        "files,symlinks",
-    ];
-    Ok(cmd::stdout("chezmoi", &args)?
-        .lines()
-        .map(PathBuf::from)
-        .collect())
-}
-
 pub fn run() -> Result<()> {
     let report = collect()?;
     let shown: Vec<&Item> = report.shown.iter().collect();
-    print(&shown, |item| {
+    print(&report.fleet, &shown, |item| {
         format!("{}{}", item.detail, item.secret.mark())
     });
     println!(
-        "{} differences, {} ignored by {}",
+        "{} differences, {} ignored",
         report.shown.len(),
-        report.ignored,
-        crate::fleet::tilde(&report.fleet.ignore_path())
+        report.ignored
     );
     Ok(())
 }
 
-/// Grouped by kind, one line per item.
-pub fn print(items: &[&Item], detail: impl Fn(&Item) -> String) {
-    for kind in Kind::ALL {
-        let group: Vec<&&Item> = items.iter().filter(|item| item.kind == kind).collect();
-        if group.is_empty() {
-            continue;
-        }
-        println!("{} ({})", kind.title(), group.len());
+/// Grouped by user and kind, one line per item. `items` come sorted that way.
+pub fn print(fleet: &Fleet, items: &[&Item], detail: impl Fn(&Item) -> String) {
+    for group in items.chunk_by(|a, b| (a.member, a.kind) == (b.member, b.kind)) {
+        println!("{} ({})", title(fleet, group[0]), group.len());
         let width = group
             .iter()
             .map(|item| item.subject.len())
@@ -333,8 +392,8 @@ impl Secret {
 
 /// A guess, so a secret is never added in clear by mistake: a file only its owner can read, or
 /// a folder holding one. A folder it can't open counts too. not-secret.txt clears the guess.
-fn looks_secret(fleet: &Fleet, item: Item, path: &Path) -> Item {
-    if !fleet.not_secret.matches(&item.subject) && guess_secret(path) {
+fn looks_secret(not_secret: &Paths, item: Item, path: &Path) -> Item {
+    if !not_secret.matches(&item.subject) && guess_secret(path) {
         item.secret(Secret::Guessed)
     } else {
         item

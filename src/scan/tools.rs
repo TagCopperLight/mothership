@@ -1,25 +1,29 @@
 use super::{Item, Kind};
 use crate::{
-    cmd,
+    cmd::{self, As},
     edit::{Add, Key},
-    fleet::{self, Fleet, GitTool, Manager, Tool},
+    fleet::{GitTool, Manager, Member, Tool, Tools},
     revert::Revert,
-    user,
+    user::User,
 };
 use anyhow::{Context, Result};
 use std::{collections::BTreeMap, fs, io::ErrorKind, path::Path};
 
-pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
+pub fn scan(member: &Member) -> Result<Vec<Item>> {
+    let user = member.user();
+    let tools = &member.config.tools;
     let mut items = Vec::new();
     for manager in Manager::ALL {
-        items.extend(compare(fleet, manager, &installed(manager)?));
+        if uses(user, tools, manager) {
+            items.extend(compare(tools, manager, &installed(user, manager)?));
+        }
     }
     items.extend(
-        fleet
-            .system
+        member
+            .config
             .installers
             .iter()
-            .filter(|installer| !fleet::expand(&installer.creates).exists())
+            .filter(|installer| !user.expand(&installer.creates).exists())
             .map(|installer| {
                 Item::new(
                     Kind::Tool,
@@ -56,8 +60,13 @@ fn from(tool: &Tool) -> String {
     }
 }
 
-fn compare(fleet: &Fleet, manager: Manager, installed: &BTreeMap<String, Source>) -> Vec<Item> {
-    let declared = fleet.system.tools.of(manager);
+/// A user without the manager has no tools from it, unless the fleet declares some.
+fn uses(user: &User, tools: &Tools, manager: Manager) -> bool {
+    !tools.of(manager).is_empty() || crate::tools::has(user, manager)
+}
+
+fn compare(tools: &Tools, manager: Manager, installed: &BTreeMap<String, Source>) -> Vec<Item> {
+    let declared = tools.of(manager);
     let subject = |name: &str| format!("{} {name}", manager.name());
     let mut items = Vec::new();
     for (name, source) in installed {
@@ -71,7 +80,7 @@ fn compare(fleet: &Fleet, manager: Manager, installed: &BTreeMap<String, Source>
             ),
             Source::Other(text) => (text.clone(), None),
         };
-        let item = match fleet.system.tools.find(manager, name) {
+        let item = match tools.find(manager, name) {
             None => Item::new(
                 Kind::Tool,
                 subject(name),
@@ -116,11 +125,16 @@ fn compare(fleet: &Fleet, manager: Manager, installed: &BTreeMap<String, Source>
     items
 }
 
-fn installed(manager: Manager) -> Result<BTreeMap<String, Source>> {
+fn installed(user: &User, manager: Manager) -> Result<BTreeMap<String, Source>> {
+    let who = As::User(user);
     match manager {
-        Manager::Cargo => Ok(cargo_list(&cmd::stdout("cargo", &["install", "--list"])?)),
-        Manager::Uv => uv_tools(Path::new(cmd::stdout("uv", &["tool", "dir"])?.trim())),
-        Manager::Bun => bun_globals(&user::home().join(".bun/install/global/package.json")),
+        Manager::Cargo => Ok(cargo_list(&cmd::stdout(
+            who,
+            "cargo",
+            &["install", "--list"],
+        )?)),
+        Manager::Uv => uv_tools(Path::new(cmd::stdout(who, "uv", &["tool", "dir"])?.trim())),
+        Manager::Bun => bun_globals(&user.home.join(".bun/install/global/package.json")),
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::{
-    fleet::{Fleet, Manager, Tool, Tools},
+    fleet::{Fleet, Tools},
     pacman::{self, Db},
     revert::Revert,
     walk,
@@ -19,17 +19,25 @@ pub const PATH: &str = "/var/lib/mothership/applied.json";
 /// from the fleet changing since, which apply follows, or from the machine changing since,
 /// which waits for review.
 #[derive(Serialize, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Record {
     packages: BTreeSet<String>,
+    services: BTreeSet<String>,
+    /// The MD5 of each /etc file as apply last left it.
+    etc: BTreeMap<PathBuf, String>,
+    users: BTreeMap<String, UserRecord>,
+}
+
+/// What a user of the type had declared.
+#[derive(Serialize, Deserialize, Default, Clone)]
+#[serde(default, deny_unknown_fields)]
+struct UserRecord {
     groups: BTreeSet<String>,
     shell: Option<String>,
-    services: BTreeSet<String>,
+    linger: bool,
     user_services: BTreeSet<String>,
     tools: Tools,
     installers: BTreeSet<String>,
-    /// The MD5 of each /etc file as apply last left it.
-    etc: BTreeMap<PathBuf, String>,
 }
 
 impl Record {
@@ -50,20 +58,28 @@ impl Record {
     }
 
     /// A file that still matches what apply wrote, or what its package shipped, wasn't edited.
-    pub fn fleet_changed(&self, revert: &Revert, db: &Db) -> Result<bool> {
+    /// `user` names the user a revert of theirs belongs to. A user the machine lacks, or whose
+    /// chezmoi doesn't read the fleet, is never something I chose.
+    pub fn fleet_changed(&self, revert: &Revert, user: Option<&str>, db: &Db) -> Result<bool> {
+        let empty = UserRecord::default();
+        let mine = user.and_then(|u| self.users.get(u)).unwrap_or(&empty);
         Ok(match revert {
             Revert::Install(name) => !self.packages.contains(name),
             Revert::Uninstall(name) => self.packages.contains(name),
+            Revert::CreateUser | Revert::InitChezmoi => true,
+            Revert::Linger(linger) => mine.linger != *linger,
             Revert::InstallTool { manager, tool } | Revert::ReinstallTool { manager, tool } => {
-                self.tool(*manager, tool.name()) != Some(tool)
+                mine.tools.find(*manager, tool.name()) != Some(tool)
             }
-            Revert::UninstallTool { manager, name } => self.tool(*manager, name).is_some(),
-            Revert::RunInstaller(name) => !self.installers.contains(name),
-            Revert::Join(group) => !self.groups.contains(group),
-            Revert::Leave(group) => self.groups.contains(group),
-            Revert::Shell(shell) => self.shell.as_ref() != Some(shell),
-            Revert::Enable { unit, user } => !self.units(*user).contains(unit),
-            Revert::Disable { unit, user } => self.units(*user).contains(unit),
+            Revert::UninstallTool { manager, name } => mine.tools.find(*manager, name).is_some(),
+            Revert::RunInstaller(name) => !mine.installers.contains(name),
+            Revert::Join(group) => !mine.groups.contains(group),
+            Revert::Leave(group) => mine.groups.contains(group),
+            Revert::Shell(shell) => mine.shell.as_ref() != Some(shell),
+            Revert::Enable { unit, user: false } => !self.services.contains(unit),
+            Revert::Disable { unit, user: false } => self.services.contains(unit),
+            Revert::Enable { unit, .. } => !mine.user_services.contains(unit),
+            Revert::Disable { unit, .. } => mine.user_services.contains(unit),
             Revert::WriteEtc(path) => match hash(path)? {
                 None => !self.etc.contains_key(path),
                 Some(actual) => {
@@ -101,23 +117,12 @@ impl Record {
         Ok(())
     }
 
-    fn tool(&self, manager: Manager, name: &str) -> Option<&Tool> {
-        self.tools.find(manager, name)
-    }
-
-    fn units(&self, user: bool) -> &BTreeSet<String> {
-        if user {
-            &self.user_services
-        } else {
-            &self.services
-        }
-    }
-
     fn unchanged(&self, path: &Path) -> Result<bool> {
         Ok(self.etc.contains_key(path) && hash(path)?.as_ref() == self.etc.get(path))
     }
 
-    /// An /etc file left edited keeps its old entry, so it stays an edit.
+    /// An /etc file left edited keeps its old entry, so it stays an edit. A user the machine
+    /// lacked got nothing but their account, so they keep their old entry too.
     pub fn after(fleet: &Fleet, before: &Record, etc_root: &Path) -> Result<Record> {
         let mut etc = BTreeMap::new();
         for rel in &fleet.etc {
@@ -132,16 +137,31 @@ impl Record {
                 etc.insert(path, entry);
             }
         }
-        let system = &fleet.system;
+        let users = fleet
+            .members
+            .iter()
+            .filter_map(|member| {
+                if member.user.is_none() {
+                    let old = before.users.get(&member.name)?;
+                    return Some((member.name.clone(), old.clone()));
+                }
+                let config = &member.config;
+                let record = UserRecord {
+                    groups: config.groups.iter().cloned().collect(),
+                    shell: config.shell.clone(),
+                    linger: config.linger,
+                    user_services: config.user_services.iter().cloned().collect(),
+                    tools: config.tools.clone(),
+                    installers: config.installers.iter().map(|i| i.name.clone()).collect(),
+                };
+                Some((member.name.clone(), record))
+            })
+            .collect();
         Ok(Record {
             packages: fleet.packages(),
-            groups: system.groups.iter().cloned().collect(),
-            shell: system.shell.clone(),
-            services: system.services.iter().cloned().collect(),
-            user_services: system.user_services.iter().cloned().collect(),
-            tools: system.tools.clone(),
-            installers: system.installers.iter().map(|i| i.name.clone()).collect(),
+            services: fleet.system.services.iter().cloned().collect(),
             etc,
+            users,
         })
     }
 }
@@ -151,7 +171,7 @@ fn wanted(fleet: &Fleet, rel: &Path) -> Result<Option<String>> {
     if !fleet.secret_etc.contains(rel) {
         return hash(&fleet.etc_source(rel));
     }
-    if !fleet.secrets().open {
+    if !fleet.etc_open() {
         return Ok(None);
     }
     Ok(Some(pacman::md5(&fleet.etc_contents(rel)?)))

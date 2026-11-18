@@ -1,11 +1,11 @@
 use crate::{
     edit::{self, Add},
-    fleet::{Fleet, tilde},
+    fleet::Fleet,
     prompt::Prompt,
     record::{self, Record},
     revert::{self, Revert},
     scan::{self, Item, Secret},
-    user, walk,
+    walk,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -20,15 +20,18 @@ use std::{
 const DAY: u64 = 24 * 60 * 60;
 const LATER: u64 = 7 * DAY;
 
+/// What review writes into the checkout goes back to the admin, even when an answer fails.
 pub fn run() -> Result<()> {
     let report = scan::collect()?;
-    let mut later = Later::load()?;
-    // Only root can change the machine, and only root can save what it changed in the record.
-    let mut record = if user::is_root() {
-        Some(Record::load(Path::new(record::PATH))?)
-    } else {
-        None
-    };
+    let result = ask(&report);
+    report.fleet.hand_back()?;
+    result
+}
+
+fn ask(report: &scan::Report) -> Result<()> {
+    let fleet = &report.fleet;
+    let mut later = Later::load(fleet)?;
+    let mut record = Record::load(Path::new(record::PATH))?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let due: Vec<&Item> = report
         .shown
@@ -50,7 +53,8 @@ pub fn run() -> Result<()> {
         if terminal {
             print!("\x1b[2J\x1b[3J\x1b[H");
         }
-        println!("[{}/{}] {}", n + 1, due.len(), item.kind.title());
+        let member = item.member.map(|i| &fleet.members[i]);
+        println!("[{}/{}] {}", n + 1, due.len(), scan::title(fleet, item));
         println!(
             "{bold}{}{plain}  {}{}",
             item.subject,
@@ -69,7 +73,7 @@ pub fn run() -> Result<()> {
             .filter(|_| item.secret == Secret::No)
             .and_then(Add::encrypted);
         let guessed = item.secret == Secret::Guessed;
-        let revert = item.revert.as_ref().filter(|_| record.is_some());
+        let revert = item.revert.as_ref();
         item.preview.show(terminal);
         if let Some(add) = add {
             println!("  add: {}", add.describe());
@@ -100,30 +104,27 @@ pub fn run() -> Result<()> {
                         _ => encrypted.as_ref(),
                     };
                     let Some(add) = add else { continue };
-                    if !done(add.apply(&report.fleet, &mut prompt)) {
+                    if !done(add.apply(fleet, member, &mut prompt)) {
                         continue;
                     }
                     later.remove(item);
                     added += 1;
                 }
                 Some("n") if guessed => {
-                    edit::not_secret(&report.fleet, &item.subject)?;
+                    edit::not_secret(fleet, member, &item.subject)?;
                     later.remove(item);
                     not_secret += 1;
                 }
                 Some("r") if revert.is_some() => {
-                    let record = record
-                        .as_mut()
-                        .expect("revert is only offered with a record");
-                    let revert = revert.expect("checked");
-                    if !done(revert_one(&report.fleet, record, revert, &mut prompt)) {
+                    let revert = (item.member, revert.expect("checked"));
+                    if !done(revert_one(fleet, &mut record, revert, &mut prompt)) {
                         continue;
                     }
                     later.remove(item);
                     reverted += 1;
                 }
                 Some("i") => {
-                    edit::ignore(&report.fleet, &scan::ignore_line(item))?;
+                    edit::ignore(fleet, member, &scan::ignore_line(item))?;
                     later.remove(item);
                     ignored += 1;
                 }
@@ -146,9 +147,6 @@ pub fn run() -> Result<()> {
         "{added} added, {reverted} reverted, {ignored} ignored, {put_off} put off for later, \
          {passed} passed"
     );
-    if record.is_none() && due.iter().any(|item| item.revert.is_some()) {
-        println!("Run it with sudo to also revert this machine to the fleet.");
-    }
     if waiting > 0 {
         println!("{waiting} put off before and not due yet");
     }
@@ -158,7 +156,7 @@ pub fn run() -> Result<()> {
     if added + ignored + not_secret > 0 {
         println!(
             "Check the changes with `git -C {} diff`, then commit.",
-            tilde(&report.fleet.dir)
+            fleet.dir.display()
         );
     }
     Ok(())
@@ -176,7 +174,7 @@ fn done(result: Result<bool>) -> bool {
 fn revert_one(
     fleet: &Fleet,
     record: &mut Record,
-    revert: &Revert,
+    (member, revert): revert::Owned,
     prompt: &mut Prompt,
 ) -> Result<bool> {
     if let Revert::DeleteEtc(path) = revert
@@ -187,7 +185,7 @@ fn revert_one(
             return Ok(false);
         }
     }
-    revert::run(fleet, &[revert])?;
+    revert::run(fleet, &[(member, revert)])?;
     record.reverted(revert)?;
     record.save(Path::new(record::PATH))?;
     Ok(true)
@@ -199,25 +197,29 @@ struct Waiting {
     last: u64,
 }
 
-struct Later {
+/// Keyed by `scan::key`.
+struct Later<'a> {
+    fleet: &'a Fleet,
     path: PathBuf,
     items: BTreeMap<String, Waiting>,
 }
 
-impl Later {
-    fn load() -> Result<Self> {
-        let path = user::home().join(".local/state/mothership/later.json");
+const LATER_PATH: &str = "/var/lib/mothership/later.json";
+
+impl<'a> Later<'a> {
+    fn load(fleet: &'a Fleet) -> Result<Self> {
+        let path = PathBuf::from(LATER_PATH);
         let items = match fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text)
                 .with_context(|| format!("parsing {}", path.display()))?,
             Err(e) if e.kind() == ErrorKind::NotFound => BTreeMap::new(),
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         };
-        Ok(Later { path, items })
+        Ok(Later { fleet, path, items })
     }
 
     fn get(&self, item: &Item) -> Option<Waiting> {
-        self.items.get(&scan::ignore_line(item)).copied()
+        self.items.get(&scan::key(self.fleet, item)).copied()
     }
 
     fn due(&self, item: &Item, now: u64) -> bool {
@@ -227,7 +229,7 @@ impl Later {
     fn put_off(&mut self, item: &Item, now: u64) {
         let waiting = self
             .items
-            .entry(scan::ignore_line(item))
+            .entry(scan::key(self.fleet, item))
             .or_insert(Waiting {
                 first: now,
                 last: now,
@@ -236,16 +238,15 @@ impl Later {
     }
 
     fn remove(&mut self, item: &Item) {
-        self.items.remove(&scan::ignore_line(item));
+        self.items.remove(&scan::key(self.fleet, item));
     }
 
     fn save(mut self, current: &[Item]) -> Result<()> {
-        let keys: Vec<String> = current.iter().map(scan::ignore_line).collect();
+        let keys: Vec<String> = current.iter().map(|i| scan::key(self.fleet, i)).collect();
         self.items.retain(|key, _| keys.contains(key));
-        user::create_dir_all(self.path.parent().expect("has a parent"))?;
+        fs::create_dir_all(self.path.parent().expect("has a parent"))?;
         fs::write(&self.path, serde_json::to_string_pretty(&self.items)?)
-            .with_context(|| format!("writing {}", self.path.display()))?;
-        user::own(&self.path)
+            .with_context(|| format!("writing {}", self.path.display()))
     }
 }
 

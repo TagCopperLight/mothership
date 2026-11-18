@@ -87,3 +87,36 @@ fn an_unknown_hardware_name_is_a_parse_error() {
     let dir = checkout("[hardware.cpu-arm]\npackages = []\n");
     assert!(load(&dir, &[], &[]).is_err());
 }
+
+#[test]
+fn each_folder_under_users_is_a_user_of_the_type() {
+    let dir = checkout(SYSTEM);
+    let users = dir.path().join("types/workstation/users");
+    for (name, toml) in [
+        ("tag", "shell = \"/usr/bin/fish\"\nlinger = true\n"),
+        ("dev", ""),
+    ] {
+        fs::create_dir_all(users.join(name)).unwrap();
+        fs::write(users.join(name).join("user.toml"), toml).unwrap();
+    }
+    fs::write(users.join("dev/ignore.txt"), "home ~/.cache\n").unwrap();
+    let fleet = load(&dir, &[], &[Hardware::CpuIntel]).unwrap();
+    let names: Vec<&str> = fleet.members.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, ["dev", "tag"]);
+    assert!(fleet.members[1].config.linger);
+    assert_eq!(
+        fleet.members[1].recipients(),
+        users.join("tag/recipients.txt")
+    );
+
+    // A machine kind in a user's ignore.txt, or a user's in the type's, stops the load.
+    fs::write(users.join("dev/ignore.txt"), "package htop\n").unwrap();
+    assert!(load(&dir, &[], &[Hardware::CpuIntel]).is_err());
+    fs::write(users.join("dev/ignore.txt"), "").unwrap();
+    fs::write(
+        dir.path().join("types/workstation/ignore.txt"),
+        "home ~/.cache\n",
+    )
+    .unwrap();
+    assert!(load(&dir, &[], &[Hardware::CpuIntel]).is_err());
+}

@@ -1,39 +1,47 @@
 use anyhow::{Context, Result, bail};
 use std::{
-    env, fs,
+    fs,
     os::unix,
     path::{Path, PathBuf},
-    sync::OnceLock,
 };
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct User {
     pub name: String,
-    uid: u32,
+    pub uid: u32,
     gid: u32,
     pub home: PathBuf,
     pub shell: String,
 }
 
-static CURRENT: OnceLock<User> = OnceLock::new();
+impl User {
+    /// Gives a file root wrote to this user.
+    pub fn own(&self, path: &Path) -> Result<()> {
+        unix::fs::lchown(path, Some(self.uid), Some(self.gid))
+            .with_context(|| format!("giving {} to {}", path.display(), self.name))
+    }
 
-/// Under sudo, the user who ran it: apply still works on their home, files and services.
-pub fn init() -> Result<()> {
-    let name = if is_root() {
-        env::var("SUDO_USER").context("run it with sudo from your own account")?
-    } else {
-        env::var("USER").context("USER is not set")?
-    };
-    let user = lookup(&name)?;
-    CURRENT.get_or_init(|| user);
-    Ok(())
-}
+    /// Like `fs::create_dir_all`, with each new folder owned by the user.
+    pub fn create_dir_all(&self, dir: &Path) -> Result<()> {
+        let missing: Vec<&Path> = dir.ancestors().take_while(|d| !d.exists()).collect();
+        fs::create_dir_all(dir)?;
+        missing.into_iter().try_for_each(|d| self.own(d))
+    }
 
-pub fn current() -> &'static User {
-    CURRENT.get().expect("main calls user::init first")
-}
+    /// `~/rest` in the user's home.
+    pub fn expand(&self, path: &str) -> PathBuf {
+        match path.strip_prefix("~/") {
+            Some(rest) => self.home.join(rest),
+            None => PathBuf::from(path),
+        }
+    }
 
-pub fn home() -> PathBuf {
-    current().home.clone()
+    pub fn tilde(&self, path: &Path) -> String {
+        match path.strip_prefix(&self.home) {
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => path.display().to_string(),
+        }
+    }
 }
 
 pub fn is_root() -> bool {
@@ -41,40 +49,33 @@ pub fn is_root() -> bool {
     unsafe { libc::geteuid() == 0 }
 }
 
-/// Under sudo, what review writes into the fleet checkout and the user's state stays the user's.
-pub fn own(path: &Path) -> Result<()> {
-    if is_root() {
-        let user = current();
-        unix::fs::lchown(path, Some(user.uid), Some(user.gid))
-            .with_context(|| format!("giving {} to {}", path.display(), user.name))?;
-    }
-    Ok(())
+/// None when the machine has no such user.
+pub fn by_name(name: &str) -> Result<Option<User>> {
+    find(|user| user.name == name)
 }
 
-/// Like `fs::create_dir_all`, with each new folder owned by the user.
-pub fn create_dir_all(dir: &Path) -> Result<()> {
-    let missing: Vec<&Path> = dir.ancestors().take_while(|d| !d.exists()).collect();
-    fs::create_dir_all(dir)?;
-    missing.into_iter().try_for_each(own)
+pub fn by_uid(uid: u32) -> Result<User> {
+    find(|user| user.uid == uid)?.with_context(|| format!("no user has uid {uid}"))
 }
 
 /// Read directly: getent also asks systemd, which stalls while it lists unit files.
-fn lookup(name: &str) -> Result<User> {
+fn find(wanted: impl Fn(&User) -> bool) -> Result<Option<User>> {
     let passwd = fs::read_to_string("/etc/passwd")?;
     for line in passwd.lines() {
         let fields: Vec<&str> = line.split(':').collect();
-        if fields.first() == Some(&name) {
-            let [_, _, uid, gid, _, home, shell] = fields[..] else {
-                bail!("{name}'s line in /etc/passwd is malformed");
-            };
-            return Ok(User {
-                name: name.to_owned(),
-                uid: uid.parse()?,
-                gid: gid.parse()?,
-                home: PathBuf::from(home),
-                shell: shell.to_owned(),
-            });
+        let [name, _, uid, gid, _, home, shell] = fields[..] else {
+            bail!("a line in /etc/passwd is malformed: {line}");
+        };
+        let user = User {
+            name: name.to_owned(),
+            uid: uid.parse()?,
+            gid: gid.parse()?,
+            home: PathBuf::from(home),
+            shell: shell.to_owned(),
+        };
+        if wanted(&user) {
+            return Ok(Some(user));
         }
     }
-    bail!("{name} is not in /etc/passwd")
+    Ok(None)
 }

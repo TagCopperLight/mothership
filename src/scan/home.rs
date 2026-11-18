@@ -1,9 +1,9 @@
 use super::{Item, Kind, looks_secret, services};
 use crate::{
     edit::Add,
-    fleet::{self, Fleet, Manager},
+    fleet::{Fleet, Manager, Member},
     preview::Preview,
-    user, walk,
+    secrets, walk,
 };
 use anyhow::Result;
 use std::{
@@ -12,21 +12,23 @@ use std::{
 };
 
 /// Only dotfiles at the top of ~ count: the visible folders hold data, not config.
-pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
-    let home = user::home();
-    let tools = &fleet.system.tools;
+pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
+    let user = member.user();
+    let home = &user.home;
+    let tools = &member.config.tools;
     let mut known: HashSet<PathBuf> = managed.iter().cloned().collect();
+    // The checkout, when it lives in a home.
     known.insert(fleet.dir.clone());
-    // The machine's own type and key, and the database the dconf check reads.
+    // chezmoi's config and the user's key, and the database the dconf check reads.
     known.insert(home.join(".config/chezmoi"));
-    known.insert(fleet.secrets().key.clone());
+    known.insert(secrets::key_path(user));
     known.insert(home.join(".config/dconf"));
     known.extend(
-        fleet
-            .system
+        member
+            .config
             .installers
             .iter()
-            .map(|i| fleet::expand(&i.creates)),
+            .map(|i| user.expand(&i.creates)),
     );
     if !tools.of(Manager::Cargo).is_empty() {
         known.insert(home.join(".cargo"));
@@ -42,20 +44,20 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
     }
 
     let skip = |path: &Path| {
-        let visible = path.parent() == Some(&home)
+        let visible = path.parent() == Some(home.as_path())
             && !path
                 .file_name()
                 .is_some_and(|name| name.to_string_lossy().starts_with('.'));
         visible || services::is_enablement(path)
     };
-    let walk = walk::unknown(&home, &known, &HashSet::new(), &skip)?;
+    let walk = walk::unknown(home, &known, &HashSet::new(), &skip)?;
     let mut items: Vec<Item> = walk
         .unknown
         .iter()
         .map(|path| {
             looks_secret(
-                fleet,
-                Item::new(Kind::Home, fleet::tilde(path), "not in the fleet")
+                &member.not_secret,
+                Item::new(Kind::Home, user.tilde(path), "not in the fleet")
                     .with(Add::Track {
                         path: path.clone(),
                         encrypt: false,
@@ -68,7 +70,7 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
     items.extend(
         walk.unreadable
             .iter()
-            .map(|path| Item::new(Kind::Home, fleet::tilde(path), "unreadable")),
+            .map(|path| Item::new(Kind::Home, user.tilde(path), "unreadable")),
     );
     Ok(items)
 }

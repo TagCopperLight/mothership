@@ -1,21 +1,27 @@
 use crate::{
     cmd,
     hardware::{self, Hardware},
-    ignore::{Ignore, Paths},
-    secrets::{self, Secrets},
-    user, walk,
+    ignore::{Ignore, Level, Paths},
+    secrets::{self, Keys},
+    user::{self, User},
+    walk,
 };
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    os::unix::fs::PermissionsExt,
+    io::ErrorKind,
+    os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
+/// The checkout every machine reads, owned by the machine's admin, who commits and pushes it.
+pub const DIR: &str = "/var/lib/mothership/fleet";
+
 pub struct Fleet {
     pub dir: PathBuf,
+    pub type_name: String,
     pub type_dir: PathBuf,
     /// With the blocks of this machine's hardware and options merged in.
     pub system: System,
@@ -28,10 +34,35 @@ pub struct Fleet {
     /// The files under etc/ the fleet keeps encrypted, whichever machines get them.
     pub secret_etc: BTreeSet<PathBuf>,
     pub ignore: Ignore,
+    /// What in /etc looks secret but isn't.
+    pub not_secret: Paths,
+    /// The type's users, in name order.
+    pub members: Vec<Member>,
+    /// Read from the machine by `load`.
+    local: Option<Local>,
+}
+
+struct Local {
+    admin: User,
+    keys: Keys,
+    /// Whether root's key opens the /etc secrets.
+    etc_open: bool,
+}
+
+/// A user of the type: what it has outside chezmoi, and its own secrets and lists.
+pub struct Member {
+    pub name: String,
+    pub dir: PathBuf,
+    pub config: UserConfig,
+    pub ignore: Ignore,
     /// What looks secret but isn't.
     pub not_secret: Paths,
-    /// Read from chezmoi's config by `load`.
-    secrets: Option<Secrets>,
+    /// Read from the machine by `Fleet::load`. None when the machine lacks the user.
+    pub user: Option<User>,
+    /// Whether the user's chezmoi reads the fleet, with the user's key and recipients.
+    pub chezmoi: bool,
+    /// Whether the user's key opens the user's secrets.
+    pub open: bool,
 }
 
 #[derive(Deserialize, Default)]
@@ -42,17 +73,25 @@ pub struct System {
     pub built_packages: Vec<String>,
     /// Installs the listed packages that aren't in pacman's repos. It takes pacman's `-S --needed`.
     pub aur_helper: Option<String>,
-    pub shell: Option<String>,
-    pub groups: Vec<String>,
     pub services: Vec<String>,
-    pub user_services: Vec<String>,
-    pub installers: Vec<Installer>,
-    pub tools: Tools,
     /// Files in etc/ that need another mode than 644, or 755 for executables. git keeps only the
     /// executable bit.
     pub etc_modes: BTreeMap<PathBuf, Mode>,
     hardware: BTreeMap<Hardware, Block>,
     options: BTreeMap<String, Block>,
+}
+
+/// user.toml: what a user of the type has outside chezmoi.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct UserConfig {
+    pub shell: Option<String>,
+    pub groups: Vec<String>,
+    pub user_services: Vec<String>,
+    /// Keeps the user's services running while nobody is logged in.
+    pub linger: bool,
+    pub installers: Vec<Installer>,
+    pub tools: Tools,
 }
 
 /// What a piece of hardware or an option adds to the type.
@@ -131,7 +170,7 @@ impl Tools {
     }
 }
 
-/// What installs tools outside pacman, as the user.
+/// What installs tools outside the package manager, as the user.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Manager {
     Cargo,
@@ -180,6 +219,7 @@ impl Tool {
 
 const IGNORE: &str = "ignore.txt";
 const NOT_SECRET: &str = "not-secret.txt";
+const USERS: &str = "users";
 
 impl Fleet {
     pub fn load() -> Result<Self> {
@@ -187,23 +227,53 @@ impl Fleet {
             &fs::read_to_string(MACHINE).with_context(|| format!("reading {MACHINE}"))?,
         )
         .with_context(|| format!("parsing {MACHINE}"))?;
-        let config: serde_json::Value = serde_json::from_str(&cmd::stdout(
-            "chezmoi",
-            &["dump-config", "--format", "json"],
-        )?)?;
-        let dir = PathBuf::from(
-            config["sourceDir"]
-                .as_str()
-                .context("chezmoi's config has no sourceDir")?,
-        );
+        let dir = PathBuf::from(DIR);
+        let meta = fs::metadata(&dir)
+            .with_context(|| format!("reading {DIR}: clone the fleet there as its admin"))?;
+        let admin = user::by_uid(meta.uid())?;
         let hardware = hardware::detect(Path::new("/"))?;
         let mut fleet = Fleet::new(dir, &machine.device_type, &machine.options, &hardware)?;
-        fleet.secrets = Some(Secrets::new(&config, &fleet.type_dir)?);
+        for member in &mut fleet.members {
+            member.user = user::by_name(&member.name)?;
+        }
+        let keys = Keys::load(
+            std::iter::once(PathBuf::from(secrets::ROOT_KEY)).chain(
+                fleet
+                    .members
+                    .iter()
+                    .filter_map(|m| m.user.as_ref().map(secrets::key_path)),
+            ),
+        )?;
+        let etc_open = secrets::opens(&fleet.recipients(), Path::new(secrets::ROOT_KEY))?;
+        for member in &mut fleet.members {
+            let Some(user) = &member.user else { continue };
+            member.open = secrets::opens(&member.recipients(), &secrets::key_path(user))?;
+            member.chezmoi = reads_fleet(member, user, &fleet.dir)?;
+        }
+        fleet.local = Some(Local {
+            admin,
+            keys,
+            etc_open,
+        });
         Ok(fleet)
     }
 
-    pub fn secrets(&self) -> &Secrets {
-        self.secrets.as_ref().expect("Fleet::load reads them")
+    fn local(&self) -> &Local {
+        self.local.as_ref().expect("Fleet::load reads the machine")
+    }
+
+    /// Who owns the checkout, and commits it.
+    pub fn admin(&self) -> &User {
+        &self.local().admin
+    }
+
+    /// Every key this machine holds.
+    pub fn keys(&self) -> &Keys {
+        &self.local().keys
+    }
+
+    pub fn etc_open(&self) -> bool {
+        self.local().etc_open
     }
 
     /// Every piece of hardware the machine has needs a block, even an empty one, so that new
@@ -216,11 +286,7 @@ impl Fleet {
     ) -> Result<Self> {
         let type_dir = dir.join("types").join(device_type);
         let system_path = type_dir.join("system.toml");
-        let mut system: System = toml::from_str(
-            &fs::read_to_string(&system_path)
-                .with_context(|| format!("reading {}", system_path.display()))?,
-        )
-        .with_context(|| format!("parsing {}", system_path.display()))?;
+        let mut system: System = read_toml(&system_path)?;
 
         let mut tables = vec![vec![]];
         let mut active = Vec::new();
@@ -296,10 +362,12 @@ impl Fleet {
             system.built_packages.extend(block.built_packages);
             system.services.extend(block.services);
         }
-        let ignore = Ignore::load(&type_dir.join(IGNORE))?;
+        let ignore = Ignore::load(&type_dir.join(IGNORE), Level::Machine)?;
         let not_secret = Paths::load(&type_dir.join(NOT_SECRET))?;
+        let members = members(&type_dir.join(USERS))?;
         Ok(Fleet {
             dir,
+            type_name: device_type.to_owned(),
             type_dir,
             system,
             tables,
@@ -308,7 +376,8 @@ impl Fleet {
             secret_etc,
             ignore,
             not_secret,
-            secrets: None,
+            members,
+            local: None,
         })
     }
 
@@ -318,6 +387,15 @@ impl Fleet {
 
     pub fn not_secret_path(&self) -> PathBuf {
         self.type_dir.join(NOT_SECRET)
+    }
+
+    pub fn system_path(&self) -> PathBuf {
+        self.type_dir.join("system.toml")
+    }
+
+    /// The keys that open the /etc secrets.
+    pub fn recipients(&self) -> PathBuf {
+        self.type_dir.join(secrets::RECIPIENTS)
     }
 
     pub fn etc_dir(&self) -> PathBuf {
@@ -339,7 +417,7 @@ impl Fleet {
     pub fn etc_contents(&self, rel: &Path) -> Result<Vec<u8>> {
         let source = self.etc_source(rel);
         if self.secret_etc.contains(rel) {
-            return self.secrets().decrypt(&source);
+            return self.keys().decrypt(&source);
         }
         fs::read(&source).with_context(|| format!("reading {}", source.display()))
     }
@@ -361,20 +439,106 @@ impl Fleet {
     pub fn packages(&self) -> BTreeSet<String> {
         self.system.packages.iter().cloned().collect()
     }
-}
 
-pub fn expand(path: &str) -> PathBuf {
-    match path.strip_prefix("~/") {
-        Some(rest) => user::home().join(rest),
-        None => PathBuf::from(path),
+    /// Root writes into the checkout, and the admin commits it, so whatever root wrote goes back
+    /// to the admin. git's own folder is the admin's alone.
+    pub fn hand_back(&self) -> Result<()> {
+        let admin = self.admin();
+        let mut todo = vec![self.dir.clone()];
+        while let Some(dir) = todo.pop() {
+            for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
+                let path = entry?.path();
+                if path == self.dir.join(".git") {
+                    continue;
+                }
+                let meta = fs::symlink_metadata(&path)?;
+                if meta.uid() != admin.uid {
+                    admin.own(&path)?;
+                }
+                if meta.is_dir() {
+                    todo.push(path);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
-pub fn tilde(path: &Path) -> String {
-    match path.strip_prefix(user::home()) {
-        Ok(rest) => format!("~/{}", rest.display()),
-        Err(_) => path.display().to_string(),
+impl Member {
+    pub fn path(&self) -> PathBuf {
+        self.dir.join(USER_TOML)
     }
+
+    pub fn ignore_path(&self) -> PathBuf {
+        self.dir.join(IGNORE)
+    }
+
+    pub fn not_secret_path(&self) -> PathBuf {
+        self.dir.join(NOT_SECRET)
+    }
+
+    pub fn recipients(&self) -> PathBuf {
+        self.dir.join(secrets::RECIPIENTS)
+    }
+
+    /// The machine's user, which `Fleet::load` found.
+    pub fn user(&self) -> &User {
+        self.user.as_ref().expect("checked by the caller")
+    }
+}
+
+const USER_TOML: &str = "user.toml";
+
+/// Each folder under users/ is one user of the type.
+fn members(dir: &Path) -> Result<Vec<Member>> {
+    let mut members = Vec::new();
+    let entries = match fs::read_dir(dir) {
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(members),
+        entries => entries.with_context(|| format!("reading {}", dir.display()))?,
+    };
+    for entry in entries {
+        let dir = entry?.path();
+        let name = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .with_context(|| format!("{} is not a user name", dir.display()))?
+            .to_owned();
+        members.push(Member {
+            config: read_toml(&dir.join(USER_TOML))?,
+            ignore: Ignore::load(&dir.join(IGNORE), Level::User)?,
+            not_secret: Paths::load(&dir.join(NOT_SECRET))?,
+            name,
+            dir,
+            user: None,
+            chezmoi: false,
+            open: false,
+        });
+    }
+    members.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(members)
+}
+
+fn read_toml<T: de::DeserializeOwned>(path: &Path) -> Result<T> {
+    toml::from_str(
+        &fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?,
+    )
+    .with_context(|| format!("parsing {}", path.display()))
+}
+
+/// The user's chezmoi must read the fleet, decrypt with the user's key and encrypt for the
+/// user's recipients, which the fleet's config template sets up.
+fn reads_fleet(member: &Member, user: &User, fleet_dir: &Path) -> Result<bool> {
+    let dump = cmd::stdout(
+        cmd::As::User(user),
+        "chezmoi",
+        &["dump-config", "--format", "json"],
+    )?;
+    let config: serde_json::Value = serde_json::from_str(&dump)?;
+    let path = |value: &serde_json::Value| value.as_str().map(PathBuf::from);
+    Ok(path(&config["sourceDir"]).as_deref() == Some(fleet_dir)
+        && config["encryption"] == "age"
+        && path(&config["age"]["identity"]) == Some(secrets::key_path(user))
+        && path(&config["age"]["recipientsFile"]) == Some(member.recipients()))
 }
 
 #[cfg(test)]

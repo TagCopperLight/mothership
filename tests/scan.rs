@@ -4,18 +4,16 @@ fn owner_only(path: &Path) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
 }
 
-fn fleet(dir: &Path, not_secret: &str) -> Fleet {
-    let type_dir = dir.join("types/workstation");
-    fs::create_dir_all(type_dir.join("etc")).unwrap();
-    fs::write(type_dir.join("system.toml"), "").unwrap();
-    fs::write(type_dir.join("not-secret.txt"), not_secret).unwrap();
-    Fleet::new(dir.to_path_buf(), "workstation", &[], &BTreeSet::new()).unwrap()
+fn not_secret(dir: &Path, lines: &str) -> Paths {
+    let path = dir.join("not-secret.txt");
+    fs::write(&path, lines).unwrap();
+    Paths::load(&path).unwrap()
 }
 
 #[test]
 fn a_secret_shows_no_contents_but_other_files_do() {
     let dir = tempfile::TempDir::new().unwrap();
-    let fleet = fleet(dir.path(), "");
+    let not_secret = not_secret(dir.path(), "");
     let key = dir.path().join("id");
     fs::write(&key, "abc").unwrap();
     owner_only(&key);
@@ -23,7 +21,7 @@ fn a_secret_shows_no_contents_but_other_files_do() {
     fs::write(&notes, "hello").unwrap();
     let item = |path: &Path| {
         looks_secret(
-            &fleet,
+            &not_secret,
             Item::new(Kind::Home, "x", "").showing(Preview::Contents(path.to_path_buf())),
             path,
         )
@@ -48,7 +46,7 @@ fn a_folder_is_secret_when_one_of_its_files_is() {
 
 #[test]
 fn a_secret_is_added_encrypted() {
-    let path = PathBuf::from("/x");
+    let path = std::path::PathBuf::from("/x");
     let item = Item::new(Kind::Home, "x", "")
         .with(Add::Track {
             path,
@@ -61,11 +59,12 @@ fn a_secret_is_added_encrypted() {
 #[test]
 fn not_secret_txt_clears_the_guess() {
     let dir = tempfile::TempDir::new().unwrap();
-    let fleet = fleet(dir.path(), "~/.config/zed/*\n");
+    let not_secret = not_secret(dir.path(), "~/.config/zed/*\n");
     let settings = dir.path().join("settings.json");
     fs::write(&settings, "{}").unwrap();
     owner_only(&settings);
-    let item = |subject: &str| looks_secret(&fleet, Item::new(Kind::Home, subject, ""), &settings);
+    let item =
+        |subject: &str| looks_secret(&not_secret, Item::new(Kind::Home, subject, ""), &settings);
     assert_eq!(item("~/.config/zed/settings.json").secret, Secret::No);
     assert_eq!(item("~/.config/gh/hosts.yml").secret, Secret::Guessed);
 }

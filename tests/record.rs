@@ -1,5 +1,8 @@
 use super::*;
-use crate::pacman::{self, Package};
+use crate::{
+    fleet::{Manager, Tool},
+    pacman::{self, Package},
+};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -59,8 +62,15 @@ fn record(edit: impl FnOnce(&mut Record)) -> Record {
     record
 }
 
+fn me(record: &mut Record) -> &mut UserRecord {
+    record.users.entry("me".into()).or_default()
+}
+
+/// For the user me, whose record the tests fill.
 fn changed(record: &Record, revert: Revert) -> bool {
-    record.fleet_changed(&revert, &no_packages()).unwrap()
+    record
+        .fleet_changed(&revert, Some("me"), &no_packages())
+        .unwrap()
 }
 
 #[test]
@@ -90,8 +100,8 @@ fn uninstalls_only_what_the_fleet_listed_before() {
 fn services_groups_and_shell_follow_the_same_rule() {
     let before = record(|r| {
         r.services.insert("sshd.service".into());
-        r.groups.insert("docker".into());
-        r.shell = Some("/usr/bin/fish".into());
+        me(r).groups.insert("docker".into());
+        me(r).shell = Some("/usr/bin/fish".into());
     });
     let enable = |unit: &str, user| Revert::Enable {
         unit: unit.into(),
@@ -116,6 +126,26 @@ fn services_groups_and_shell_follow_the_same_rule() {
 
     assert!(!changed(&before, Revert::Shell("/usr/bin/fish".into())));
     assert!(changed(&before, Revert::Shell("/usr/bin/zsh".into())));
+}
+
+#[test]
+fn each_user_has_a_record_of_their_own() {
+    let before = record(|r| {
+        me(r).groups.insert("docker".into());
+        me(r).linger = true;
+    });
+    let other = |revert: Revert| {
+        before
+            .fleet_changed(&revert, Some("dev"), &no_packages())
+            .unwrap()
+    };
+    assert!(changed(&before, Revert::Leave("docker".into())));
+    assert!(!other(Revert::Leave("docker".into())));
+    assert!(changed(&before, Revert::Linger(false)));
+    assert!(other(Revert::Linger(true)));
+    // Nobody chooses a missing user or a chezmoi that doesn't read the fleet.
+    assert!(changed(&before, Revert::CreateUser));
+    assert!(changed(&before, Revert::InitChezmoi));
 }
 
 #[test]
@@ -145,11 +175,19 @@ fn writes_over_a_file_only_while_it_is_as_apply_or_its_package_left_it() {
     assert!(!changed(&Record::default(), Revert::WriteEtc(path.clone())));
 
     let from_package = Record::default()
-        .fleet_changed(&Revert::WriteEtc(path.clone()), &shipping(&path, "old"))
+        .fleet_changed(
+            &Revert::WriteEtc(path.clone()),
+            None,
+            &shipping(&path, "old"),
+        )
         .unwrap();
     assert!(from_package);
     let edited_package_file = Record::default()
-        .fleet_changed(&Revert::WriteEtc(path.clone()), &shipping(&path, "new"))
+        .fleet_changed(
+            &Revert::WriteEtc(path.clone()),
+            None,
+            &shipping(&path, "new"),
+        )
         .unwrap();
     assert!(!edited_package_file);
 }
@@ -207,7 +245,7 @@ fn never_reads_a_folder_apply_did_not_write_into() {
     let elsewhere = record(|r| {
         r.etc.insert(machine.path("other.conf"), md5("a"));
     });
-    let result = elsewhere.fleet_changed(&Revert::DeleteEtc(folder.clone()), &no_packages());
+    let result = elsewhere.fleet_changed(&Revert::DeleteEtc(folder.clone()), None, &no_packages());
     fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(!result.unwrap());
 }
@@ -231,31 +269,38 @@ fn a_symlink_is_hashed_by_its_target() {
     assert_eq!(hash(&machine.path("missing")).unwrap(), None);
 }
 
-fn fleet(dir: &Path, system: &str, etc: &[&str]) -> Fleet {
+/// `user` is the user.toml of the type's user me.
+fn fleet(dir: &Path, system: &str, user: &str, etc: &[&str]) -> Fleet {
     let type_dir = dir.join("types/workstation");
     fs::create_dir_all(type_dir.join("etc")).unwrap();
+    fs::create_dir_all(type_dir.join("users/me")).unwrap();
     for file in etc {
         fs::write(type_dir.join("etc").join(file), "fleet").unwrap();
     }
     fs::write(type_dir.join("system.toml"), system).unwrap();
+    fs::write(type_dir.join("users/me/user.toml"), user).unwrap();
     Fleet::new(dir.to_path_buf(), "workstation", &[], &BTreeSet::new()).unwrap()
 }
 
 #[test]
 fn the_new_record_holds_what_the_fleet_declares_and_keeps_edits_as_edits() {
     let checkout = TempDir::new().unwrap();
-    let fleet = fleet(
+    let mut fleet = fleet(
         checkout.path(),
         r#"
 packages = ["vim", "zip"]
 built_packages = ["mytool"]
+services = ["sshd.service"]
+"#,
+        r#"
 shell = "/usr/bin/fish"
 groups = ["docker"]
-services = ["sshd.service"]
 user_services = ["app.service"]
+linger = true
 "#,
         &["same.conf", "edited.conf", "new.conf"],
     );
+    fleet.members[0].user = Some(crate::user::by_uid(0).unwrap());
 
     let machine = Machine::new();
     machine.write("same.conf", "fleet");
@@ -272,15 +317,27 @@ user_services = ["app.service"]
     let names = |set: &BTreeSet<String>| set.iter().cloned().collect::<Vec<_>>();
     // Built packages come from elsewhere, so apply never removes them.
     assert_eq!(names(&after.packages), ["vim", "zip"]);
-    assert_eq!(names(&after.groups), ["docker"]);
     assert_eq!(names(&after.services), ["sshd.service"]);
-    assert_eq!(names(&after.user_services), ["app.service"]);
-    assert_eq!(after.shell.as_deref(), Some("/usr/bin/fish"));
+    let me = &after.users["me"];
+    assert_eq!(names(&me.groups), ["docker"]);
+    assert_eq!(names(&me.user_services), ["app.service"]);
+    assert_eq!(me.shell.as_deref(), Some("/usr/bin/fish"));
+    assert!(me.linger);
     let expected = BTreeMap::from([
         (machine.path("same.conf"), md5("fleet")),
         (machine.path("edited.conf"), md5("older")),
     ]);
     assert_eq!(after.etc, expected);
+}
+
+#[test]
+fn a_user_the_machine_lacked_keeps_their_old_entry() {
+    let checkout = TempDir::new().unwrap();
+    let fleet = fleet(checkout.path(), "", "linger = true\n", &[]);
+    assert!(fleet.members[0].user.is_none());
+    let machine = Machine::new();
+    let after = Record::after(&fleet, &Record::default(), machine.dir.path()).unwrap();
+    assert!(after.users.is_empty());
 }
 
 #[test]
@@ -345,8 +402,8 @@ fn tools(text: &str) -> Tools {
 #[test]
 fn tools_and_installers_follow_the_same_rule() {
     let before = record(|r| {
-        r.tools = tools(r#"cargo = ["ripgrep"]"#);
-        r.installers.insert("bun".into());
+        me(r).tools = tools(r#"cargo = ["ripgrep"]"#);
+        me(r).installers.insert("bun".into());
     });
     let install = |name: &str| Revert::InstallTool {
         manager: Manager::Cargo,
@@ -374,13 +431,14 @@ fn tools_and_installers_follow_the_same_rule() {
 #[test]
 fn installs_a_missing_tool_again_when_the_fleet_changed_its_source() {
     let before = record(|r| {
-        r.tools = tools(r#"cargo = [{ name = "x", git = "https://example.com/x", branch = "a" }]"#);
+        me(r).tools =
+            tools(r#"cargo = [{ name = "x", git = "https://example.com/x", branch = "a" }]"#);
     });
     let moved = tools(r#"cargo = [{ name = "x", git = "https://example.com/x", branch = "b" }]"#);
     let install = |tools: &Tools| Revert::InstallTool {
         manager: Manager::Cargo,
         tool: tools.of(Manager::Cargo)[0].clone(),
     };
-    assert!(!changed(&before, install(&before.tools)));
+    assert!(!changed(&before, install(&before.users["me"].tools)));
     assert!(changed(&before, install(&moved)));
 }

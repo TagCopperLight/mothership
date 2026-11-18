@@ -1,4 +1,5 @@
 mod apply;
+mod chezmoi;
 mod cmd;
 mod edit;
 mod fleet;
@@ -16,21 +17,47 @@ mod tools;
 mod user;
 mod walk;
 
+use anyhow::bail;
+use fleet::Fleet;
+
+const USAGE: &str = "usage: mothership scan | review | apply | key \
+                     | trust <type>/<root|user> <name> <key> | retire <type>/<root|user> <name>";
+
+/// Every command reads each user's home and keys, and the record in /var/lib/mothership.
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    user::init()?;
+    if !matches!(
+        args.first().map(String::as_str),
+        Some("scan" | "review" | "apply" | "key" | "trust" | "retire")
+    ) {
+        eprintln!("{USAGE}");
+        std::process::exit(2);
+    }
+    if !user::is_root() {
+        bail!("mothership reads every user's home: run it with sudo");
+    }
     match args.as_slice() {
         [command] if command == "scan" => scan::run(),
         [command] if command == "review" => review::run(),
         [command] if command == "apply" => apply::run(),
-        [command] if command == "key" => secrets::key(),
-        [command, name, key] if command == "trust" => secrets::trust(name, key),
-        [command, name] if command == "retire" => secrets::retire(name),
+        [command] if command == "key" => secrets::key(&Fleet::load()?),
+        [command, target, name, key] if command == "trust" => {
+            edit_fleet(|fleet| secrets::trust(fleet, target, name, key))
+        }
+        [command, target, name] if command == "retire" => {
+            edit_fleet(|fleet| secrets::retire(fleet, target, name))
+        }
         _ => {
-            eprintln!(
-                "usage: mothership scan | review | apply | key | trust <name> <key> | retire <name>"
-            );
+            eprintln!("{USAGE}");
             std::process::exit(2);
         }
     }
+}
+
+/// What a command writes into the checkout goes back to the admin, even when it fails.
+fn edit_fleet(command: impl FnOnce(&Fleet) -> anyhow::Result<()>) -> anyhow::Result<()> {
+    let fleet = Fleet::load()?;
+    let result = command(&fleet);
+    fleet.hand_back()?;
+    result
 }

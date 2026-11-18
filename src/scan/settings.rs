@@ -1,19 +1,29 @@
 use super::{Item, Kind};
-use crate::{cmd, edit::Add, preview::Preview};
+use crate::{
+    cmd::{self, As},
+    edit::Add,
+    fleet::Member,
+    preview::Preview,
+    user::User,
+};
 use anyhow::Result;
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
-pub fn scan(managed: &[PathBuf]) -> Result<Vec<Item>> {
-    let mut items = dconf()?;
+pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
+    let mut items = dconf(member.user())?;
     for user_js in managed.iter().filter(|path| path.ends_with("user.js")) {
         items.extend(prefs(user_js)?);
     }
     Ok(items)
 }
 
-/// The fleet holds no dconf settings yet, so every section set on the machine counts.
-fn dconf() -> Result<Vec<Item>> {
-    let dump = cmd::stdout("dconf", &["dump", "/"])?;
+/// The fleet holds no dconf settings yet, so every section set on the machine counts. A user
+/// without a dconf database has none.
+fn dconf(user: &User) -> Result<Vec<Item>> {
+    if !user.home.join(".config/dconf/user").exists() {
+        return Ok(Vec::new());
+    }
+    let dump = cmd::stdout(As::User(user), "dconf", &["dump", "/"])?;
     let mut sections: BTreeMap<String, usize> = BTreeMap::new();
     let mut current = None;
     for line in dump.lines() {
@@ -28,8 +38,10 @@ fn dconf() -> Result<Vec<Item>> {
     Ok(sections
         .into_iter()
         .map(|(section, keys)| {
-            Item::new(Kind::Dconf, &section, format!("{keys} keys set"))
-                .showing(Preview::Dconf(section))
+            Item::new(Kind::Dconf, &section, format!("{keys} keys set")).showing(Preview::Dconf {
+                section,
+                user: user.clone(),
+            })
         })
         .collect())
 }

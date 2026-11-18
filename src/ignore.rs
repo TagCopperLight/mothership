@@ -1,7 +1,14 @@
 use crate::scan::{Item, Kind};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use std::{collections::HashMap, fs, io::ErrorKind, path::Path};
+
+/// Which ignore.txt: the type's, for what lives outside the homes, or a user's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Level {
+    Machine,
+    User,
+}
 
 /// ignore.txt: `<kind> <glob>` lines.
 pub struct Ignore {
@@ -9,13 +16,20 @@ pub struct Ignore {
 }
 
 impl Ignore {
-    pub fn load(path: &Path) -> Result<Self> {
+    pub fn load(path: &Path, level: Level) -> Result<Self> {
         let mut builders: HashMap<Kind, GlobSetBuilder> = HashMap::new();
         for (at, line) in lines(path)? {
             let (kind, pattern) = line
                 .split_once(' ')
                 .ok_or_else(|| anyhow!("{at}: expected `<kind> <glob>`"))?;
             let kind = Kind::parse(kind).ok_or_else(|| anyhow!("{at}: unknown kind {kind}"))?;
+            if kind.level() != level {
+                let other = match level {
+                    Level::Machine => "a user's",
+                    Level::User => "the type's",
+                };
+                bail!("{at}: {} lines go in {other} ignore.txt", kind.name());
+            }
             builders
                 .entry(kind)
                 .or_insert_with(GlobSetBuilder::new)

@@ -26,15 +26,39 @@ fn a_key_without_a_name_is_refused() {
 }
 
 #[test]
-fn chezmoi_must_encrypt_for_the_types_recipients() {
-    let type_dir = Path::new("/fleet/types/workstation");
-    let config = |recipients: &str| {
-        serde_json::json!({
-            "encryption": "age",
-            "age": { "identity": "/nowhere/key.txt", "recipientsFile": recipients },
-        })
-    };
-    let secrets = Secrets::new(&config("/fleet/types/workstation/recipients.txt"), type_dir);
-    assert!(!secrets.unwrap().open);
-    assert!(Secrets::new(&config("/fleet/types/server/recipients.txt"), type_dir).is_err());
+fn opens_what_it_encrypts_for_its_own_key_only() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (mine, other) = (dir.path().join("mine.txt"), dir.path().join("other.txt"));
+    make_key(&mine, None).unwrap();
+    make_key(&other, None).unwrap();
+    let public = |key: &Path| read_key(key).unwrap().unwrap().to_public().to_string();
+    let list = dir.path().join(RECIPIENTS);
+    fs::write(&list, format!("# mine\n{}\n", public(&mine))).unwrap();
+    assert!(opens(&list, &mine).unwrap());
+    assert!(!opens(&list, &other).unwrap());
+    assert!(!opens(&list, &dir.path().join("missing.txt")).unwrap());
+
+    let sealed = dir.path().join("secret.age");
+    fs::write(&sealed, encrypt(&list, b"psk=1").unwrap()).unwrap();
+    assert!(
+        fs::read_to_string(&sealed)
+            .unwrap()
+            .starts_with("-----BEGIN AGE")
+    );
+    let keys = |path: &Path| Keys::load(std::iter::once(path.to_path_buf())).unwrap();
+    assert_eq!(keys(&mine).decrypt(&sealed).unwrap(), b"psk=1");
+    assert!(keys(&other).decrypt(&sealed).is_err());
+}
+
+#[test]
+fn a_key_file_is_for_its_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::TempDir::new().unwrap();
+    let key = dir.path().join("deep/key.txt");
+    make_key(&key, None).unwrap();
+    assert_eq!(
+        fs::metadata(&key).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(make_key(&key, None).is_err());
 }

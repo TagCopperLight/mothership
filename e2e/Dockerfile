@@ -24,27 +24,22 @@ RUN cd /crates/hello && git init -q -b main && git add -A \
  && git checkout -qb loud && sed -i 's/"hello"/"HELLO"/' src/main.rs \
  && git -c user.name=Me -c user.email=me@example.com commit -qam loud && git checkout -q main
 
-# No systemd runs in the container, so systemctl only logs what it was asked.
-COPY bin/systemctl bin/fake-aur /usr/local/bin/
+# No systemd runs in the container: systemctl only logs what it was asked, and loginctl keeps
+# linger as files.
+COPY bin/systemctl bin/loginctl bin/fake-aur /usr/local/bin/
 RUN touch /var/log/systemctl.log && chmod 666 /var/log/systemctl.log
 
 FROM machine
-COPY fleet /fleet
+COPY fleet /var/lib/mothership/fleet
 RUN useradd -m -G wheel -s /bin/bash me \
- && install -m 440 /fleet/types/workstation/etc/sudoers.d/wheel /etc/sudoers.d/wheel \
- && mkdir -p /home/me/.local/share /home/me/.config/chezmoi \
- && cp -r /fleet /home/me/.local/share/chezmoi && rm -rf /fleet \
- && printf '%s\n' 'encryption = "age"' '[age]' 'useBuiltin = true' \
-      'identity = "~/.config/mothership/key.txt"' \
-      'recipientsFile = "~/.local/share/chezmoi/types/workstation/recipients.txt"' \
-      '[data]' 'profile = "workstation"' > /home/me/.config/chezmoi/chezmoi.toml \
+ && install -m 440 /var/lib/mothership/fleet/types/workstation/etc/sudoers.d/wheel /etc/sudoers.d/wheel \
  && printf 'type = "workstation"\n' | install -D -m 644 /dev/stdin /etc/mothership/machine.toml \
- && chown -R me:me /home/me \
- && runuser -u me -- git -C /home/me/.local/share/chezmoi init -q -b main \
- && runuser -u me -- git -C /home/me/.local/share/chezmoi add -A \
- && runuser -u me -- git -C /home/me/.local/share/chezmoi \
-      -c user.name=Me -c user.email=me@example.com commit -q -m "The fleet" \
- && runuser -u me -- env HOME=/home/me chezmoi apply
+ && chown -R me:me /var/lib/mothership/fleet \
+ && cd /var/lib/mothership/fleet \
+ && runuser -u me -- git init -q -b main \
+ && runuser -u me -- git add -A \
+ && runuser -u me -- git -c user.name=Me -c user.email=me@example.com commit -q -m "The fleet" \
+ && cd / && runuser -u me -- env HOME=/home/me chezmoi init --apply --source /var/lib/mothership/fleet
 USER me
 WORKDIR /home/me
 ENV HOME=/home/me USER=me

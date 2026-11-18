@@ -3,7 +3,7 @@
 The fleet lists `zeta`, which only the AUR has, but names no AUR helper.
 
 ```console
-$ cd ~/.local/share/chezmoi &&
+$ cd /var/lib/mothership/fleet &&
 > sed -i '/^aur_helper/d' types/workstation/system.toml &&
 > sed -i 's/^  "gamma",$/  "gamma",\n  "zeta",/' types/workstation/system.toml &&
 > git commit -qam "List zeta without an AUR helper"

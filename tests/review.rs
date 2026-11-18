@@ -4,6 +4,7 @@ use crate::scan::Kind;
 fn item(subject: &str) -> Item {
     Item {
         kind: Kind::Package,
+        member: None,
         subject: subject.into(),
         detail: String::new(),
         secret: crate::scan::Secret::No,
@@ -14,10 +15,19 @@ fn item(subject: &str) -> Item {
     }
 }
 
+fn fleet(dir: &Path) -> Fleet {
+    let type_dir = dir.join("types/workstation");
+    fs::create_dir_all(type_dir.join("etc")).unwrap();
+    fs::write(type_dir.join("system.toml"), "").unwrap();
+    Fleet::new(dir.to_path_buf(), "workstation", &[], &Default::default()).unwrap()
+}
+
 #[test]
 fn put_off_items_come_back_after_a_week_and_keep_their_first_date() {
     let dir = tempfile::TempDir::new().unwrap();
+    let fleet = fleet(dir.path());
     let mut later = Later {
+        fleet: &fleet,
         path: dir.path().join("later.json"),
         items: BTreeMap::new(),
     };
@@ -35,7 +45,9 @@ fn put_off_items_come_back_after_a_week_and_keep_their_first_date() {
 fn saving_drops_items_the_scan_no_longer_finds() {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("state/later.json");
+    let fleet = fleet(dir.path());
     let mut later = Later {
+        fleet: &fleet,
         path: path.clone(),
         items: BTreeMap::new(),
     };

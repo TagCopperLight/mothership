@@ -5,7 +5,7 @@ use crate::{
     pacman::{self, Db, Package},
     preview::Preview,
     revert::Revert,
-    walk,
+    secrets, walk,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -37,7 +37,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     for rel in declared {
         let path = Path::new("/etc").join(rel);
         let secret = fleet.secret_etc.contains(rel);
-        if secret && !fleet.secrets().open {
+        if secret && !fleet.etc_open() {
             items.push(Item::locked(Kind::Etc, path.display().to_string()));
             continue;
         }
@@ -97,7 +97,9 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         .partition(|path| path.ends_with('/'));
     let mut known: HashSet<PathBuf> = owned_files.into_iter().map(PathBuf::from).collect();
     known.extend(declared_paths);
+    // The machine's own type and key.
     known.insert(PathBuf::from(fleet::MACHINE));
+    known.insert(PathBuf::from(secrets::ROOT_KEY));
     let known_dirs = owned_dirs
         .into_iter()
         .map(|dir| PathBuf::from(dir.trim_end_matches('/')))
@@ -110,7 +112,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     )?;
     items.extend(walk.unknown.iter().map(|path| {
         looks_secret(
-            fleet,
+            &fleet.not_secret,
             Item::new(Kind::Etc, path.display().to_string(), "from no package")
                 .with(Add::CopyEtc {
                     path: path.clone(),
@@ -180,6 +182,6 @@ fn edited(fleet: &Fleet, package: &Package, path: &Path, md5: &str) -> Result<Op
                 path: path.to_path_buf(),
                 archive: package.archive(),
             });
-        looks_secret(fleet, item, path)
+        looks_secret(&fleet.not_secret, item, path)
     }))
 }

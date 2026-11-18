@@ -1,24 +1,29 @@
 use super::{Item, Kind, Secret, looks_secret};
 use crate::{
-    cmd,
+    chezmoi,
+    cmd::{self, As},
     edit::Add,
-    fleet::{Fleet, tilde},
+    fleet::Member,
     preview::Preview,
     revert::Revert,
-    user,
 };
 use anyhow::Result;
 use std::{collections::BTreeSet, path::PathBuf};
 
-pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
-    let open = fleet.secrets().open;
-    let encrypted = managed_with("encrypted")?;
-    let templates = managed_with("templates")?;
+pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
+    let user = member.user();
+    let open = member.open;
+    let encrypted: BTreeSet<PathBuf> = chezmoi::managed(user, "encrypted")?.into_iter().collect();
+    let templates: BTreeSet<PathBuf> = chezmoi::managed(user, "templates")?.into_iter().collect();
     // chezmoi fails on a file it can't decrypt.
     let status = if open {
-        cmd::stdout("chezmoi", &["status"])?
+        cmd::stdout(As::User(user), "chezmoi", &["status"])?
     } else {
-        cmd::stdout("chezmoi", &["status", "--exclude", "encrypted"])?
+        cmd::stdout(
+            As::User(user),
+            "chezmoi",
+            &["status", "--exclude", "encrypted"],
+        )?
     };
     let mut items = Vec::new();
     let mut listed = BTreeSet::new();
@@ -35,7 +40,7 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
         } else {
             "changed in the repo, not applied"
         };
-        let path = user::home().join(&line[3..]);
+        let path = user.home.join(&line[3..]);
         let item = Item::new(Kind::File, format!("~/{}", &line[3..]), detail)
             .with(Add::Update {
                 path: path.clone(),
@@ -45,11 +50,14 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
                 path: path.clone(),
                 edited,
             })
-            .showing(Preview::Chezmoi(path.clone()));
+            .showing(Preview::Chezmoi {
+                path: path.clone(),
+                user: user.clone(),
+            });
         items.push(if encrypted.contains(&path) {
             item.secret(Secret::Fleet)
         } else {
-            looks_secret(fleet, item, &path)
+            looks_secret(&member.not_secret, item, &path)
         });
         listed.insert(path);
     }
@@ -57,7 +65,7 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
         items.extend(
             encrypted
                 .iter()
-                .map(|path| Item::locked(Kind::File, tilde(path))),
+                .map(|path| Item::locked(Kind::File, user.tilde(path))),
         );
     }
 
@@ -71,8 +79,8 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
             encrypt: false,
         };
         let item = looks_secret(
-            fleet,
-            Item::new(Kind::File, tilde(path), "in the fleet in clear").with(add),
+            &member.not_secret,
+            Item::new(Kind::File, user.tilde(path), "in the fleet in clear").with(add),
             path,
         );
         if item.secret == Secret::Guessed {
@@ -80,12 +88,4 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
         }
     }
     Ok(items)
-}
-
-fn managed_with(entries: &str) -> Result<BTreeSet<PathBuf>> {
-    let args = ["managed", "--include", entries, "--path-style", "absolute"];
-    Ok(cmd::stdout("chezmoi", &args)?
-        .lines()
-        .map(PathBuf::from)
-        .collect())
 }

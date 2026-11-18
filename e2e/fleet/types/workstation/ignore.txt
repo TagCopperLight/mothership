@@ -1,11 +1,5 @@
 # What `mothership scan` never reports on the test machine.
 
-# Caches and state
-home ~/.cache
-home ~/.local/state
-home ~/.cargo
-home ~/.bash_logout
-
 # Files the container and pacman generate
 etc /etc/{hosts,resolv.conf}
 etc /etc/{.pwd.lock,hostname,ld.so.cache,locale.conf,os-release}

@@ -48,7 +48,7 @@ mine.service  enabled, not declared
   its unit file comes from outside the fleet, so it can't be added yet
   revert: disable and stop
   (r)evert (i)gnore (l)ater (p)ass (q)uit? p
-\[5/\d+\] Account (re)
+\[5/\d+\] Account, me (re)
 group mine  member, not declared
   no package the fleet lists creates this group, so it can't be added yet
   revert: leave
@@ -59,9 +59,9 @@ group mine  member, not declared
 Only the packages reached the fleet.
 
 ```console
-$ grep -E 'zeta|omega' ~/.local/share/chezmoi/types/workstation/system.toml
+$ grep -E 'zeta|omega' /var/lib/mothership/fleet/types/workstation/system.toml
   "zeta",
 built_packages = ["omega"]
-$ git -C ~/.local/share/chezmoi status --short
+$ git -C /var/lib/mothership/fleet status --short
  M types/workstation/system.toml
 ```

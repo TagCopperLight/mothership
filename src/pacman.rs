@@ -1,4 +1,4 @@
-use crate::cmd;
+use crate::cmd::{self, As};
 use anyhow::{Context, Result};
 use md5::{Digest, Md5};
 use std::{
@@ -131,7 +131,7 @@ impl Package {
 
 /// The names pacman's sync databases have.
 pub fn in_repos() -> Result<BTreeSet<String>> {
-    Ok(cmd::stdout("pacman", &["-Slq"])?
+    Ok(cmd::stdout(As::Root, "pacman", &["-Slq"])?
         .lines()
         .map(str::to_owned)
         .collect())
@@ -140,7 +140,11 @@ pub fn in_repos() -> Result<BTreeSet<String>> {
 /// The file as the package shipped it, from the archive in pacman's cache.
 pub fn shipped(archive: &Path, path: &Path) -> Result<Vec<u8>> {
     let member = path.strip_prefix("/")?.to_string_lossy().into_owned();
-    cmd::bytes("bsdtar", &["-xOf", &archive.to_string_lossy(), &member])
+    cmd::bytes(
+        As::Root,
+        "bsdtar",
+        &["-xOf", &archive.to_string_lossy(), &member],
+    )
 }
 
 /// pacman records config files by their MD5.

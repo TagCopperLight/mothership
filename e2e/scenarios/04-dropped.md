@@ -4,7 +4,7 @@ The machine follows its fleet. Then the fleet configures `gamma` and adds two fi
 
 ```console
 $ echo y | sudo mothership apply &>/dev/null
-$ cd ~/.local/share/chezmoi &&
+$ cd /var/lib/mothership/fleet &&
 > printf 'volume = 11\n' > types/workstation/etc/gamma.conf &&
 > printf 'a = 1\n' > types/workstation/etc/extra.conf &&
 > printf 'b = 1\n' > types/workstation/etc/kept.conf &&
@@ -24,7 +24,7 @@ I edit `/etc/kept.conf`. Then the fleet drops the three files and `alpha`.
 
 ```console
 $ echo "mine = yes" | sudo tee -a /etc/kept.conf >/dev/null
-$ cd ~/.local/share/chezmoi &&
+$ cd /var/lib/mothership/fleet &&
 > git rm -q types/workstation/etc/gamma.conf types/workstation/etc/extra.conf types/workstation/etc/kept.conf &&
 > sed -i '/^  "alpha",$/d' types/workstation/system.toml &&
 > git commit -qam "Drop alpha and the files"

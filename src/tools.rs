@@ -1,31 +1,46 @@
 use crate::{
-    cmd,
+    cmd::{self, As},
     fleet::{Installer, Manager, Tool},
-    user,
+    user::User,
 };
 use anyhow::Result;
 
 /// Each runs as the user, since the tools live in their home.
-pub fn install(manager: Manager, tool: &Tool) -> Result<()> {
+pub fn install(user: &User, manager: Manager, tool: &Tool) -> Result<()> {
     let spec = spec(manager, tool);
     let spec: Vec<&str> = spec.iter().map(String::as_str).collect();
+    let who = As::User(user);
     match manager {
-        Manager::Cargo => cmd::run("cargo", &[&["install"], &spec[..]].concat()),
-        Manager::Uv => cmd::run("uv", &[&["tool", "install"], &spec[..]].concat()),
-        Manager::Bun => cmd::run(&bun(), &[&["add", "--global"], &spec[..]].concat()),
+        Manager::Cargo => cmd::run(who, "cargo", &[&["install"], &spec[..]].concat()),
+        Manager::Uv => cmd::run(who, "uv", &[&["tool", "install"], &spec[..]].concat()),
+        Manager::Bun => cmd::run(who, &bun(user), &[&["add", "--global"], &spec[..]].concat()),
     }
 }
 
-pub fn uninstall(manager: Manager, name: &str) -> Result<()> {
+pub fn uninstall(user: &User, manager: Manager, name: &str) -> Result<()> {
+    let who = As::User(user);
     match manager {
-        Manager::Cargo => cmd::run("cargo", &["uninstall", name]),
-        Manager::Uv => cmd::run("uv", &["tool", "uninstall", name]),
-        Manager::Bun => cmd::run(&bun(), &["remove", "--global", name]),
+        Manager::Cargo => cmd::run(who, "cargo", &["uninstall", name]),
+        Manager::Uv => cmd::run(who, "uv", &["tool", "uninstall", name]),
+        Manager::Bun => cmd::run(who, &bun(user), &["remove", "--global", name]),
     }
 }
 
-pub fn run_installer(installer: &Installer) -> Result<()> {
-    cmd::run("sh", &["-c", &installer.run])
+pub fn run_installer(user: &User, installer: &Installer) -> Result<()> {
+    cmd::run(As::User(user), "sh", &["-c", &installer.run])
+}
+
+/// Whether the user has the manager at all.
+pub fn has(user: &User, manager: Manager) -> bool {
+    match manager {
+        Manager::Bun => user.home.join(".bun/bin/bun").exists(),
+        _ => cmd::bytes(
+            As::User(user),
+            "sh",
+            &["-c", &format!("command -v {}", manager.name())],
+        )
+        .is_ok(),
+    }
 }
 
 /// What follows the manager's install command.
@@ -51,9 +66,9 @@ fn spec(manager: Manager, tool: &Tool) -> Vec<String> {
     }
 }
 
-/// bun's installer puts it in the home, out of sudo's PATH.
-fn bun() -> String {
-    user::home()
+/// bun's installer puts it in the home, out of the PATH a login shell may set.
+fn bun(user: &User) -> String {
+    user.home
         .join(".bun/bin/bun")
         .to_string_lossy()
         .into_owned()

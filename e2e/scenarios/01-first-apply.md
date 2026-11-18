@@ -1,29 +1,35 @@
 # A new machine follows its fleet
 
-The machine was just set up: the fleet repo is chezmoi's source and chezmoi wrote the home
-files, but nothing else ran. The fleet lists `alpha` and `gamma` and holds `/etc/fleet.conf`.
+The machine was just set up: the fleet repo sits in `/var/lib/mothership/fleet`, owned by me,
+and my chezmoi wrote my files from it, but nothing else ran. The fleet lists `alpha` and `gamma`
+and holds `/etc/fleet.conf`.
 
-The scan finds what the fleet wants and the machine lacks. Without root, it can't read the
-sudoers folder.
+mothership reads every user's home, so it needs root.
 
 ```console
 $ mothership scan
+Error: mothership reads every user's home: run it with sudo
+[exit 1]
+```
+
+The scan finds what the fleet wants and the machine lacks.
+
+```console
+$ sudo mothership scan
 Packages (2)
   alpha  listed, not installed
   gamma  listed, not installed
 
-/etc (3)
-  /etc/fleet.conf       missing, the fleet has it
-  /etc/sudoers.d/wheel  unreadable without root
-  /etc/sudoers.d        unreadable without root
+/etc (1)
+  /etc/fleet.conf  missing, the fleet has it
 
-5 differences, \d+ ignored by ~/\.local/share/chezmoi/types/workstation/ignore\.txt (re)
+3 differences, \d+ ignored (re)
 ```
 
-Without root, apply only shows its plan.
+Apply shows its plan and asks first.
 
 ```console
-$ mothership apply
+$ echo n | sudo mothership apply
 Packages (2)
   alpha  install
   gamma  install
@@ -31,14 +37,13 @@ Packages (2)
 /etc (1)
   /etc/fleet.conf  write the fleet's version
 
-2 other differences wait for `mothership review`.
-Run it with sudo to apply. Without root, unreadable /etc files are left out.
+Apply [y/N]? n
 $ pacman -Qq alpha
 error: package 'alpha' was not found
 [exit 1]
 ```
 
-With sudo, it asks, then installs the packages and writes the file.
+Once I say yes, it installs the packages and writes the file.
 
 ```console
 $ echo y | sudo mothership apply
@@ -65,12 +70,8 @@ daemon-reload
 The machine now matches its fleet, so a second apply has nothing to do.
 
 ```console
-$ mothership scan
-/etc (2)
-  /etc/sudoers.d/wheel  unreadable without root
-  /etc/sudoers.d        unreadable without root
-
-2 differences, \d+ ignored by ~/\.local/share/chezmoi/types/workstation/ignore\.txt (re)
+$ sudo mothership scan
+0 differences, \d+ ignored (re)
 $ echo y | sudo mothership apply
 Nothing to apply.
 ```

@@ -1,4 +1,9 @@
-use crate::{cmd, pacman, walk};
+use crate::{
+    cmd::{self, As},
+    pacman,
+    user::User,
+    walk,
+};
 use anyhow::{Context, Result, bail};
 use std::{
     fs,
@@ -23,12 +28,19 @@ pub enum Preview {
         path: PathBuf,
         archive: PathBuf,
     },
-    Chezmoi(PathBuf),
+    Chezmoi {
+        path: PathBuf,
+        user: User,
+    },
+    /// `user` names the user of a user unit.
     Unit {
         name: String,
-        user: bool,
+        user: Option<String>,
     },
-    Dconf(String),
+    Dconf {
+        section: String,
+        user: User,
+    },
 }
 
 impl Preview {
@@ -53,7 +65,7 @@ impl Preview {
             Preview::Contents(path) => contents(path)?,
             Preview::Diff { old, new } => diff(old, new, color)?,
             Preview::Original { path, archive } => original(path, archive, color)?,
-            Preview::Chezmoi(path) => {
+            Preview::Chezmoi { path, user } => {
                 let color = if color {
                     "--color=true"
                 } else {
@@ -62,16 +74,20 @@ impl Preview {
                 let path = path.to_string_lossy();
                 // --reverse shows the machine's edits as additions.
                 let args = ["diff", "--reverse", "--no-pager", color, &path];
-                hunks(&cmd::stdout("chezmoi", &args)?)
+                hunks(&cmd::stdout(As::User(user), "chezmoi", &args)?)
             }
             Preview::Unit { name, user } => {
-                let scope: &[&str] = if *user { &["--user"] } else { &[] };
-                let args = [scope, &["cat", name.as_str()]].concat();
-                lines(&cmd::stdout("systemctl", &args)?)
+                let machine = user.as_ref().map(|u| format!("{u}@"));
+                let scope: Vec<&str> = match &machine {
+                    Some(machine) => vec!["--user", "--machine", machine],
+                    None => vec![],
+                };
+                let args = [&scope[..], &["cat", name.as_str()]].concat();
+                lines(&cmd::stdout(As::Root, "systemctl", &args)?)
             }
-            Preview::Dconf(section) => {
+            Preview::Dconf { section, user } => {
                 // dump includes the folders below, which are items of their own.
-                let dump = cmd::stdout("dconf", &["dump", &format!("{section}/")])?;
+                let dump = cmd::stdout(As::User(user), "dconf", &["dump", &format!("{section}/")])?;
                 lines(&dump)
                     .into_iter()
                     .skip(1)

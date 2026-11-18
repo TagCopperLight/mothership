@@ -1,77 +1,144 @@
 # mothership
 
-mothership keeps Linux machines in line with a git repo, the fleet repo, that describes device types such as "workstation". Each machine runs one type. [chezmoi](https://chezmoi.io) writes the files in `$HOME`; mothership handles packages, `/etc`, services, groups and the login shell.
+mothership sets up machines from a git repository, and tells you when a machine drifts away from it. That repository is called the fleet.
 
-You need Arch, `chezmoi`, `cargo`, `uv` and `dconf`, with the fleet repo as chezmoi's source. chezmoi's config encrypts with age, for the recipients of the machine's type:
+The fleet doesn't describe each machine. It describes device types, such as "workstation", and every machine belongs to one type. Machines of the same type end up identical, even when their hardware differs.
 
-```toml
-encryption = "age"
-[age]
-useBuiltin = true
-identity = "~/.config/mothership/key.txt"
-recipientsFile = "~/.local/share/chezmoi/types/workstation/recipients.txt"
-```
+[chezmoi](https://chezmoi.io) writes the files in your home folder. mothership takes care of everything else:
 
-## Commands
+- the packages, from the Arch repositories and the AUR;
+- the files in `/etc`;
+- system and user services;
+- each user's account: groups, login shell, and whether their services run without a login;
+- the tools each user installs with cargo, uv and bun.
 
-- `mothership scan` lists every difference between the machine and its type.
-- `mothership review` asks about each difference: **add** it to the fleet, **ignore** it for good, put it off a week (**later**), or skip it this time (**pass**). It edits the fleet checkout and never commits. Under sudo it can also **revert** the machine to the fleet.
-- `sudo mothership apply` makes the machine follow the fleet. It shows its plan and asks first.
-- `mothership key` makes the machine's key when it has none, and shows its public half.
-- `mothership trust <name> <key>` adds a machine's key to the type's recipients and encrypts every secret of the type again. `mothership retire <name>` removes one, and lists the secrets to change, since git history keeps what it could open.
+A type can have several users. Each gets their own part of the type, their own secrets and their own ignore list, and mothership creates a user the machine lacks. Every command runs with `sudo`, since it reads every user's home.
 
-A file only its owner can read, or a folder holding one, gets a `[secret]` mark: review never shows it and adds it encrypted. For a secret the mark misses, review's **secret** answer adds the file encrypted, and for a file the mark gets wrong, **not secret** writes it into `not-secret.txt`. A secret the fleet holds in clear shows up too. A machine whose key isn't among the recipients leaves the secrets alone.
+## The three commands
 
-Review offers to declare a service, group or shell only when the fleet's packages, with their dependencies, or its files provide it, and puts a package found in neither pacman's repos nor the AUR into `built_packages`. It adds a tool only when it comes from the registry or from git, with at most a branch: an editable install, a local folder or a tag waits until the fleet can describe it.
+`sudo mothership apply` brings in the changes made to the fleet since the last apply: it installs or removes packages and tools, writes the files and turns services on or off. It shows you the plan first and waits for your approval. Apply never undoes a change you made on the machine itself. It lists the files you edited, leaves them alone, and leaves your other changes to review.
 
-## The fleet repo
+`sudo mothership scan` lists everything that differs between the machine and its type: a package you installed by hand, a file you edited in `/etc`, a new folder in `~/.config`, a service you enabled.
 
-```text
-types/<type>/system.toml      what the type has outside $HOME
-types/<type>/etc/             files for /etc, secrets encrypted as <file>.age
-types/<type>/recipients.txt   the age keys that open the type's secrets, each under a `# name`
-types/<type>/secrets/         secrets templates decrypt, such as `{{ include "types/workstation/secrets/key.age" | decrypt }}`
-types/<type>/ignore.txt       what the scan never reports
-types/<type>/not-secret.txt   paths that look secret but aren't, one glob per line
-```
+`sudo mothership review` goes through those differences one at a time and asks what to do with each:
 
-The machine names its type and options in `/etc/mothership/machine.toml`:
+| Answer | What happens |
+|---|---|
+| add | The difference goes into the type, so every machine of the type gets it. |
+| ignore | Scan stops reporting it. |
+| later | Review hides it for a week. |
+| pass | Review skips it this time only. |
+| revert | The machine goes back to what the type says. |
+
+Review changes the machine's copy of the fleet but doesn't commit anything. You look at the changes, then commit and push them yourself.
+
+## Secrets
+
+The fleet can hold secrets, such as SSH keys and Wi-Fi passwords, because it encrypts them with [age](https://age-encryption.org).
+
+A machine has a key for root and one for each user. Each type keeps a list of the keys allowed to open the secrets in `/etc`, and each of its users a list for the secrets in their home. A key missing from a list leaves those secrets alone.
+
+mothership treats a file as a secret when only its owner can read it. Review then shows the file's path but never its content, and adds it encrypted. When it guesses wrong, you can answer **secret** or **not secret**.
+
+| Command | What it does |
+|---|---|
+| `sudo mothership key` | Creates root's key and each user's when they have none, and prints their public halves. |
+| `sudo mothership trust <type>/<root\|user> <name> <key>` | Adds a key to a list, then encrypts that list's secrets again so the key can open them. It works on any type of the fleet. |
+| `sudo mothership retire <type>/<root\|user> <name>` | Removes a key from a list. It also prints the secrets that key could open, because git history still holds their old versions, so you should change them. |
+
+## Setting up a machine
+
+mothership needs Arch Linux, with `chezmoi`, `cargo`, `uv` and `dconf` installed. Build it from this repository with `cargo build --release`.
+
+The fleet lives in `/var/lib/mothership/fleet`. Whoever owns that folder is the machine's admin: they commit and push from it, and every file mothership writes there goes to them. The file `/etc/mothership/machine.toml` tells mothership the machine's type:
 
 ```toml
 type = "workstation"
 options = ["dual-boot"]
 ```
 
-The type's `system.toml`:
+Each user's chezmoi must read the fleet and encrypt with age, using the user's key and list. The fleet's `.chezmoi.toml.tmpl` writes this config, and apply runs `chezmoi init` for a user whose config doesn't match:
 
 ```toml
-packages = ["base", "linux"]
-built_packages = ["mydriver"]         # built elsewhere: checked, never installed
-aur_helper = "yay"                    # installs what pacman's repos lack
-shell = "/usr/bin/fish"
-groups = ["docker"]
-services = ["NetworkManager.service"]
-user_services = []
+sourceDir = "/var/lib/mothership/fleet"
+encryption = "age"
 
-[[installers]]                        # run as you when `creates` is missing
-name = "bun"
-run = "curl -fsSL https://bun.sh/install | bash"
-creates = "~/.bun"
+[age]
+useBuiltin = true
+identity = "~/.config/mothership/key.txt"
+recipientsFile = "/var/lib/mothership/fleet/types/workstation/users/tag/recipients.txt"
 
-[etc_modes]                           # default 644, or 755 if executable
-"sudoers.d/wheel" = "440"
-
-[tools]                               # cargo, uv and bun, installed as you
-cargo = ["cargo-nextest", { name = "mytool", git = "https://github.com/me/mytool", branch = "dev" }]
-
-[hardware.cpu-intel]                  # on machines with an Intel CPU
-packages = ["intel-ucode"]
-
-[options.dual-boot]                   # on machines whose machine.toml turns it on
-packages = ["os-prober"]
-etc = ["default/grub"]                # files of etc/ only these machines get
+[data]
+user = "tag"
 ```
 
-A block takes `packages`, `built_packages`, `services` and `etc`. mothership finds `cpu-intel`, `cpu-amd`, `gpu-intel`, `gpu-amd`, `gpu-nvidia`, `battery` and `gxfp5130` (a fingerprint sensor), and stops when the machine has one its type has no block for, even an empty one.
+## Writing a fleet
 
-`ignore.txt` holds `<kind> <glob>` lines, such as `home ~/.cache` or `package linux-firmware-*`, and `not-secret.txt` holds globs such as `~/.config/zed/*`. `*` stays in one folder, `**` crosses folders.
+Each type has a folder in the fleet:
+
+```text
+types/workstation/
+├── system.toml           packages and services
+├── etc/                  files copied into /etc
+├── recipients.txt        the keys allowed to open the secrets in /etc
+├── ignore.txt            differences outside the homes scan should never report
+├── not-secret.txt        files in /etc that look secret but aren't
+└── users/tag/
+    ├── user.toml         groups, shell, linger, user services and tools
+    ├── secrets/          encrypted values for chezmoi templates
+    ├── recipients.txt    the keys allowed to open tag's secrets
+    ├── ignore.txt        differences in tag's home scan should never report
+    └── not-secret.txt    files in tag's home that look secret but aren't
+```
+
+### system.toml and user.toml
+
+```toml
+packages = ["base", "linux", "git"]
+aur_helper = "yay"
+services = ["NetworkManager.service"]
+```
+
+```toml
+shell = "/usr/bin/fish"
+groups = ["docker"]
+linger = true
+user_services = []
+
+[tools]
+cargo = ["cargo-nextest"]
+```
+
+`linger` keeps the user's services running while nobody is logged in.
+
+Files in `etc/` get the mode 644, or 755 when they're executable. You can set another mode for a file in an `[etc_modes]` table.
+
+### Hardware and options
+
+mothership detects the CPU and GPU vendor, a battery, and a few devices. A `[hardware.*]` block adds what a piece of hardware needs:
+
+```toml
+[hardware.cpu-intel]
+packages = ["intel-ucode"]
+```
+
+A machine can turn on options in its `machine.toml`, and an `[options.*]` block says what each option adds:
+
+```toml
+[options.dual-boot]
+packages = ["os-prober"]
+etc = ["default/grub"]
+```
+
+When a machine has hardware that its type doesn't mention, mothership stops and names the missing block. An empty block is enough to say the hardware needs nothing.
+
+### Ignoring things
+
+Each line of an `ignore.txt` names a kind of difference and a pattern. The type's list takes `package`, `etc` and `service`, and each user's list the rest:
+
+```text
+home ~/.cache
+package linux-firmware-*
+```
+
+Each line of `not-secret.txt` is a pattern, such as `~/.config/zed/*`. In both files, `*` matches inside one folder and `**` matches across folders.

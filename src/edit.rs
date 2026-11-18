@@ -1,9 +1,11 @@
 use crate::{
-    cmd,
-    fleet::{Fleet, Manager, Mode, Tool},
+    chezmoi,
+    cmd::{self, As},
+    fleet::{Fleet, Manager, Member, Mode, Tool},
+    ignore::Level,
     pacman,
     prompt::Prompt,
-    secrets, user, walk,
+    secrets, walk,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -35,6 +37,20 @@ impl Key {
             Key::Tools(manager) => vec!["tools", manager.name()],
         }
     }
+
+    fn level(self) -> Level {
+        match self {
+            Key::Packages | Key::BuiltPackages | Key::Services => Level::Machine,
+            Key::UserServices | Key::Groups | Key::Tools(_) => Level::User,
+        }
+    }
+
+    fn file(self) -> &'static str {
+        match self.level() {
+            Level::Machine => "system.toml",
+            Level::User => "user.toml",
+        }
+    }
 }
 
 /// How to make the fleet accept what this machine has.
@@ -57,6 +73,7 @@ pub enum Add {
     },
     UndeclareInstaller(String),
     Shell(String),
+    Linger(bool),
     /// `encrypt` keeps the file encrypted in the fleet, as every secret.
     Track {
         path: PathBuf,
@@ -98,17 +115,23 @@ impl Add {
             Add::ListPackage(_) => "add it to `packages` in system.toml".into(),
             Add::UnlistPackage(_) => "remove it from system.toml".into(),
             Add::Declare { key, .. } => {
-                format!("add it to `{}` in system.toml", key.path().join("."))
+                format!("add it to `{}` in {}", key.path().join("."), key.file())
             }
             Add::DeclareTool { manager, .. } => {
                 let path = Key::Tools(*manager).path().join(".");
-                format!("write this machine's source into `{path}` in system.toml")
+                format!("write this machine's source into `{path}` in user.toml")
             }
             Add::Undeclare { key, .. } => {
-                format!("remove it from `{}` in system.toml", key.path().join("."))
+                format!(
+                    "remove it from `{}` in {}",
+                    key.path().join("."),
+                    key.file()
+                )
             }
-            Add::UndeclareInstaller(_) => "remove its installer from system.toml".into(),
-            Add::Shell(shell) => format!("make {shell} the type's shell"),
+            Add::UndeclareInstaller(_) => "remove its installer from user.toml".into(),
+            Add::Shell(shell) => format!("make {shell} the user's shell"),
+            Add::Linger(true) => "set `linger = true` in user.toml".into(),
+            Add::Linger(false) => "remove `linger` from user.toml".into(),
             Add::Track { encrypt, .. } => {
                 format!("add it to chezmoi{}", encrypted_suffix(*encrypt))
             }
@@ -126,27 +149,48 @@ impl Add {
         }
     }
 
-    /// Returns false when I cancel along the way.
-    pub fn apply(&self, fleet: &Fleet, prompt: &mut Prompt) -> Result<bool> {
+    /// Returns false when I cancel along the way. `member` is the user an item of theirs
+    /// belongs to.
+    pub fn apply(
+        &self,
+        fleet: &Fleet,
+        member: Option<&Member>,
+        prompt: &mut Prompt,
+    ) -> Result<bool> {
+        let member = || member.context("the item belongs to no user");
         match self {
-            Add::ListPackage(name) => declare(fleet, package_key(fleet, name)?, name, name.into())?,
+            Add::ListPackage(name) => {
+                declare(fleet, None, package_key(fleet, name)?, name, name.into())?
+            }
             Add::UnlistPackage(name) => {
-                undeclare(fleet, &[Key::Packages, Key::BuiltPackages], name)?
+                undeclare(fleet, None, &[Key::Packages, Key::BuiltPackages], name)?
             }
-            Add::Declare { key, name } => declare(fleet, *key, name, name.into())?,
-            Add::DeclareTool { manager, tool } => {
-                declare(fleet, Key::Tools(*manager), tool.name(), tool_entry(tool))?
-            }
-            Add::Undeclare { key, name } => undeclare(fleet, &[*key], name)?,
-            Add::UndeclareInstaller(name) => edit_system(fleet, |doc| {
+            Add::Declare { key, name } => declare(fleet, member().ok(), *key, name, name.into())?,
+            Add::DeclareTool { manager, tool } => declare(
+                fleet,
+                Some(member()?),
+                Key::Tools(*manager),
+                tool.name(),
+                tool_entry(tool),
+            )?,
+            Add::Undeclare { key, name } => undeclare(fleet, member().ok(), &[*key], name)?,
+            Add::UndeclareInstaller(name) => edit_toml(&member()?.path(), |doc| {
                 let installers = doc["installers"]
                     .as_array_of_tables_mut()
-                    .context("system.toml has no [[installers]]")?;
+                    .context("user.toml has no [[installers]]")?;
                 installers.retain(|t| t.get("name").and_then(|n| n.as_str()) != Some(name));
                 Ok(())
             })?,
-            Add::Shell(shell) => edit_system(fleet, |doc| {
+            Add::Shell(shell) => edit_toml(&member()?.path(), |doc| {
                 doc["shell"] = value(shell.as_str());
+                Ok(())
+            })?,
+            Add::Linger(linger) => edit_toml(&member()?.path(), |doc| {
+                if *linger {
+                    doc["linger"] = value(true);
+                } else {
+                    doc.remove("linger");
+                }
                 Ok(())
             })?,
             Add::Track { path, encrypt } => {
@@ -156,10 +200,11 @@ impl Add {
                         return Ok(false);
                     }
                 }
-                chezmoi_add(fleet, path, *encrypt)?;
+                chezmoi_add(member()?, path, *encrypt)?;
             }
             Add::Update { path, encrypt } => {
-                let source = source_path(path)?;
+                let member = member()?;
+                let source = chezmoi::source_path(member.user(), path)?;
                 if source.extension().is_some_and(|e| e == "tmpl") {
                     bail!("{} is a template, edit it by hand", source.display());
                 }
@@ -167,9 +212,9 @@ impl Add {
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().starts_with("encrypted_"));
                 if !encrypt {
-                    cmd::run("chezmoi", &["re-add", &path.to_string_lossy()])?;
+                    chezmoi::write_for(member.user(), &["re-add", &path.to_string_lossy()])?;
                 } else {
-                    chezmoi_add(fleet, path, true)?;
+                    chezmoi_add(member, path, true)?;
                     if clear {
                         println!("  git history keeps the version in clear, so change it.");
                     }
@@ -181,7 +226,11 @@ impl Add {
                 user_js,
                 key,
                 value,
-            } => set_pref(&source_path(user_js)?, key, value)?,
+            } => set_pref(
+                &chezmoi::source_path(member()?.user(), user_js)?,
+                key,
+                value,
+            )?,
         }
         Ok(true)
     }
@@ -191,21 +240,29 @@ fn encrypted_suffix(encrypt: bool) -> &'static str {
     if encrypt { ", encrypted" } else { "" }
 }
 
-/// chezmoi encrypts for the type's recipients, and turns a file it has in clear into an
-/// encrypted one.
-fn chezmoi_add(fleet: &Fleet, path: &Path, encrypt: bool) -> Result<()> {
+/// chezmoi encrypts for the user's recipients, and turns a file it has in clear into an
+/// encrypted one. The user's key must be among them, or the user couldn't open it.
+fn chezmoi_add(member: &Member, path: &Path, encrypt: bool) -> Result<()> {
     let path = path.to_string_lossy();
-    if encrypt {
-        fleet.secrets().check_open()?;
-        cmd::run("chezmoi", &["add", "--encrypt", &path])
-    } else {
-        cmd::run("chezmoi", &["add", &path])
+    if !encrypt {
+        return chezmoi::write_for(member.user(), &["add", &path]);
     }
+    if !member.open {
+        bail!(
+            "{}'s key isn't in {}: `mothership trust` it first",
+            member.name,
+            member.recipients().display()
+        );
+    }
+    chezmoi::write_for(member.user(), &["add", "--encrypt", &path])
 }
 
+/// A missing file starts empty.
 fn append_line(path: &Path, line: &str) -> Result<()> {
-    let mut text =
-        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut text = match fs::read_to_string(path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
+        text => text.with_context(|| format!("reading {}", path.display()))?,
+    };
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
@@ -214,17 +271,16 @@ fn append_line(path: &Path, line: &str) -> Result<()> {
     fs::write(path, text).with_context(|| format!("writing {}", path.display()))
 }
 
-pub fn ignore(fleet: &Fleet, line: &str) -> Result<()> {
-    append_line(&fleet.ignore_path(), line)
+/// Into the user's ignore.txt for an item of theirs, the type's otherwise.
+pub fn ignore(fleet: &Fleet, member: Option<&Member>, line: &str) -> Result<()> {
+    let path = member.map_or_else(|| fleet.ignore_path(), Member::ignore_path);
+    append_line(&path, line)
 }
 
-/// The scan shows the item as an ordinary one from then on.
-pub fn not_secret(fleet: &Fleet, subject: &str) -> Result<()> {
-    let path = fleet.not_secret_path();
-    if !path.exists() {
-        fs::write(&path, "").with_context(|| format!("writing {}", path.display()))?;
-        user::own(&path)?;
-    }
+/// The scan shows the item as an ordinary one from then on: in the user's not-secret.txt for a
+/// file of theirs, the type's for /etc.
+pub fn not_secret(fleet: &Fleet, member: Option<&Member>, subject: &str) -> Result<()> {
+    let path = member.map_or_else(|| fleet.not_secret_path(), Member::not_secret_path);
     append_line(&path, &globset::escape(subject))
 }
 
@@ -236,7 +292,7 @@ fn package_key(fleet: &Fleet, name: &str) -> Result<Key> {
     }
     let why = match fleet.system.aur_helper.as_deref() {
         None => "system.toml sets no aur_helper".to_owned(),
-        Some(helper) => match cmd::stdout(helper, &["-Si", name]) {
+        Some(helper) => match cmd::stdout(As::User(fleet.admin()), helper, &["-Si", name]) {
             Ok(_) => return Ok(Key::Packages),
             Err(e) => format!("{e:#}"),
         },
@@ -246,11 +302,22 @@ fn package_key(fleet: &Fleet, name: &str) -> Result<Key> {
     Ok(Key::BuiltPackages)
 }
 
+/// The file a key lives in: system.toml, with the tables the machine's blocks add, or the
+/// user's user.toml.
+fn file(fleet: &Fleet, member: Option<&Member>, key: Key) -> Result<(PathBuf, Vec<Vec<String>>)> {
+    match (key.level(), member) {
+        (Level::Machine, _) => Ok((fleet.system_path(), fleet.tables.clone())),
+        (Level::User, Some(member)) => Ok((member.path(), vec![vec![]])),
+        (Level::User, None) => bail!("`{}` belongs to a user", key.path().join(".")),
+    }
+}
+
 /// The name may come from one of the machine's blocks.
-fn undeclare(fleet: &Fleet, keys: &[Key], name: &str) -> Result<()> {
-    edit_system(fleet, |doc| {
+fn undeclare(fleet: &Fleet, member: Option<&Member>, keys: &[Key], name: &str) -> Result<()> {
+    let (path, tables) = file(fleet, member, keys[0])?;
+    edit_toml(&path, |doc| {
         let mut found = false;
-        for table in &fleet.tables {
+        for table in &tables {
             for key in keys {
                 if let Some(array) = find_array(doc, table, &key.path()) {
                     found |= remove(array, name);
@@ -262,14 +329,25 @@ fn undeclare(fleet: &Fleet, keys: &[Key], name: &str) -> Result<()> {
                 .iter()
                 .map(|k| format!("`{}`", k.path().join(".")))
                 .collect();
-            bail!("{name} is in no {} of system.toml", keys.join(" or "));
+            bail!(
+                "{name} is in no {} of {}",
+                keys.join(" or "),
+                path.display()
+            );
         }
         Ok(())
     })
 }
 
-fn declare(fleet: &Fleet, key: Key, name: &str, entry: Value) -> Result<()> {
-    edit_system(fleet, |doc| {
+fn declare(
+    fleet: &Fleet,
+    member: Option<&Member>,
+    key: Key,
+    name: &str,
+    entry: Value,
+) -> Result<()> {
+    let (path, _) = file(fleet, member, key)?;
+    edit_toml(&path, |doc| {
         let array = array(doc, key)?;
         if let Some(old) = array.iter_mut().find(|v| names(v, name)) {
             let decor = old.decor().clone();
@@ -295,13 +373,13 @@ fn tool_entry(tool: &Tool) -> Value {
     table.into()
 }
 
-fn edit_system(fleet: &Fleet, change: impl FnOnce(&mut DocumentMut) -> Result<()>) -> Result<()> {
-    let path = fleet.type_dir.join("system.toml");
-    let mut doc: DocumentMut = fs::read_to_string(&path)?
+fn edit_toml(path: &Path, change: impl FnOnce(&mut DocumentMut) -> Result<()>) -> Result<()> {
+    let mut doc: DocumentMut = fs::read_to_string(path)
+        .with_context(|| format!("reading {}", path.display()))?
         .parse()
         .with_context(|| format!("parsing {}", path.display()))?;
     change(&mut doc)?;
-    fs::write(&path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
+    fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
 }
 
 fn array(doc: &mut DocumentMut, key: Key) -> Result<&mut Array> {
@@ -313,13 +391,19 @@ fn array(doc: &mut DocumentMut, key: Key) -> Result<&mut Array> {
             .entry(parent)
             .or_insert(toml_edit::table())
             .as_table_mut()
-            .with_context(|| format!("`{parent}` in system.toml is not a table"))?;
+            .with_context(|| format!("`{parent}` in {} is not a table", key.file()))?;
     }
     table
         .entry(last)
         .or_insert(value(Array::new()))
         .as_array_mut()
-        .with_context(|| format!("`{}` in system.toml is not an array", key.path().join(".")))
+        .with_context(|| {
+            format!(
+                "`{}` in {} is not an array",
+                key.path().join("."),
+                key.file()
+            )
+        })
 }
 
 fn find_array<'a>(
@@ -402,12 +486,6 @@ fn names(entry: &Value, name: &str) -> bool {
             == Some(name)
 }
 
-fn source_path(target: &Path) -> Result<PathBuf> {
-    Ok(PathBuf::from(
-        cmd::stdout("chezmoi", &["source-path", &target.to_string_lossy()])?.trim(),
-    ))
-}
-
 fn etc_rel(path: &Path) -> &Path {
     path.strip_prefix("/etc")
         .expect("the /etc scan reports paths under /etc")
@@ -431,7 +509,7 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()>
     } else {
         (clear.as_path(), sealed.as_path())
     };
-    user::create_dir_all(dest.parent().expect("under etc/"))?;
+    fs::create_dir_all(dest.parent().expect("under etc/"))?;
     let meta = fs::symlink_metadata(path)?;
     if meta.is_symlink() {
         if encrypt {
@@ -442,7 +520,6 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()>
             _ => {}
         }
         unix::fs::symlink(fs::read_link(path)?, dest)?;
-        user::own(dest)?;
     } else if meta.is_dir() {
         bail!(
             "{} is a folder: copy the files you want one by one",
@@ -456,10 +533,15 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()>
             read => read?,
         };
         if encrypt {
-            bytes = fleet.secrets().encrypt(&bytes)?;
+            if !fleet.etc_open() {
+                bail!(
+                    "root's key isn't in {}: `mothership trust` it first",
+                    fleet.recipients().display()
+                );
+            }
+            bytes = secrets::encrypt(&fleet.recipients(), &bytes)?;
         }
         fs::write(dest, bytes)?;
-        user::own(dest)?;
         let mode = meta.permissions().mode() & 0o7777;
         let executable = mode & 0o111 != 0;
         fs::set_permissions(
@@ -468,7 +550,7 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()>
         )?;
         let default = Mode::default_for(executable, encrypt);
         let rel = rel.to_string_lossy().into_owned();
-        edit_system(fleet, |doc| {
+        edit_toml(&fleet.system_path(), |doc| {
             if Mode(mode) == default {
                 if let Some(modes) = doc.get_mut("etc_modes").and_then(|m| m.as_table_like_mut()) {
                     modes.remove(&rel);
@@ -501,7 +583,7 @@ fn remove_etc(fleet: &Fleet, rel: &Path) -> Result<()> {
         fs::remove_dir(dir)?;
     }
     let rel = rel.to_string_lossy();
-    edit_system(fleet, |doc| {
+    edit_toml(&fleet.system_path(), |doc| {
         for table in &fleet.tables[1..] {
             if let Some(array) = find_array(doc, table, &["etc"]) {
                 remove(array, &rel);

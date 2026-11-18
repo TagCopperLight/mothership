@@ -22,11 +22,11 @@ Meanwhile the fleet changes:
 - It moves the login shell to `/usr/bin/bash` and adds the `video` group.
 
 ```console
-$ cd ~/.local/share/chezmoi &&
+$ cd /var/lib/mothership/fleet &&
 > sed -i 's/^  "alpha",$/  "epsilon",\n  "zeta",/' types/workstation/system.toml &&
 > printf 'managed = yes\nlevel = 2\n' > types/workstation/etc/fleet.conf &&
 > printf 'new = yes\n' > types/workstation/etc/new.conf &&
-> sed -i 's|^shell = .*|shell = "/usr/bin/bash"|; s|^groups = .*|groups = ["wheel", "video"]|' types/workstation/system.toml &&
+> sed -i 's|^shell = .*|shell = "/usr/bin/bash"|; s|^groups = .*|groups = ["wheel", "video"]|' types/workstation/users/me/user.toml &&
 > git add -A && git commit -qm "Change the workstation"
 ```
 
@@ -43,7 +43,7 @@ Packages (3)
 /etc (1)
   /etc/new.conf  write the fleet's version
 
-Account (2)
+Account, me (2)
   shell /bin/bash  make /usr/bin/bash the login shell
   group video      join
 

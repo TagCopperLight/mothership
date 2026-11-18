@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
-    fleet::{Fleet, System},
+    fleet::{Fleet, System, UserConfig},
     hardware::Hardware,
-    ignore::Ignore,
+    ignore::{Ignore, Level},
 };
 use std::collections::BTreeSet;
 use tempfile::TempDir;
@@ -15,13 +15,24 @@ packages = [
   "zip",   # archives
 ]
 built_packages = ["mytool"]
-
-shell = "/usr/bin/bash"
-groups = ["docker"]
 services = [
   "NetworkManager.service",
   "fstrim.timer",
 ]
+
+[hardware.battery]
+packages = ["power-profiles-daemon"]
+services = ["power-profiles-daemon.service"]
+etc = ["battery.conf"]
+
+[options.dual-boot]
+packages = ["os-prober"]
+etc = ["grub.d/dual"]
+"#;
+
+const USER: &str = r#"# What I have outside chezmoi.
+shell = "/usr/bin/bash"
+groups = ["docker"]
 
 [[installers]]
 name = "bun"
@@ -40,15 +51,6 @@ cargo = [
   { name = "chromash", git = "https://example.com/chromash" },
   "sqlx-cli",
 ]
-
-[hardware.battery]
-packages = ["power-profiles-daemon"]
-services = ["power-profiles-daemon.service"]
-etc = ["battery.conf"]
-
-[options.dual-boot]
-packages = ["os-prober"]
-etc = ["grub.d/dual"]
 "#;
 
 struct Checkout {
@@ -65,15 +67,21 @@ impl Checkout {
         fs::write(type_dir.join("etc/battery.conf"), "").unwrap();
         fs::write(type_dir.join("etc/grub.d/dual"), "").unwrap();
         fs::write(type_dir.join("system.toml"), SYSTEM).unwrap();
-        fs::write(type_dir.join("ignore.txt"), "home ~/.cache\n").unwrap();
+        fs::write(type_dir.join("ignore.txt"), "package htop\n").unwrap();
+        fs::create_dir_all(type_dir.join("users/me")).unwrap();
+        fs::write(type_dir.join("users/me/user.toml"), USER).unwrap();
         let hardware = BTreeSet::from([Hardware::Battery]);
         let fleet = Fleet::new(dir.path().to_path_buf(), "workstation", &[], &hardware).unwrap();
         Checkout { dir, fleet }
     }
 
     fn apply(&self, add: Add, answers: &'static str) -> bool {
-        add.apply(&self.fleet, &mut Prompt::answering(answers))
-            .unwrap()
+        self.try_apply(add, answers).unwrap()
+    }
+
+    fn try_apply(&self, add: Add, answers: &'static str) -> Result<bool> {
+        let me = &self.fleet.members[0];
+        add.apply(&self.fleet, Some(me), &mut Prompt::answering(answers))
     }
 
     fn read(&self, rel: &str) -> String {
@@ -82,6 +90,10 @@ impl Checkout {
 
     fn system(&self) -> String {
         self.read("types/workstation/system.toml")
+    }
+
+    fn user(&self) -> String {
+        self.read("types/workstation/users/me/user.toml")
     }
 }
 
@@ -148,9 +160,9 @@ fn unlisting_reaches_built_packages_and_the_machines_blocks() {
 fn unlisting_an_unknown_package_or_one_of_an_option_off_here_fails() {
     let checkout = Checkout::new();
     for name in ["nope", "os-prober"] {
-        let add = Add::UnlistPackage(name.into());
         assert!(
-            add.apply(&checkout.fleet, &mut Prompt::answering(""))
+            checkout
+                .try_apply(Add::UnlistPackage(name.into()), "")
                 .is_err()
         );
     }
@@ -173,9 +185,16 @@ fn declares_in_the_style_of_the_list() {
         },
         "",
     );
-    let system = checkout.system();
-    assert!(system.contains("groups = [\"docker\", \"wheel\"]\n"));
-    assert!(system.contains("  \"fstrim.timer\",\n  \"sshd.service\",\n]"));
+    assert!(
+        checkout
+            .user()
+            .contains("groups = [\"docker\", \"wheel\"]\n")
+    );
+    assert!(
+        checkout
+            .system()
+            .contains("  \"fstrim.timer\",\n  \"sshd.service\",\n]")
+    );
 }
 
 #[test]
@@ -195,9 +214,9 @@ fn declares_into_a_key_the_file_lacks() {
         },
         "",
     );
-    let system: System = toml::from_str(&checkout.system()).unwrap();
-    assert_eq!(system.user_services, ["hyprwhspr.service"]);
-    assert_eq!(system.tools.of(Manager::Uv)[0].name(), "ruff");
+    let user: UserConfig = toml::from_str(&checkout.user()).unwrap();
+    assert_eq!(user.user_services, ["hyprwhspr.service"]);
+    assert_eq!(user.tools.of(Manager::Uv)[0].name(), "ruff");
 }
 
 #[test]
@@ -212,9 +231,9 @@ fn undeclares_a_tool_by_name_or_by_table_and_keeps_the_comments() {
             "",
         );
     }
-    let system = checkout.system();
-    assert!(system.contains("# What a workstation has outside $HOME."));
-    assert!(system.contains("# nextest runs the tests\ncargo = [\n  \"sqlx-cli\",\n]"));
+    let user = checkout.user();
+    assert!(user.contains("# What I have outside chezmoi."));
+    assert!(user.contains("# nextest runs the tests\ncargo = [\n  \"sqlx-cli\",\n]"));
 }
 
 #[test]
@@ -224,18 +243,15 @@ fn undeclaring_what_is_not_declared_fails() {
         key: Key::Groups,
         name: "wheel".into(),
     };
-    assert!(
-        add.apply(&checkout.fleet, &mut Prompt::answering(""))
-            .is_err()
-    );
+    assert!(checkout.try_apply(add, "").is_err());
 }
 
 #[test]
 fn removes_one_installer() {
     let checkout = Checkout::new();
     checkout.apply(Add::UndeclareInstaller("bun".into()), "");
-    let system: System = toml::from_str(&checkout.system()).unwrap();
-    let names: Vec<&str> = system.installers.iter().map(|i| i.name.as_str()).collect();
+    let user: UserConfig = toml::from_str(&checkout.user()).unwrap();
+    let names: Vec<&str> = user.installers.iter().map(|i| i.name.as_str()).collect();
     assert_eq!(names, ["uv"]);
 }
 
@@ -243,8 +259,17 @@ fn removes_one_installer() {
 fn sets_the_shell() {
     let checkout = Checkout::new();
     checkout.apply(Add::Shell("/usr/bin/fish".into()), "");
-    let system: System = toml::from_str(&checkout.system()).unwrap();
-    assert_eq!(system.shell.as_deref(), Some("/usr/bin/fish"));
+    let user: UserConfig = toml::from_str(&checkout.user()).unwrap();
+    assert_eq!(user.shell.as_deref(), Some("/usr/bin/fish"));
+}
+
+#[test]
+fn sets_and_drops_linger() {
+    let checkout = Checkout::new();
+    checkout.apply(Add::Linger(true), "");
+    assert!(checkout.user().contains("linger = true\n"));
+    checkout.apply(Add::Linger(false), "");
+    assert!(!checkout.user().contains("linger"));
 }
 
 #[test]
@@ -267,6 +292,7 @@ fn appends_ignore_lines_the_ignore_list_then_matches() {
     let checkout = Checkout::new();
     let item = crate::scan::Item {
         kind: crate::scan::Kind::Home,
+        member: Some(0),
         subject: "~/.config/odd [name]*".into(),
         detail: String::new(),
         secret: crate::scan::Secret::No,
@@ -275,8 +301,9 @@ fn appends_ignore_lines_the_ignore_list_then_matches() {
         revert: None,
         preview: crate::preview::Preview::None,
     };
-    ignore(&checkout.fleet, &crate::scan::ignore_line(&item)).unwrap();
-    let ignore = Ignore::load(&checkout.fleet.ignore_path()).unwrap();
+    let me = &checkout.fleet.members[0];
+    ignore(&checkout.fleet, Some(me), &crate::scan::ignore_line(&item)).unwrap();
+    let ignore = Ignore::load(&me.ignore_path(), Level::User).unwrap();
     assert!(ignore.matches(&item));
     let other = crate::scan::Item {
         subject: "~/.config/odd n".into(),
@@ -415,9 +442,9 @@ fn declaring_a_tool_writes_its_source_and_reads_back_the_same() {
             "",
         );
     }
-    let system: System = toml::from_str(&checkout.system()).unwrap();
-    let cargo = system.tools.of(Manager::Cargo);
+    let user: UserConfig = toml::from_str(&checkout.user()).unwrap();
+    let cargo = user.tools.of(Manager::Cargo);
     assert_eq!(cargo.iter().filter(|t| t.name() == "chromash").count(), 1);
-    assert_eq!(system.tools.find(Manager::Cargo, "chromash"), Some(&moved));
-    assert_eq!(system.tools.find(Manager::Cargo, "new"), Some(&new));
+    assert_eq!(user.tools.find(Manager::Cargo, "chromash"), Some(&moved));
+    assert_eq!(user.tools.find(Manager::Cargo, "new"), Some(&new));
 }

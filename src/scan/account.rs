@@ -1,9 +1,8 @@
 use super::{Item, Kind, Ships};
 use crate::{
     edit::{Add, Key},
-    fleet::Fleet,
+    fleet::Member,
     revert::Revert,
-    user,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -15,11 +14,27 @@ use std::{
 
 /// Packages create their groups through these, systemd's basic ones included.
 const SYSUSERS: [&str; 2] = ["/etc/sysusers.d", "/usr/lib/sysusers.d"];
+/// `loginctl enable-linger` leaves a file named after the user here.
+const LINGER: &str = "/var/lib/systemd/linger";
 
-pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
-    let user = user::current();
+pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
+    let user = member.user();
+    let config = &member.config;
     let mut items = Vec::new();
-    if let Some(shell) = &fleet.system.shell
+    let lingers = Path::new(LINGER).join(&user.name).exists();
+    if lingers != config.linger {
+        let detail = if lingers {
+            "on, not declared"
+        } else {
+            "declared, off"
+        };
+        items.push(
+            Item::new(Kind::Account, "linger", detail)
+                .with(Add::Linger(lingers))
+                .reverting(Revert::Linger(config.linger)),
+        );
+    }
+    if let Some(shell) = &config.shell
         && user.shell != *shell
     {
         let item = Item::new(
@@ -28,7 +43,7 @@ pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
             format!("the fleet says {shell}"),
         )
         .reverting(Revert::Shell(shell.clone()));
-        items.push(if ships.path(Path::new(&user.shell))? {
+        items.push(if ships.path(Path::new(&user.shell), None)? {
             item.with(Add::Shell(user.shell.clone()))
         } else {
             item.because("no package the fleet lists installs this shell")
@@ -47,7 +62,7 @@ pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
                 .then_some(fields[0])
         })
         .collect();
-    let declared = &fleet.system.groups;
+    let declared = &config.groups;
     let created = shipped_groups(ships)?;
     items.extend(
         actual
@@ -98,7 +113,7 @@ fn shipped_groups(ships: &Ships) -> Result<BTreeSet<String>> {
             .map(|entry| Ok(entry?.path()))
             .collect::<Result<_>>()?;
         for file in files {
-            if ships.path(&file)? {
+            if ships.path(&file, None)? {
                 groups.extend(sysusers_groups(&fs::read_to_string(&file)?));
             }
         }

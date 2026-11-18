@@ -1,7 +1,7 @@
 use crate::{
-    cmd,
-    fleet::{Fleet, Manager, Mode, Tool},
-    pacman, tools, user,
+    cmd::{self, As},
+    fleet::{self, Fleet, Manager, Member, Mode, Tool},
+    pacman, tools,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -37,6 +37,11 @@ pub enum Revert {
         archive: PathBuf,
     },
     DeleteEtc(PathBuf),
+    /// The machine lacks a user the type lists.
+    CreateUser,
+    /// The user's chezmoi doesn't read the fleet.
+    InitChezmoi,
+    Linger(bool),
     Shell(String),
     Join(String),
     Leave(String),
@@ -65,6 +70,10 @@ impl Revert {
             Revert::WriteEtc(_) | Revert::ApplyFile { .. } => "write the fleet's version".into(),
             Revert::RestoreEtc { .. } => "restore the package's version".into(),
             Revert::DeleteEtc(_) => "delete".into(),
+            Revert::CreateUser => "create it".into(),
+            Revert::InitChezmoi => "set it up from the fleet's config template".into(),
+            Revert::Linger(true) => "turn it on".into(),
+            Revert::Linger(false) => "turn it off".into(),
             Revert::Shell(shell) => format!("make {shell} the login shell"),
             Revert::Join(_) => "join".into(),
             Revert::Leave(_) => "leave".into(),
@@ -74,58 +83,51 @@ impl Revert {
     }
 }
 
-/// Packages go first, since the rest may come from them, and installers before tools, since bun
-/// comes from one. User units go last, after chezmoi writes theirs.
-pub fn run(fleet: &Fleet, reverts: &[&Revert]) -> Result<()> {
-    let (mut install, mut uninstall, mut files) = (Vec::new(), Vec::new(), Vec::new());
-    let (mut installers, mut tools) = (Vec::new(), Vec::new());
-    let (mut etc, mut account, mut system, mut user_units) =
+/// A revert, with the index of the type's user it belongs to.
+pub type Owned<'a> = (Option<usize>, &'a Revert);
+
+/// The machine goes first, then each user. Packages go first, since the rest may come from
+/// them, and installers before tools, since bun comes from one. User units go last, after
+/// chezmoi writes theirs.
+pub fn run(fleet: &Fleet, reverts: &[Owned]) -> Result<()> {
+    let machine: Vec<&Revert> = reverts
+        .iter()
+        .filter(|(member, _)| member.is_none())
+        .map(|(_, revert)| *revert)
+        .collect();
+    run_machine(fleet, &machine)?;
+    for (i, member) in fleet.members.iter().enumerate() {
+        let mine: Vec<&Revert> = reverts
+            .iter()
+            .filter(|(owner, _)| *owner == Some(i))
+            .map(|(_, revert)| *revert)
+            .collect();
+        if !mine.is_empty() {
+            run_member(member, &mine)?;
+        }
+    }
+    Ok(())
+}
+
+fn run_machine(fleet: &Fleet, reverts: &[&Revert]) -> Result<()> {
+    let (mut install, mut uninstall, mut etc, mut system) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for revert in reverts.iter().copied() {
         match revert {
             Revert::Install(name) => install.push(name.as_str()),
             Revert::Uninstall(name) => uninstall.push(name.as_str()),
-            Revert::RunInstaller(name) => installers.push(name),
-            Revert::InstallTool { .. }
-            | Revert::ReinstallTool { .. }
-            | Revert::UninstallTool { .. } => tools.push(revert),
             Revert::WriteEtc(_) | Revert::RestoreEtc { .. } | Revert::DeleteEtc(_) => {
                 etc.push(revert)
             }
-            Revert::Shell(_) | Revert::Join(_) | Revert::Leave(_) => account.push(revert),
-            Revert::Enable { user: false, .. } | Revert::Disable { user: false, .. } => {
-                system.push(revert)
-            }
-            Revert::Enable { .. } | Revert::Disable { .. } => user_units.push(revert),
-            Revert::ApplyFile { path, .. } => files.push(path.to_string_lossy()),
+            Revert::Enable { .. } | Revert::Disable { .. } => system.push(revert),
+            _ => unreachable!("a user's revert"),
         }
     }
-
     if !install.is_empty() {
         install_packages(fleet, &install)?;
     }
     if !uninstall.is_empty() {
         uninstall_packages(&uninstall)?;
-    }
-    for name in installers {
-        let installer = fleet
-            .system
-            .installers
-            .iter()
-            .find(|installer| &installer.name == name)
-            .with_context(|| format!("system.toml has no installer {name}"))?;
-        tools::run_installer(installer)?;
-    }
-    for revert in tools {
-        match revert {
-            Revert::InstallTool { manager, tool } => tools::install(*manager, tool)?,
-            Revert::ReinstallTool { manager, tool } => {
-                tools::uninstall(*manager, tool.name())?;
-                tools::install(*manager, tool)?;
-            }
-            Revert::UninstallTool { manager, name } => tools::uninstall(*manager, name)?,
-            _ => unreachable!("sorted above"),
-        }
     }
     for revert in &etc {
         change_etc(fleet, revert)?;
@@ -133,27 +135,87 @@ pub fn run(fleet: &Fleet, reverts: &[&Revert]) -> Result<()> {
     if !etc.is_empty() {
         cmd::root("systemctl", &["daemon-reload"])?;
     }
-    let name = &user::current().name;
+    for revert in system {
+        systemctl(&[], revert)?;
+    }
+    Ok(())
+}
+
+/// A user the machine lacks has no other reverts until it exists.
+fn run_member(member: &Member, reverts: &[&Revert]) -> Result<()> {
+    if reverts.iter().any(|r| matches!(r, Revert::CreateUser)) {
+        let mut args = vec!["--create-home"];
+        if let Some(shell) = &member.config.shell {
+            args.extend(["--shell", shell]);
+        }
+        args.push(&member.name);
+        return cmd::root("useradd", &args);
+    }
+    let user = member.user();
+    let name = &user.name;
+    let (mut account, mut installers, mut tools) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut files, mut units, mut init) = (Vec::new(), Vec::new(), false);
+    for revert in reverts.iter().copied() {
+        match revert {
+            Revert::InitChezmoi => init = true,
+            Revert::Shell(_) | Revert::Join(_) | Revert::Leave(_) | Revert::Linger(_) => {
+                account.push(revert)
+            }
+            Revert::RunInstaller(name) => installers.push(name),
+            Revert::InstallTool { .. }
+            | Revert::ReinstallTool { .. }
+            | Revert::UninstallTool { .. } => tools.push(revert),
+            Revert::ApplyFile { path, .. } => files.push(path.to_string_lossy()),
+            Revert::Enable { .. } | Revert::Disable { .. } => units.push(revert),
+            _ => unreachable!("the machine's revert"),
+        }
+    }
+    if init {
+        cmd::run(As::User(user), "chezmoi", &["init", "--source", fleet::DIR])?;
+    }
     for revert in account {
         match revert {
             Revert::Shell(shell) => cmd::root("usermod", &["--shell", shell, name])?,
             Revert::Join(group) => cmd::root("gpasswd", &["--add", name, group])?,
             Revert::Leave(group) => cmd::root("gpasswd", &["--delete", name, group])?,
+            Revert::Linger(true) => cmd::root("loginctl", &["enable-linger", name])?,
+            Revert::Linger(false) => cmd::root("loginctl", &["disable-linger", name])?,
             _ => unreachable!("sorted above"),
         }
     }
-    for revert in system {
-        systemctl(&[], revert)?;
+    for name in installers {
+        let installer = member
+            .config
+            .installers
+            .iter()
+            .find(|installer| &installer.name == name)
+            .with_context(|| format!("{} has no installer {name}", member.path().display()))?;
+        tools::run_installer(user, installer)?;
+    }
+    for revert in tools {
+        match revert {
+            Revert::InstallTool { manager, tool } => tools::install(user, *manager, tool)?,
+            Revert::ReinstallTool { manager, tool } => {
+                tools::uninstall(user, *manager, tool.name())?;
+                tools::install(user, *manager, tool)?;
+            }
+            Revert::UninstallTool { manager, name } => tools::uninstall(user, *manager, name)?,
+            _ => unreachable!("sorted above"),
+        }
     }
     if !files.is_empty() {
         let files: Vec<&str> = files.iter().map(|f| f.as_ref()).collect();
-        cmd::run("chezmoi", &[&["apply", "--force"], &files[..]].concat())?;
+        cmd::run(
+            As::User(user),
+            "chezmoi",
+            &[&["apply", "--force"], &files[..]].concat(),
+        )?;
     }
-    if !user_units.is_empty() {
+    if !units.is_empty() {
         let machine = format!("{name}@");
         let scope = ["--user", "--machine", &machine];
         cmd::root("systemctl", &[&scope[..], &["daemon-reload"]].concat())?;
-        for revert in user_units {
+        for revert in units {
             systemctl(&scope, revert)?;
         }
     }
@@ -171,8 +233,13 @@ fn install_packages(fleet: &Fleet, names: &[&str]) -> Result<()> {
         let args = [&["-S", "--needed", "--noconfirm"], &install.repo[..]].concat();
         cmd::root("pacman", &args)?;
     }
+    // An AUR helper builds as a user, never as root.
     if let Some((helper, aur)) = install.aur {
-        cmd::run(helper, &[&["-S", "--needed"], &aur[..]].concat())?;
+        cmd::run(
+            As::User(fleet.admin()),
+            helper,
+            &[&["-S", "--needed"], &aur[..]].concat(),
+        )?;
     }
     Ok(())
 }

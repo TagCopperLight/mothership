@@ -1,10 +1,9 @@
 use super::{Item, Kind, Ships};
 use crate::{
     edit::{Add, Key},
-    fleet::Fleet,
+    fleet::{Fleet, Member},
     preview::Preview,
     revert::Revert,
-    user,
 };
 use anyhow::{Context, Result};
 use globset::Glob;
@@ -33,45 +32,64 @@ pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
         PathBuf::from("/run/systemd/system"),
         PathBuf::from("/usr/lib/systemd/system"),
     ];
+    check(
+        Unit {
+            kind: Kind::Service,
+            key: Key::Services,
+            dirs: &system,
+            enable_dirs: &[&system[0]],
+            preset_dirs: &SYSTEM_PRESETS,
+            member: None,
+        },
+        &fleet.system.services,
+        ships,
+    )
+}
+
+pub fn scan_user(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
     let user = [
-        user::home().join(".config/systemd/user"),
+        member.user().home.join(".config/systemd/user"),
         PathBuf::from("/etc/systemd/user"),
         PathBuf::from("/run/systemd/user"),
         PathBuf::from("/usr/lib/systemd/user"),
     ];
-    let mut items = check(
-        Kind::Service,
-        Key::Services,
-        &system,
-        &[&system[0]],
-        &SYSTEM_PRESETS,
-        &fleet.system.services,
+    check(
+        Unit {
+            kind: Kind::UserService,
+            key: Key::UserServices,
+            dirs: &user,
+            enable_dirs: &[&user[0], &user[1]],
+            preset_dirs: &USER_PRESETS,
+            member: Some(member),
+        },
+        &member.config.user_services,
         ships,
-    )?;
-    items.extend(check(
-        Kind::UserService,
-        Key::UserServices,
-        &user,
-        &[&user[0], &user[1]],
-        &USER_PRESETS,
-        &fleet.system.user_services,
-        ships,
-    )?);
-    Ok(items)
+    )
+}
+
+/// Where a scope's units live and are enabled: the system's, or one user's.
+struct Unit<'a> {
+    kind: Kind,
+    key: Key,
+    dirs: &'a [PathBuf],
+    enable_dirs: &'a [&'a PathBuf],
+    preset_dirs: &'a [&'a str],
+    member: Option<&'a Member>,
 }
 
 /// Units a package enables by default (its preset) don't count, nor the ones enabling a declared
 /// unit brings along. `systemctl list-unit-files` says the same, but systemd takes half a second
 /// to answer.
-fn check(
-    kind: Kind,
-    key: Key,
-    unit_dirs: &[PathBuf],
-    enable_dirs: &[&PathBuf],
-    preset_dirs: &[&str],
-    declared: &[String],
-    ships: &Ships,
-) -> Result<Vec<Item>> {
+fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
+    let Unit {
+        kind,
+        key,
+        dirs: unit_dirs,
+        enable_dirs,
+        preset_dirs,
+        member,
+    } = scope;
+    let user = member.map(|m| m.user().name.clone());
     let enabled = enabled(enable_dirs)?;
     let presets = Presets::load(preset_dirs)?;
     let covered = with_also(declared, unit_dirs)?;
@@ -87,11 +105,11 @@ fn check(
             })
             .showing(Preview::Unit {
                 name: unit.clone(),
-                user: kind == Kind::UserService,
+                user: user.clone(),
             });
         let file = unit_file(unit, unit_dirs);
         items.push(match file {
-            Some(file) if ships.path(&file)? => item.with(Add::Declare {
+            Some(file) if ships.path(&file, member)? => item.with(Add::Declare {
                 key,
                 name: unit.clone(),
             }),
