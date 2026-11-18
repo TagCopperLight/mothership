@@ -1,9 +1,8 @@
 use crate::{
     chezmoi,
-    cmd::{self, As},
     fleet::{Fleet, Manager, Member, Mode, Tool},
     ignore::Level,
-    pacman,
+    package::Distro,
     prompt::Prompt,
     secrets, style, walk,
 };
@@ -281,20 +280,13 @@ pub fn not_secret(fleet: &Fleet, member: Option<&Member>, subject: &str) -> Resu
     append_line(&path, &globset::escape(subject))
 }
 
-/// Apply installs a package from pacman's repos or the AUR. One found in neither was built
-/// here, and only `built_packages`, which apply never installs, can hold it.
+/// A package apply can't install was built here, and only `built_packages`, which apply never
+/// installs, can hold it.
 fn package_key(fleet: &Fleet, name: &str) -> Result<Key> {
-    if pacman::in_repos()?.contains(name) {
+    let Some(why) = Distro::here()?.cannot_install(fleet, name)? else {
         return Ok(Key::Packages);
-    }
-    let why = match fleet.system.aur_helper.as_deref() {
-        None => "system.toml sets no aur_helper".to_owned(),
-        Some(helper) => match cmd::stdout(As::User(fleet.admin()), helper, &["-Si", name]) {
-            Ok(_) => return Ok(Key::Packages),
-            Err(e) => format!("{e:#}"),
-        },
     };
-    println!("  It is in neither pacman's repos nor the AUR: {why}");
+    println!("  {why}");
     println!("  It goes into `built_packages`.");
     Ok(Key::BuiltPackages)
 }

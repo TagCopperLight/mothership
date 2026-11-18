@@ -1,0 +1,14 @@
+# What `mothership scan` never reports on the Debian test machine.
+
+# Files the container, Docker's image and the packages' install scripts generate
+etc /etc/{hosts,hostname,resolv.conf,mtab,fstab,motd,environment,profile,nsswitch.conf}
+etc /etc/{.pwd.lock,ld.so.cache,localtime,ca-certificates.conf}
+etc /etc/{passwd,group,shadow,gshadow,subuid,subgid}-
+etc /etc/alternatives/*
+etc /etc/rc?.d/*
+etc /etc/ssl/certs/**
+etc /etc/pam.d/common-*
+etc /etc/security/opasswd
+etc /etc/dpkg/origins/default
+etc /etc/{apt/apt.conf.d,dpkg/dpkg.cfg.d}/docker-*
+etc /etc/apt/sources.list.d/fleettest.list

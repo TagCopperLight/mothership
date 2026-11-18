@@ -1,6 +1,6 @@
 use crate::{
     cmd::{self, As},
-    pacman,
+    package::Archive,
     style::{self, strip_ansi},
     user::User,
     walk,
@@ -22,7 +22,7 @@ pub enum Preview {
     None,
     Contents(PathBuf),
     Diff { old: PathBuf, new: PathBuf },
-    Original { path: PathBuf, archive: PathBuf },
+    Original { path: PathBuf, archive: Archive },
     Chezmoi { path: PathBuf, user: User },
     Unit { name: String, user: Option<String> },
     Dconf { section: String, user: User },
@@ -124,16 +124,16 @@ fn diff(old: &Path, new: &Path, color: bool) -> Result<Vec<String>> {
     Ok(hunks(&String::from_utf8_lossy(&out.stdout)))
 }
 
-fn original(path: &Path, archive: &Path, color: bool) -> Result<Vec<String>> {
-    if !archive.exists() {
+fn original(path: &Path, archive: &Archive, color: bool) -> Result<Vec<String>> {
+    if !archive.path.exists() {
         let mut out = vec![format!(
-            "pacman's cache no longer has {}, so here is the file:",
-            archive.display()
+            "The package cache no longer has {}, so here is the file:",
+            archive.path.display()
         )];
         out.extend(contents(path)?);
         return Ok(out);
     }
-    let shipped = pacman::shipped(archive, path)?;
+    let shipped = archive.shipped(path)?;
     let mut file = tempfile::NamedTempFile::new()?;
     file.write_all(&shipped)?;
     diff(file.path(), path, color)

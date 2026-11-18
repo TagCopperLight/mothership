@@ -1,0 +1,5 @@
+Package: alpha
+Version: 1
+Architecture: all
+Maintainer: Me <me@example.com>
+Description: A library other packages need

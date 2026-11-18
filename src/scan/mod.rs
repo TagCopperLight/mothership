@@ -13,14 +13,14 @@ use crate::{
     fleet::{Fleet, Member},
     ignore::{Level, Paths},
     later::{self, Later},
-    pacman::Db,
+    package::{Db, Distro},
     preview::Preview,
     record::{self, Record},
     revert::Revert,
     style::{self, Paint, Style},
     walk,
 };
-use anyhow::{Result, bail};
+use anyhow::Result;
 use std::{
     collections::BTreeSet,
     fs,
@@ -338,9 +338,7 @@ pub struct Report {
 }
 
 pub fn collect() -> Result<Report> {
-    if !Path::new("/usr/bin/pacman").exists() {
-        bail!("mothership only knows Arch machines for now");
-    }
+    Distro::here()?;
     let (fleet, db) = thread::scope(|s| {
         let fleet = s.spawn(Fleet::load);
         let db = s.spawn(Db::load);

@@ -6,7 +6,7 @@ The fleet doesn't describe each machine. It describes device types, such as "wor
 
 [chezmoi](https://chezmoi.io) writes the files in your home folder. mothership takes care of everything else:
 
-- the packages, from the Arch repositories and the AUR;
+- the packages, with pacman and an AUR helper on Arch, or with apt on Debian and Ubuntu;
 - the files in `/etc`;
 - system and user services;
 - each user's account: groups, login shell, and whether their services run without a login;
@@ -54,7 +54,7 @@ mothership treats a file as a secret when only its owner can read it. Review the
 
 ## Setting up a machine
 
-mothership needs Arch Linux, with `chezmoi`, `cargo`, `uv` and `dconf` installed. Build it from this repository with `cargo build --release`.
+mothership runs on Arch Linux, Debian and Ubuntu. It needs `chezmoi`, plus `cargo`, `uv` and `dconf` when a user's part uses them. Build it from this repository with `cargo build --release`, on Debian for a Debian machine, since a binary built on Arch needs a newer C library.
 
 The fleet lives in `/var/lib/mothership/fleet`. Whoever owns that folder is the machine's admin: they commit and push from it, and every file mothership writes there goes to them. The file `/etc/mothership/machine.toml` tells mothership the machine's type:
 
@@ -104,6 +104,10 @@ packages = ["base", "linux", "git"]
 aur_helper = "yay"
 services = ["NetworkManager.service"]
 ```
+
+Package names are the ones the machine's package manager uses. `aur_helper` only matters on Arch. A package no repository offers, such as one you built yourself, goes in `built_packages`: scan stops reporting it, and apply never installs it.
+
+Apply writes the package manager's config (`/etc/apt` on Debian, `pacman.conf` and `pacman.d` on Arch) before it installs anything, so a repository the fleet adds is ready for the packages that come from it.
 
 ```toml
 shell = "/usr/bin/fish"

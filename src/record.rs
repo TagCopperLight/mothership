@@ -1,6 +1,6 @@
 use crate::{
     fleet::{Fleet, Tools},
-    pacman::{self, Db},
+    package::{self, Db},
     revert::Revert,
     walk,
 };
@@ -164,7 +164,7 @@ fn wanted(fleet: &Fleet, rel: &Path) -> Result<Option<String>> {
     if !fleet.etc_open() {
         return Ok(None);
     }
-    Ok(Some(pacman::md5(&fleet.etc_contents(rel)?)))
+    Ok(Some(package::md5(&fleet.etc_contents(rel)?)))
 }
 
 fn hash(path: &Path) -> Result<Option<String>> {
@@ -174,7 +174,7 @@ fn hash(path: &Path) -> Result<Option<String>> {
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    Ok(Some(pacman::md5(&bytes)))
+    Ok(Some(package::md5(&bytes)))
 }
 
 fn shipped<'a>(db: &'a Db, path: &Path) -> Option<&'a String> {

@@ -1,5 +1,5 @@
 use super::{Change, Item, Kind};
-use crate::{edit::Add, fleet::Fleet, pacman::Db, revert::Revert};
+use crate::{edit::Add, fleet::Fleet, package::Db, revert::Revert};
 use anyhow::Result;
 use std::collections::BTreeSet;
 

@@ -1,13 +1,13 @@
 use super::*;
 use crate::{
     fleet::{Manager, Tool},
-    pacman::{self, Package},
+    package::{self, Archive, Distro, Package},
 };
 use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn md5(text: &str) -> String {
-    pacman::md5(text.as_bytes())
+    package::md5(text.as_bytes())
 }
 
 struct Machine {
@@ -33,6 +33,13 @@ impl Machine {
     }
 }
 
+fn no_archive() -> Archive {
+    Archive {
+        path: PathBuf::new(),
+        distro: Distro::Arch,
+    }
+}
+
 fn no_packages() -> Db {
     Db {
         packages: Vec::new(),
@@ -43,14 +50,13 @@ fn shipping(path: &Path, text: &str) -> Db {
     Db {
         packages: vec![Package {
             name: "pkg".into(),
-            version: "1".into(),
-            arch: "any".into(),
             description: String::new(),
             explicit: true,
             files: Vec::new(),
             backups: vec![(path.to_path_buf(), md5(text))],
             depends: Vec::new(),
             provides: Vec::new(),
+            archive: no_archive(),
         }],
     }
 }
@@ -201,7 +207,7 @@ fn deletes_or_restores_a_dropped_file_only_when_untouched() {
     let delete = || Revert::DeleteEtc(path.clone());
     let restore = || Revert::RestoreEtc {
         path: path.clone(),
-        archive: PathBuf::new(),
+        archive: no_archive(),
     };
     assert!(changed(&untouched, delete()));
     assert!(changed(&untouched, restore()));
@@ -382,7 +388,7 @@ fn a_file_review_deleted_or_restored_leaves_the_record() {
     before
         .reverted(&Revert::RestoreEtc {
             path: c,
-            archive: PathBuf::new(),
+            archive: no_archive(),
         })
         .unwrap();
     assert!(before.etc.is_empty());

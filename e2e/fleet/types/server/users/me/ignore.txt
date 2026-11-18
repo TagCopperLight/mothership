@@ -1,0 +1,9 @@
+# What `mothership scan` never reports in my home on the test machine.
+
+# Caches and state
+home ~/.cache
+home ~/.local/state
+home ~/.cargo
+home ~/.bash_logout
+home ~/.profile
+home ~/.sudo_as_admin_successful

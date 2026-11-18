@@ -1,0 +1,5 @@
+Package: omega
+Version: 1
+Architecture: all
+Maintainer: Me <me@example.com>
+Description: An app built on this machine

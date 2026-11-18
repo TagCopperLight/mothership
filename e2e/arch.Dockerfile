@@ -4,7 +4,7 @@ RUN pacman -Syu --noconfirm --needed base-devel git sudo chezmoi rust uv dconf \
 
 # A local repo stands in for pacman's repos, and /aur for the AUR. /local holds a package
 # built on the machine, which neither has.
-COPY packages /build
+COPY arch-packages /build
 RUN useradd -m builder && chown -R builder /build \
  && for dir in /build/*/*/; do (cd "$dir" && runuser -u builder -- makepkg --nodeps); done \
  && mkdir /repo /aur /local \

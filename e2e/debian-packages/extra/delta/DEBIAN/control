@@ -1,0 +1,5 @@
+Package: delta
+Version: 1
+Architecture: all
+Maintainer: Me <me@example.com>
+Description: An app from a source the fleet adds

@@ -1,16 +1,15 @@
 use crate::{
     cmd::{self, As},
     fleet::{self, Fleet, Manager, Member, Mode, Tool},
-    pacman, tools,
+    package::{Archive, Distro},
+    tools,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use std::{
-    collections::BTreeSet,
     fs,
     io::Write,
     os::unix::{self, fs::PermissionsExt},
     path::{Path, PathBuf},
-    process::Command,
 };
 
 pub enum Revert {
@@ -21,7 +20,7 @@ pub enum Revert {
     UninstallTool { manager: Manager, name: String },
     RunInstaller(String),
     WriteEtc(PathBuf),
-    RestoreEtc { path: PathBuf, archive: PathBuf },
+    RestoreEtc { path: PathBuf, archive: Archive },
     DeleteEtc(PathBuf),
     CreateUser,
     InitChezmoi,
@@ -59,9 +58,9 @@ impl Revert {
 
 pub type Owned<'a> = (Option<usize>, &'a Revert);
 
-/// The machine goes first, then each user. Packages go first, since the rest may come from
-/// them, and installers before tools, since bun comes from one. User units go last, after
-/// chezmoi writes theirs.
+/// The machine goes first, then each user. Packages go first, after the sources they come
+/// from, since the rest may come from them, and installers before tools, since bun comes from
+/// one. User units go last, after chezmoi writes theirs.
 pub fn run(fleet: &Fleet, reverts: &[Owned]) -> Result<()> {
     let machine: Vec<&Revert> = reverts
         .iter()
@@ -96,16 +95,23 @@ fn run_machine(fleet: &Fleet, reverts: &[&Revert]) -> Result<()> {
             _ => unreachable!("a user's revert"),
         }
     }
+    let distro = Distro::here()?;
+    let (sources, etc): (Vec<&Revert>, Vec<&Revert>) = etc
+        .into_iter()
+        .partition(|revert| distro.configures(etc_path(revert)));
+    for revert in &sources {
+        change_etc(fleet, revert)?;
+    }
     if !install.is_empty() {
-        install_packages(fleet, &install)?;
+        distro.install(fleet, &install)?;
     }
     if !uninstall.is_empty() {
-        uninstall_packages(&uninstall)?;
+        distro.uninstall(&uninstall)?;
     }
     for revert in &etc {
         change_etc(fleet, revert)?;
     }
-    if !etc.is_empty() {
+    if !sources.is_empty() || !etc.is_empty() {
         cmd::root("systemctl", &["daemon-reload"])?;
     }
     for revert in system {
@@ -194,80 +200,6 @@ fn run_member(member: &Member, reverts: &[&Revert]) -> Result<()> {
     Ok(())
 }
 
-fn install_packages(fleet: &Fleet, names: &[&str]) -> Result<()> {
-    let install = split_install(
-        names,
-        &pacman::in_repos()?,
-        fleet.system.aur_helper.as_deref(),
-    )?;
-    if !install.repo.is_empty() {
-        let args = [&["-S", "--needed", "--noconfirm"], &install.repo[..]].concat();
-        cmd::root("pacman", &args)?;
-    }
-    // An AUR helper builds as a user, never as root.
-    if let Some((helper, aur)) = install.aur {
-        cmd::run(
-            As::User(fleet.admin()),
-            helper,
-            &[&["-S", "--needed"], &aur[..]].concat(),
-        )?;
-    }
-    Ok(())
-}
-
-#[derive(Debug, PartialEq)]
-struct Install<'a> {
-    repo: Vec<&'a str>,
-    aur: Option<(&'a str, Vec<&'a str>)>,
-}
-
-fn split_install<'a>(
-    names: &[&'a str],
-    in_repos: &BTreeSet<String>,
-    helper: Option<&'a str>,
-) -> Result<Install<'a>> {
-    let (repo, aur): (Vec<&str>, Vec<&str>) =
-        names.iter().partition(|name| in_repos.contains(**name));
-    if aur.is_empty() {
-        return Ok(Install { repo, aur: None });
-    }
-    let Some(helper) = helper else {
-        bail!(
-            "{} not in pacman's repos, and system.toml sets no aur_helper",
-            aur.join(", ")
-        );
-    };
-    Ok(Install {
-        repo,
-        aur: Some((helper, aur)),
-    })
-}
-
-fn uninstall_packages(names: &[&str]) -> Result<()> {
-    cmd::root("pacman", &[&["-D", "--asdeps"], names].concat())?;
-    let out = Command::new("pacman")
-        .arg("-Qdtq")
-        .output()
-        .context("running pacman")?;
-    // 1 means no package is left unneeded.
-    if !matches!(out.status.code(), Some(0 | 1)) {
-        bail!(
-            "pacman -Qdtq failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-    let unneeded = String::from_utf8(out.stdout)?;
-    let unneeded: Vec<&str> = names
-        .iter()
-        .copied()
-        .filter(|name| unneeded.lines().any(|line| line == *name))
-        .collect();
-    if !unneeded.is_empty() {
-        cmd::root("pacman", &[&["-Rs", "--noconfirm"], &unneeded[..]].concat())?;
-    }
-    Ok(())
-}
-
 fn systemctl(scope: &[&str], revert: &Revert) -> Result<()> {
     let (verb, unit) = match revert {
         Revert::Enable { unit, .. } => ("enable", unit),
@@ -277,12 +209,17 @@ fn systemctl(scope: &[&str], revert: &Revert) -> Result<()> {
     cmd::root("systemctl", &[scope, &[verb, "--now", unit]].concat())
 }
 
-fn change_etc(fleet: &Fleet, revert: &Revert) -> Result<()> {
+fn etc_path(revert: &Revert) -> &Path {
     let (Revert::WriteEtc(path) | Revert::DeleteEtc(path) | Revert::RestoreEtc { path, .. }) =
         revert
     else {
         unreachable!("sorted above")
     };
+    path
+}
+
+fn change_etc(fleet: &Fleet, revert: &Revert) -> Result<()> {
+    let path = etc_path(revert);
     let change = || match revert {
         Revert::WriteEtc(_) => {
             let rel = path.strip_prefix("/etc")?;
@@ -295,7 +232,7 @@ fn change_etc(fleet: &Fleet, revert: &Revert) -> Result<()> {
         }
         Revert::RestoreEtc { archive, .. } => {
             let mode = Mode(fs::metadata(path)?.permissions().mode() & 0o7777);
-            write(path, &pacman::shipped(archive, path)?, mode)
+            write(path, &archive.shipped(path)?, mode)
         }
         _ if path.is_dir() => Ok(fs::remove_dir_all(path)?),
         _ => Ok(fs::remove_file(path)?),

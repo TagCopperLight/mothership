@@ -1,6 +1,6 @@
 use crate::{
     fleet::Fleet,
-    pacman::Db,
+    package::Db,
     prompt::Prompt,
     record::{self, Record},
     revert::{self, Owned, Revert},

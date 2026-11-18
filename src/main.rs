@@ -6,7 +6,7 @@ mod fleet;
 mod hardware;
 mod ignore;
 mod later;
-mod pacman;
+mod package;
 mod preview;
 mod prompt;
 mod record;

@@ -1,0 +1,5 @@
+Package: gamma
+Version: 1
+Architecture: all
+Maintainer: Me <me@example.com>
+Description: An app with a config file

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Runs each scenario in scenarios/ in a fresh container and compares what it prints.
+"""Runs each scenario in scenarios/<system>/ in a fresh container of that system, built from
+<system>.Dockerfile, and compares what it prints.
 
 A scenario is a Markdown file. In its ```console blocks, `$ ` starts a command, `> ` continues
 it, and the lines up to the next command are what it must print, stdout and stderr together:
@@ -13,6 +14,7 @@ Usage: e2e/run.py [scenario name ...]
 """
 
 import difflib
+import os
 import re
 import subprocess
 import sys
@@ -21,24 +23,53 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-IMAGE = "mothership-e2e"
 EXIT = re.compile(r"\[exit (\d+)\]")
+# Debian's C library is older than Arch's, so its binary is built on Debian.
+BINARIES = {
+    "arch": ROOT / "target/debug/mothership",
+    "debian": ROOT / "target/debian/debug/mothership",
+}
 
 
 def main() -> int:
     wanted = sys.argv[1:]
-    scenarios = sorted(HERE.glob("scenarios/*.md"))
+    scenarios = sorted(HERE.glob("scenarios/*/*.md"))
     if wanted:
         scenarios = [s for s in scenarios if s.stem in wanted]
-    subprocess.run(["cargo", "build", "--locked", "--quiet"], cwd=ROOT, check=True)
-    # The host's network, so the build resolves names the way the host does, VPN included.
-    subprocess.run(["docker", "build", "--quiet", "--network", "host", "-t", IMAGE, str(HERE)],
-                   check=True, stdout=subprocess.DEVNULL)
-    failed = [s.stem for s in scenarios if not run(s)]
+    systems = sorted({system(s) for s in scenarios})
+    for name in systems:
+        build(name)
+    failed = [f"{system(s)}/{s.stem}" for s in scenarios if not run(s)]
     print(f"\n{len(scenarios) - len(failed)} of {len(scenarios)} scenarios pass")
     for name in failed:
         print(f"  failed: {name}")
     return 1 if failed else 0
+
+
+def system(scenario: Path) -> str:
+    return scenario.parent.name
+
+
+def image(system: str) -> str:
+    return f"mothership-e2e-{system}"
+
+
+def build(system: str) -> None:
+    if system == "debian":
+        cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+        subprocess.run(
+            ["docker", "run", "--rm", "--network", "host", "-u", f"{os.getuid()}:{os.getgid()}",
+             "-e", "CARGO_HOME=/cargo", "-v", f"{cargo_home}:/cargo", "-v", f"{ROOT}:/src",
+             "-w", "/src", "rust:1-bookworm",
+             "cargo", "build", "--locked", "--quiet", "--target-dir", "target/debian"],
+            check=True,
+        )
+    else:
+        subprocess.run(["cargo", "build", "--locked", "--quiet"], cwd=ROOT, check=True)
+    # The host's network, so the build resolves names the way the host does, VPN included.
+    subprocess.run(["docker", "build", "--quiet", "--network", "host", "-t", image(system),
+                    "-f", str(HERE / f"{system}.Dockerfile"), str(HERE)],
+                   check=True, stdout=subprocess.DEVNULL)
 
 
 def parse(path: Path) -> list[tuple[str, list[str]]]:
@@ -60,11 +91,13 @@ def parse(path: Path) -> list[tuple[str, list[str]]]:
 
 
 def run(path: Path) -> bool:
-    print(f"{path.stem}: ", end="", flush=True)
-    binary = ROOT / "target/debug/mothership"
+    name = system(path)
+    print(f"{name}/{path.stem}: ", end="", flush=True)
     container = subprocess.run(
+        # Debian's sudo warns when it can't resolve the machine's own name.
         ["docker", "run", "-d", "--rm", "--network", "none",
-         "-v", f"{binary}:/usr/local/bin/mothership:ro", IMAGE, "sleep", "infinity"],
+         "--hostname", "machine", "--add-host", "machine:127.0.0.1",
+         "-v", f"{BINARIES[name]}:/usr/local/bin/mothership:ro", image(name), "sleep", "infinity"],
         check=True, capture_output=True, text=True,
     ).stdout.strip()
     try:

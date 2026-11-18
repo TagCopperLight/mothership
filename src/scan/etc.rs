@@ -2,7 +2,7 @@ use super::{Change, Item, Kind, Secret, services};
 use crate::{
     edit::Add,
     fleet::{self, Fleet},
-    pacman::{self, Db, Package},
+    package::{self, Db, Package},
     preview::Preview,
     revert::Revert,
     secrets, walk,
@@ -98,6 +98,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         .partition(|path| path.ends_with('/'));
     let mut known: HashSet<PathBuf> = owned_files.into_iter().map(PathBuf::from).collect();
     known.extend(declared_paths);
+    known.extend(ACCOUNT_FILES.iter().map(PathBuf::from));
     known.insert(PathBuf::from(fleet::MACHINE));
     known.insert(PathBuf::from(secrets::ROOT_KEY));
     let known_dirs = owned_dirs
@@ -159,14 +160,14 @@ fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
     let item = |change, detail| Item::new(Kind::Etc, change, path.display().to_string(), detail);
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
-        // pacman leaves a config file the package no longer ships, or that I deleted.
+        // The package manager leaves a config file the package no longer ships, or that I deleted.
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
         Err(e) if e.kind() == ErrorKind::PermissionDenied => {
             return Ok(Some(item(Change::Unreadable, "unreadable")));
         }
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    Ok((pacman::md5(&bytes) != md5).then(|| {
+    Ok((package::md5(&bytes) != md5).then(|| {
         let item = item(Change::Edited, "edited")
             .noting(format!("owned by {}", package.name))
             .with(Add::CopyEtc {
@@ -175,11 +176,11 @@ fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
             })
             .reverting(Revert::RestoreEtc {
                 path: path.to_path_buf(),
-                archive: package.archive(),
+                archive: package.archive.clone(),
             })
             .showing(Preview::Original {
                 path: path.to_path_buf(),
-                archive: package.archive(),
+                archive: package.archive.clone(),
             });
         item.guessing(path)
     }))
