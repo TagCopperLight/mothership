@@ -1,4 +1,4 @@
-use super::{Item, Kind, looks_secret, services};
+use super::{Item, Kind, services};
 use crate::{
     edit::Add,
     fleet::{Fleet, Manager, Member},
@@ -55,16 +55,13 @@ pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<I
         .unknown
         .iter()
         .map(|path| {
-            looks_secret(
-                &member.not_secret,
-                Item::new(Kind::Home, user.tilde(path), "not in the fleet")
-                    .with(Add::Track {
-                        path: path.clone(),
-                        encrypt: false,
-                    })
-                    .showing(Preview::Contents(path.clone())),
-                path,
-            )
+            Item::new(Kind::Home, user.tilde(path), "not in the fleet")
+                .with(Add::Track {
+                    path: path.clone(),
+                    encrypt: false,
+                })
+                .showing(Preview::Contents(path.clone()))
+                .guessing(path)
         })
         .collect();
     items.extend(

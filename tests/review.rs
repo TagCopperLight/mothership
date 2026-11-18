@@ -12,6 +12,7 @@ fn item(subject: &str) -> Item {
         no_add: None,
         revert: None,
         preview: crate::preview::Preview::None,
+        guess: None,
     }
 }
 

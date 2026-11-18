@@ -300,6 +300,7 @@ fn appends_ignore_lines_the_ignore_list_then_matches() {
         no_add: None,
         revert: None,
         preview: crate::preview::Preview::None,
+        guess: None,
     };
     let me = &checkout.fleet.members[0];
     ignore(&checkout.fleet, Some(me), &crate::scan::ignore_line(&item)).unwrap();

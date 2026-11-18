@@ -22,7 +22,7 @@ use std::{
     fs,
     io::ErrorKind,
     os::unix::fs::PermissionsExt,
-    path::Path,
+    path::{Path, PathBuf},
     thread::{self, ScopedJoinHandle},
 };
 
@@ -124,6 +124,8 @@ pub struct Item {
     pub no_add: Option<&'static str>,
     pub revert: Option<Revert>,
     pub preview: Preview,
+    /// Guessed only for the items shown, since searching a big ignored folder takes seconds.
+    pub guess: Option<PathBuf>,
 }
 
 impl Item {
@@ -138,6 +140,7 @@ impl Item {
             no_add: None,
             revert: None,
             preview: Preview::None,
+            guess: None,
         }
     }
 
@@ -168,6 +171,11 @@ impl Item {
 
     fn with(mut self, add: Add) -> Self {
         self.add = Some(add);
+        self
+    }
+
+    fn guessing(mut self, path: &Path) -> Self {
+        self.guess = Some(path.to_path_buf());
         self
     }
 
@@ -221,8 +229,9 @@ pub fn collect() -> Result<Report> {
         Ok::<_, anyhow::Error>((join(fleet)?, join(db)?))
     })?;
     let items = checks(&fleet, &db, Checks::All)?;
-    let (ignored, mut shown): (Vec<Item>, Vec<Item>) =
+    let (ignored, shown): (Vec<Item>, Vec<Item>) =
         items.into_iter().partition(|item| ignored(&fleet, item));
+    let mut shown: Vec<Item> = shown.into_iter().map(|item| guess(&fleet, item)).collect();
     shown.sort_by_key(|item| (item.member, item.kind));
     Ok(Report {
         fleet,
@@ -271,27 +280,42 @@ fn member(fleet: &Fleet, ships: &Ships, i: usize, which: Checks) -> Result<Vec<I
             )
             .reverting(Revert::CreateUser),
         ),
-        Some(user) => {
-            items.extend(account::scan(member, ships)?);
-            items.extend(services::scan_user(member, ships)?);
-            items.extend(tools::scan(member)?);
-            if member.chezmoi {
-                let managed = chezmoi::managed(user, "files,symlinks")?;
-                items.extend(files::scan(member, &managed)?);
-                if which == Checks::All {
-                    items.extend(home::scan(fleet, member, &managed)?);
-                    items.extend(settings::scan(member, &managed)?);
-                }
-            } else {
-                items.push(
-                    Item::new(Kind::File, "chezmoi", "doesn't read the fleet")
-                        .reverting(Revert::InitChezmoi),
-                );
-            }
+        Some(_) => {
+            let parts = thread::scope(|s| {
+                let handles = [
+                    s.spawn(|| account::scan(member, ships)),
+                    s.spawn(|| services::scan_user(member, ships)),
+                    s.spawn(|| tools::scan(member)),
+                    s.spawn(|| tracked(fleet, member, which)),
+                ];
+                handles.into_iter().map(join).collect::<Result<Vec<_>>>()
+            })?;
+            items.extend(parts.into_iter().flatten());
         }
     }
     for item in &mut items {
         item.member = Some(i);
+    }
+    Ok(items)
+}
+
+fn tracked(fleet: &Fleet, member: &Member, which: Checks) -> Result<Vec<Item>> {
+    if !member.chezmoi {
+        return Ok(vec![
+            Item::new(Kind::File, "chezmoi", "doesn't read the fleet")
+                .reverting(Revert::InitChezmoi),
+        ]);
+    }
+    let chezmoi = files::Chezmoi::load(member)?;
+    let mut items = files::scan(member, &chezmoi)?;
+    if which == Checks::All {
+        let managed = &chezmoi.managed;
+        thread::scope(|s| {
+            let home = s.spawn(|| home::scan(fleet, member, managed));
+            items.extend(settings::scan(member, managed)?);
+            items.extend(join(home)?);
+            Ok::<_, anyhow::Error>(())
+        })?;
     }
     Ok(items)
 }
@@ -388,6 +412,17 @@ impl Secret {
     pub fn mark(self) -> &'static str {
         if self == Secret::No { "" } else { "  [secret]" }
     }
+}
+
+fn guess(fleet: &Fleet, mut item: Item) -> Item {
+    let Some(path) = item.guess.take() else {
+        return item;
+    };
+    let not_secret = match item.member {
+        None => &fleet.not_secret,
+        Some(i) => &fleet.members[i].not_secret,
+    };
+    looks_secret(not_secret, item, &path)
 }
 
 /// A guess, so a secret is never added in clear by mistake: a file only its owner can read, or

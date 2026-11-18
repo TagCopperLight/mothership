@@ -1,4 +1,4 @@
-use super::{Item, Kind, Secret, looks_secret};
+use super::{Item, Kind, Secret, join, looks_secret};
 use crate::{
     chezmoi,
     cmd::{self, As},
@@ -8,23 +8,47 @@ use crate::{
     revert::Revert,
 };
 use anyhow::Result;
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{collections::BTreeSet, path::PathBuf, thread};
 
-pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
+pub struct Chezmoi {
+    pub managed: Vec<PathBuf>,
+    encrypted: BTreeSet<PathBuf>,
+    templates: BTreeSet<PathBuf>,
+    status: String,
+}
+
+impl Chezmoi {
+    pub fn load(member: &Member) -> Result<Self> {
+        let user = member.user();
+        // chezmoi fails on a file it can't decrypt.
+        let status_args: &[&str] = if member.open {
+            &["status"]
+        } else {
+            &["status", "--exclude", "encrypted"]
+        };
+        thread::scope(|s| {
+            let managed = s.spawn(|| chezmoi::managed(user, "files,symlinks"));
+            let encrypted = s.spawn(|| chezmoi::managed(user, "encrypted"));
+            let templates = s.spawn(|| chezmoi::managed(user, "templates"));
+            let status = s.spawn(|| cmd::stdout(As::User(user), "chezmoi", status_args));
+            Ok(Chezmoi {
+                managed: join(managed)?,
+                encrypted: join(encrypted)?.into_iter().collect(),
+                templates: join(templates)?.into_iter().collect(),
+                status: join(status)?,
+            })
+        })
+    }
+}
+
+pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
     let user = member.user();
-    let open = member.open;
-    let encrypted: BTreeSet<PathBuf> = chezmoi::managed(user, "encrypted")?.into_iter().collect();
-    let templates: BTreeSet<PathBuf> = chezmoi::managed(user, "templates")?.into_iter().collect();
-    // chezmoi fails on a file it can't decrypt.
-    let status = if open {
-        cmd::stdout(As::User(user), "chezmoi", &["status"])?
-    } else {
-        cmd::stdout(
-            As::User(user),
-            "chezmoi",
-            &["status", "--exclude", "encrypted"],
-        )?
-    };
+    let Chezmoi {
+        managed,
+        encrypted,
+        templates,
+        status,
+    } = chezmoi;
     let mut items = Vec::new();
     let mut listed = BTreeSet::new();
     for line in status.lines() {
@@ -57,11 +81,11 @@ pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
         items.push(if encrypted.contains(&path) {
             item.secret(Secret::Fleet)
         } else {
-            looks_secret(&member.not_secret, item, &path)
+            item.guessing(&path)
         });
         listed.insert(path);
     }
-    if !open {
+    if !member.open {
         items.extend(
             encrypted
                 .iter()

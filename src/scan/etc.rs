@@ -1,4 +1,4 @@
-use super::{Item, Kind, Secret, looks_secret, services};
+use super::{Item, Kind, Secret, services};
 use crate::{
     edit::Add,
     fleet::{self, Fleet},
@@ -81,7 +81,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                 && !declared_paths.contains(path)
                 && !ACCOUNT_FILES.contains(&path.to_string_lossy().as_ref())
             {
-                changed.extend(edited(fleet, package, path, md5)?);
+                changed.extend(edited(package, path, md5)?);
             }
         }
     }
@@ -111,17 +111,14 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         &services::is_enablement,
     )?;
     items.extend(walk.unknown.iter().map(|path| {
-        looks_secret(
-            &fleet.not_secret,
-            Item::new(Kind::Etc, path.display().to_string(), "from no package")
-                .with(Add::CopyEtc {
-                    path: path.clone(),
-                    encrypt: false,
-                })
-                .reverting(Revert::DeleteEtc(path.clone()))
-                .showing(Preview::Contents(path.clone())),
-            path,
-        )
+        Item::new(Kind::Etc, path.display().to_string(), "from no package")
+            .with(Add::CopyEtc {
+                path: path.clone(),
+                encrypt: false,
+            })
+            .reverting(Revert::DeleteEtc(path.clone()))
+            .showing(Preview::Contents(path.clone()))
+            .guessing(path)
     }));
     items.extend(walk.unreadable.iter().map(|path| {
         Item::new(
@@ -157,7 +154,7 @@ fn compare(fleet: &Fleet, rel: &Path, path: &Path) -> Result<Compare> {
     })
 }
 
-fn edited(fleet: &Fleet, package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
+fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
     let item = |detail| Item::new(Kind::Etc, path.display().to_string(), detail);
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -182,6 +179,6 @@ fn edited(fleet: &Fleet, package: &Package, path: &Path, md5: &str) -> Result<Op
                 path: path.to_path_buf(),
                 archive: package.archive(),
             });
-        looks_secret(&fleet.not_secret, item, path)
+        item.guessing(path)
     }))
 }

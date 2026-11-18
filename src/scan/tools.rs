@@ -1,4 +1,4 @@
-use super::{Item, Kind};
+use super::{Item, Kind, join};
 use crate::{
     cmd::{self, As},
     edit::{Add, Key},
@@ -7,17 +7,22 @@ use crate::{
     user::User,
 };
 use anyhow::{Context, Result};
-use std::{collections::BTreeMap, fs, io::ErrorKind, path::Path};
+use std::{collections::BTreeMap, fs, io::ErrorKind, path::Path, thread};
 
 pub fn scan(member: &Member) -> Result<Vec<Item>> {
     let user = member.user();
     let tools = &member.config.tools;
-    let mut items = Vec::new();
-    for manager in Manager::ALL {
-        if uses(user, tools, manager) {
-            items.extend(compare(tools, manager, &installed(user, manager)?));
-        }
-    }
+    let mut items: Vec<Item> = thread::scope(|s| {
+        let handles: Vec<_> = Manager::ALL
+            .into_iter()
+            .filter(|&manager| uses(user, tools, manager))
+            .map(|manager| s.spawn(move || Ok(compare(tools, manager, &installed(user, manager)?))))
+            .collect();
+        handles.into_iter().map(join).collect::<Result<Vec<_>>>()
+    })?
+    .into_iter()
+    .flatten()
+    .collect();
     items.extend(
         member
             .config
