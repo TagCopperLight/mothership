@@ -14,7 +14,7 @@ fn registry(name: &str) -> Source {
 
 #[test]
 fn reads_cargo_sources() {
-    let list = "\\
+    let list = "\
 cargo-nextest v0.9.146:
     cargo-nextest
 chromash v0.1.0 (https://github.com/me/Chromash?branch=add-splash-false#59fe87f3):

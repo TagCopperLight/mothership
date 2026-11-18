@@ -1,6 +1,7 @@
 use crate::{
     cmd,
     fleet::{Fleet, Manager, Mode, Tool},
+    pacman,
     prompt::Prompt,
     user, walk,
 };
@@ -91,7 +92,7 @@ impl Add {
     pub fn apply(&self, fleet: &Fleet, prompt: &mut Prompt) -> Result<bool> {
         match self {
             Add::ListPackage(name) => {
-                let Some(list) = prompt.choose("  Which list", &fleet.system.packages)? else {
+                let Some(list) = prompt.choose("  Which list", package_lists(fleet, name)?)? else {
                     return Ok(false);
                 };
                 append_line(&fleet.package_path(list), name)?;
@@ -162,6 +163,27 @@ fn append_line(path: &Path, line: &str) -> Result<()> {
 
 pub fn ignore(fleet: &Fleet, line: &str) -> Result<()> {
     append_line(&fleet.ignore_path(), line)
+}
+
+/// Apply installs a package from pacman's repos or the AUR. One found in neither was built
+/// here, and only a list of built packages, which apply never installs, can hold it.
+fn package_lists<'a>(fleet: &'a Fleet, name: &str) -> Result<&'a [String]> {
+    if pacman::in_repos()?.contains(name) {
+        return Ok(&fleet.system.packages);
+    }
+    let why = match fleet.system.aur_helper.as_deref() {
+        None => "system.toml sets no aur_helper".to_owned(),
+        Some(helper) => match cmd::stdout(helper, &["-Si", name]) {
+            Ok(_) => return Ok(&fleet.system.packages),
+            Err(e) => format!("{e:#}"),
+        },
+    };
+    println!("  It is in neither pacman's repos nor the AUR: {why}");
+    if fleet.system.built_packages.is_empty() {
+        bail!("only a `built_packages` list can hold it, and system.toml has none");
+    }
+    println!("  Only a list of built packages can hold it.");
+    Ok(&fleet.system.built_packages)
 }
 
 fn unlist_package(fleet: &Fleet, name: &str) -> Result<()> {

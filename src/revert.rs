@@ -162,11 +162,11 @@ pub fn run(fleet: &Fleet, reverts: &[&Revert]) -> Result<()> {
 
 /// pacman installs what its repos have, and the fleet's AUR helper the rest, as the user.
 fn install_packages(fleet: &Fleet, names: &[&str]) -> Result<()> {
-    let in_repos: BTreeSet<String> = cmd::stdout("pacman", &["-Slq"])?
-        .lines()
-        .map(str::to_owned)
-        .collect();
-    let install = split_install(names, &in_repos, fleet.system.aur_helper.as_deref())?;
+    let install = split_install(
+        names,
+        &pacman::in_repos()?,
+        fleet.system.aur_helper.as_deref(),
+    )?;
     if !install.repo.is_empty() {
         let args = [&["-S", "--needed", "--noconfirm"], &install.repo[..]].concat();
         cmd::root("pacman", &args)?;

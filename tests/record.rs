@@ -51,6 +51,8 @@ fn shipping(path: &Path, text: &str) -> Db {
             explicit: true,
             files: Vec::new(),
             backups: vec![(path.to_path_buf(), md5(text))],
+            depends: Vec::new(),
+            provides: Vec::new(),
         }],
     }
 }

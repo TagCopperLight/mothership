@@ -92,7 +92,10 @@ fn compare(fleet: &Fleet, manager: Manager, installed: &BTreeMap<String, Source>
                 tool: tool.clone(),
             }),
         };
-        items.push(Item { add, ..item });
+        items.push(match add {
+            Some(add) => item.with(add),
+            None => item.because("the fleet can't describe this source"),
+        });
     }
     items.extend(
         declared

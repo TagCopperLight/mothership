@@ -1,4 +1,4 @@
-use super::{Item, Kind};
+use super::{Item, Kind, Ships};
 use crate::{
     edit::{Add, Key},
     fleet::Fleet,
@@ -27,7 +27,7 @@ const USER_PRESETS: [&str; 3] = [
     "/usr/lib/systemd/user-preset",
 ];
 
-pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
+pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
     let system = [
         PathBuf::from("/etc/systemd/system"),
         PathBuf::from("/run/systemd/system"),
@@ -46,6 +46,7 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
         &[&system[0]],
         &SYSTEM_PRESETS,
         &fleet.system.services,
+        ships,
     )?;
     items.extend(check(
         Kind::UserService,
@@ -54,6 +55,7 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
         &[&user[0], &user[1]],
         &USER_PRESETS,
         &fleet.system.user_services,
+        ships,
     )?);
     Ok(items)
 }
@@ -68,29 +70,34 @@ fn check(
     enable_dirs: &[&PathBuf],
     preset_dirs: &[&str],
     declared: &[String],
+    ships: &Ships,
 ) -> Result<Vec<Item>> {
     let enabled = enabled(enable_dirs)?;
     let presets = Presets::load(preset_dirs)?;
     let covered = with_also(declared, unit_dirs)?;
-    let mut items: Vec<Item> = enabled
+    let mut items = Vec::new();
+    for unit in enabled
         .iter()
         .filter(|unit| !presets.enables(unit) && !covered.contains(*unit))
-        .map(|unit| {
-            Item::new(kind, unit, "enabled, not declared")
-                .reverting(Revert::Disable {
-                    unit: unit.clone(),
-                    user: kind == Kind::UserService,
-                })
-                .with(Add::Declare {
-                    key,
-                    name: unit.clone(),
-                })
-                .showing(Preview::Unit {
-                    name: unit.clone(),
-                    user: kind == Kind::UserService,
-                })
-        })
-        .collect();
+    {
+        let item = Item::new(kind, unit, "enabled, not declared")
+            .reverting(Revert::Disable {
+                unit: unit.clone(),
+                user: kind == Kind::UserService,
+            })
+            .showing(Preview::Unit {
+                name: unit.clone(),
+                user: kind == Kind::UserService,
+            });
+        let file = unit_file(unit, unit_dirs);
+        items.push(match file {
+            Some(file) if ships.path(&file)? => item.with(Add::Declare {
+                key,
+                name: unit.clone(),
+            }),
+            _ => item.because("its unit file comes from outside the fleet"),
+        });
+    }
     items.extend(
         declared
             .iter()
@@ -125,8 +132,12 @@ fn with_also(declared: &[String], unit_dirs: &[PathBuf]) -> Result<BTreeSet<Stri
 }
 
 /// The first folder that has the unit wins, like systemd's own lookup.
+fn unit_file(unit: &str, unit_dirs: &[PathBuf]) -> Option<PathBuf> {
+    unit_dirs.iter().map(|d| d.join(unit)).find(|p| p.exists())
+}
+
 fn also(unit: &str, unit_dirs: &[PathBuf]) -> Result<Vec<String>> {
-    let Some(path) = unit_dirs.iter().map(|d| d.join(unit)).find(|p| p.exists()) else {
+    let Some(path) = unit_file(unit, unit_dirs) else {
         return Ok(Vec::new());
     };
     let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;

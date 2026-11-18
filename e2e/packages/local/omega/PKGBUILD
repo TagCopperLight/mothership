@@ -1,0 +1,10 @@
+pkgname=omega
+pkgver=1
+pkgrel=1
+pkgdesc="An app built on this machine"
+arch=(any)
+options=(!debug)
+
+package() {
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/omega/README" <<< "omega"
+}

@@ -55,12 +55,10 @@ pub fn run() -> Result<()> {
         if let Some(waiting) = later.get(item) {
             println!("  waiting for {} days", (now - waiting.first) / DAY);
         }
-        let add = if item.secret {
-            println!("  secrets wait for the secrets system, so it can't be added yet");
-            None
-        } else {
-            item.add.as_ref()
-        };
+        if let Some(why) = item.no_add {
+            println!("  {why}, so it can't be added yet");
+        }
+        let add = item.add.as_ref();
         let revert = item.revert.as_ref().filter(|_| record.is_some());
         item.preview.show(terminal);
         if let Some(add) = add {

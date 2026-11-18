@@ -2,6 +2,7 @@ use crate::cmd;
 use anyhow::{Context, Result};
 use md5::{Digest, Md5};
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     thread,
@@ -26,6 +27,9 @@ pub struct Package {
     pub files: Vec<String>,
     /// Config files pacman keeps on upgrade, with the MD5 of the version it installed.
     pub backups: Vec<(PathBuf, String)>,
+    /// Names without their version constraints, like `sh` from `sh>=5`.
+    pub depends: Vec<String>,
+    pub provides: Vec<String>,
 }
 
 impl Db {
@@ -61,6 +65,34 @@ impl Db {
     }
 }
 
+impl Db {
+    /// The named packages and all they depend on, as installed here.
+    pub fn with_depends(&self, names: &BTreeSet<String>) -> BTreeSet<String> {
+        let mut found = BTreeSet::new();
+        let mut todo: Vec<&str> = names.iter().map(String::as_str).collect();
+        while let Some(name) = todo.pop() {
+            let Some(package) = self.packages.iter().find(|p| p.name == name).or_else(|| {
+                self.packages
+                    .iter()
+                    .find(|p| p.provides.iter().any(|n| n == name))
+            }) else {
+                continue;
+            };
+            if found.insert(package.name.clone()) {
+                todo.extend(package.depends.iter().map(String::as_str));
+            }
+        }
+        found
+    }
+}
+
+fn names(desc: &str, field: &str) -> Vec<String> {
+    section(desc, field)
+        .filter_map(|dep| dep.split(['<', '>', '=']).next())
+        .map(str::to_owned)
+        .collect()
+}
+
 impl Package {
     fn load(dir: &Path) -> Result<Self> {
         let read = |name| {
@@ -78,6 +110,8 @@ impl Package {
             // pacman writes REASON only for dependencies.
             explicit: section(&desc, "REASON").next() != Some("1"),
             files: section(&files, "FILES").map(|f| format!("/{f}")).collect(),
+            depends: names(&desc, "DEPENDS"),
+            provides: names(&desc, "PROVIDES"),
             backups: section(&files, "BACKUP")
                 .filter_map(|line| line.split_once('\t'))
                 .map(|(path, md5)| (Path::new("/").join(path), md5.to_owned()))
@@ -91,6 +125,14 @@ impl Package {
             self.name, self.version, self.arch
         ))
     }
+}
+
+/// The names pacman's sync databases have.
+pub fn in_repos() -> Result<BTreeSet<String>> {
+    Ok(cmd::stdout("pacman", &["-Slq"])?
+        .lines()
+        .map(str::to_owned)
+        .collect())
 }
 
 /// The file as the package shipped it, from the archive in pacman's cache.
@@ -114,3 +156,7 @@ fn section<'a>(text: &'a str, name: &str) -> impl Iterator<Item = &'a str> {
         .skip(1)
         .take_while(|line| !line.is_empty())
 }
+
+#[cfg(test)]
+#[path = "../tests/pacman.rs"]
+mod tests;

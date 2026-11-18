@@ -1,28 +1,38 @@
-use super::{Item, Kind};
+use super::{Item, Kind, Ships};
 use crate::{
     edit::{Add, Key},
     fleet::Fleet,
     revert::Revert,
     user,
 };
-use anyhow::Result;
-use std::fs;
+use anyhow::{Context, Result};
+use std::{
+    collections::BTreeSet,
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 
-pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
+/// Packages create their groups through these, systemd's basic ones included.
+const SYSUSERS: [&str; 2] = ["/etc/sysusers.d", "/usr/lib/sysusers.d"];
+
+pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
     let user = user::current();
     let mut items = Vec::new();
     if let Some(shell) = &fleet.system.shell
         && user.shell != *shell
     {
-        items.push(
-            Item::new(
-                Kind::Account,
-                format!("shell {}", user.shell),
-                format!("the fleet says {shell}"),
-            )
-            .with(Add::Shell(user.shell.clone()))
-            .reverting(Revert::Shell(shell.clone())),
-        );
+        let item = Item::new(
+            Kind::Account,
+            format!("shell {}", user.shell),
+            format!("the fleet says {shell}"),
+        )
+        .reverting(Revert::Shell(shell.clone()));
+        items.push(if ships.path(Path::new(&user.shell))? {
+            item.with(Add::Shell(user.shell.clone()))
+        } else {
+            item.because("no package the fleet lists installs this shell")
+        });
     }
     // Member lists leave out my own primary group.
     let groups = fs::read_to_string("/etc/group")?;
@@ -38,17 +48,22 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
         })
         .collect();
     let declared = &fleet.system.groups;
+    let created = shipped_groups(ships)?;
     items.extend(
         actual
             .iter()
             .filter(|g| !declared.iter().any(|d| d == *g))
             .map(|g| {
-                Item::new(Kind::Account, format!("group {g}"), "member, not declared")
-                    .with(Add::Declare {
+                let item = Item::new(Kind::Account, format!("group {g}"), "member, not declared")
+                    .reverting(Revert::Leave(g.to_string()));
+                if created.contains(*g) {
+                    item.with(Add::Declare {
                         key: Key::Groups,
                         name: g.to_string(),
                     })
-                    .reverting(Revert::Leave(g.to_string()))
+                } else {
+                    item.because("no package the fleet lists creates this group")
+                }
             }),
     );
     items.extend(
@@ -70,3 +85,41 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
     );
     Ok(items)
 }
+
+/// The groups the sysusers files of the fleet's packages and etc/ create.
+fn shipped_groups(ships: &Ships) -> Result<BTreeSet<String>> {
+    let mut groups = BTreeSet::new();
+    for dir in SYSUSERS {
+        let entries = match fs::read_dir(dir) {
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            entries => entries.with_context(|| format!("reading {dir}"))?,
+        };
+        let files: Vec<PathBuf> = entries
+            .map(|entry| Ok(entry?.path()))
+            .collect::<Result<_>>()?;
+        for file in files {
+            if ships.path(&file)? {
+                groups.extend(sysusers_groups(&fs::read_to_string(&file)?));
+            }
+        }
+    }
+    Ok(groups)
+}
+
+/// `g name`, `u name` (a user with its own group) and `m user group` each create a group.
+fn sysusers_groups(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            match fields[..] {
+                ["g" | "u", name, ..] => Some(name.to_owned()),
+                ["m", _, group, ..] => Some(group.to_owned()),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+#[path = "../../tests/account.rs"]
+mod tests;

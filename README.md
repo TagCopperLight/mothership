@@ -10,7 +10,7 @@ You need Arch, `chezmoi`, `cargo`, `uv` and `dconf`, with the fleet repo as chez
 - `mothership review` asks about each difference: **add** it to the fleet, **ignore** it for good, put it off a week (**later**), or skip it this time (**pass**). It edits the fleet checkout and never commits. Under sudo it can also **revert** the machine to the fleet.
 - `sudo mothership apply` makes the machine follow the fleet. It shows its plan and asks first.
 
-Paths that look like secrets get a `[secret]` mark, and review won't add them. Review adds a tool only when it comes from the registry or from git, with at most a branch: an editable install, a local folder or a tag waits until the fleet can describe it.
+Paths that look like secrets get a `[secret]` mark, and review won't add them. Review offers to declare a service, group or shell only when the fleet's packages, with their dependencies, or its files provide it, and lists a package found in neither pacman's repos nor the AUR only in a `built_packages` list. It adds a tool only when it comes from the registry or from git, with at most a branch: an editable install, a local folder or a tag waits until the fleet can describe it.
 
 ## The fleet repo
 

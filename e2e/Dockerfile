@@ -4,12 +4,14 @@ FROM archlinux:base AS machine
 RUN pacman -Syu --noconfirm --needed base-devel git sudo chezmoi rust uv dconf \
  && rm -rf /var/cache/pacman/pkg/*
 
-# A local repo stands in for pacman's repos, and /aur for the AUR.
+# A local repo stands in for pacman's repos, and /aur for the AUR. /local holds a package
+# built on the machine, which neither has.
 COPY packages /build
 RUN useradd -m builder && chown -R builder /build \
  && for dir in /build/*/*/; do (cd "$dir" && runuser -u builder -- makepkg --nodeps); done \
- && mkdir /repo /aur \
+ && mkdir /repo /aur /local \
  && cp /build/repo/*/*.pkg.tar.zst /repo && cp /build/aur/*/*.pkg.tar.zst /aur \
+ && cp /build/local/*/*.pkg.tar.zst /local \
  && repo-add -q /repo/fleettest.db.tar.gz /repo/*.pkg.tar.zst \
  && userdel -r builder && rm -rf /build \
  && printf '\n[fleettest]\nSigLevel = Never\nServer = file:///repo\n' >> /etc/pacman.conf \

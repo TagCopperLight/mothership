@@ -7,10 +7,12 @@ mod services;
 mod settings;
 pub mod tools;
 
-use crate::{cmd, edit::Add, fleet::Fleet, pacman::Db, preview::Preview, revert::Revert};
+use crate::{cmd, edit::Add, fleet::Fleet, pacman::Db, preview::Preview, revert::Revert, user};
 use anyhow::{Result, bail};
 use std::{
+    collections::BTreeSet,
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
     thread::{self, ScopedJoinHandle},
 };
@@ -87,6 +89,8 @@ pub struct Item {
     pub secret: bool,
     /// None when the fleet has no place for it yet.
     pub add: Option<Add>,
+    /// Why it has no add, when the fleet has a place for its kind but not for this one.
+    pub no_add: Option<&'static str>,
     pub revert: Option<Revert>,
     pub preview: Preview,
 }
@@ -99,6 +103,7 @@ impl Item {
             detail: detail.into(),
             secret: false,
             add: None,
+            no_add: None,
             revert: None,
             preview: Preview::None,
         }
@@ -116,6 +121,12 @@ impl Item {
 
     fn with(mut self, add: Add) -> Self {
         self.add = Some(add);
+        self
+    }
+
+    fn because(mut self, no_add: &'static str) -> Self {
+        self.add = None;
+        self.no_add = Some(no_add);
         self
     }
 }
@@ -170,16 +181,66 @@ pub fn collect() -> Result<Report> {
 
 /// The checks apply acts on: what lives outside $HOME, apart from tools.
 pub fn system(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
+    let ships = Ships::new(fleet, db)?;
     thread::scope(|s| {
+        let ships = &ships;
         let checks = vec![
             s.spawn(|| packages::scan(fleet, db)),
             s.spawn(|| etc::scan(fleet, db)),
-            s.spawn(|| services::scan(fleet)),
-            s.spawn(|| account::scan(fleet)),
+            s.spawn(move || services::scan(fleet, ships)),
+            s.spawn(move || account::scan(fleet, ships)),
         ];
         let items = checks.into_iter().map(join).collect::<Result<Vec<_>>>()?;
         Ok(items.into_iter().flatten().collect())
     })
+}
+
+/// What a new machine of the type gets before its services and account are set: the files of
+/// the packages its lists install and their dependencies, its etc/, and chezmoi's files. Review only offers to declare
+/// a unit, group or shell that comes from there, so apply can set it up on that machine too.
+pub struct Ships<'a> {
+    fleet: &'a Fleet,
+    db: &'a Db,
+    listed: BTreeSet<String>,
+}
+
+impl<'a> Ships<'a> {
+    pub fn new(fleet: &'a Fleet, db: &'a Db) -> Result<Self> {
+        Ok(Ships {
+            fleet,
+            db,
+            listed: db.with_depends(&fleet.packages()?),
+        })
+    }
+
+    /// /bin is a link to /usr/bin, where packages put their files, so the folder is resolved.
+    pub fn path(&self, path: &Path) -> Result<bool> {
+        let resolved = match (path.parent(), path.file_name()) {
+            (Some(dir), Some(name)) => match fs::canonicalize(dir) {
+                Ok(dir) => dir.join(name),
+                Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+                Err(e) => return Err(e.into()),
+            },
+            _ => return Ok(false),
+        };
+        if let Ok(rel) = resolved.strip_prefix("/etc")
+            && fs::symlink_metadata(self.fleet.etc_dir().join(rel)).is_ok()
+        {
+            return Ok(true);
+        }
+        if resolved.starts_with(user::home()) {
+            // Fails for a file chezmoi doesn't manage.
+            let file = resolved.to_string_lossy();
+            return Ok(cmd::stdout("chezmoi", &["source-path", &file]).is_ok());
+        }
+        let file = resolved.to_string_lossy();
+        Ok(self
+            .db
+            .packages
+            .iter()
+            .filter(|package| self.listed.contains(&package.name))
+            .any(|package| package.files.iter().any(|f| *f == file)))
+    }
 }
 
 fn join<T>(handle: ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
@@ -245,6 +306,7 @@ fn looks_secret(mut item: Item, path: &Path) -> Item {
     item.secret = guess_secret(path);
     if item.secret {
         item.preview = Preview::None;
+        return item.because("secrets wait for the secrets system");
     }
     item
 }

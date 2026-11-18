@@ -240,6 +240,7 @@ fn appends_ignore_lines_the_ignore_list_then_matches() {
         detail: String::new(),
         secret: false,
         add: None,
+        no_add: None,
         revert: None,
         preview: crate::preview::Preview::None,
     };

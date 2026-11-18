@@ -1,6 +1,12 @@
 #!/bin/bash
-# Stands in for yay: `fake-aur -S --needed <names>` installs the packages built into /aur.
+# Stands in for yay with the packages built into /aur: `fake-aur -S --needed <names>` installs
+# them, and `fake-aur -Si <name>` fails for a package /aur lacks.
 set -euo pipefail
+if [[ $1 == -Si ]]; then
+    [[ -e /aur/$2-1-1-any.pkg.tar.zst ]] || { echo " -> No AUR package found for $2" >&2; exit 1; }
+    echo "Name : $2"
+    exit 0
+fi
 files=()
 for arg in "$@"; do
     [[ $arg == -* ]] || files+=(/aur/"$arg"-1-1-any.pkg.tar.zst)
