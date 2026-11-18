@@ -16,52 +16,37 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// The checkout every machine reads, owned by the machine's admin, who commits and pushes it.
 pub const DIR: &str = "/var/lib/mothership/fleet";
 
 pub struct Fleet {
     pub dir: PathBuf,
     pub type_name: String,
     pub type_dir: PathBuf,
-    /// With the blocks of this machine's hardware and options merged in.
     pub system: System,
-    /// Where `system` comes from in system.toml: the top level, then each block merged in.
     pub tables: Vec<Vec<String>>,
-    /// The files under etc/ this machine gets, by their path under /etc.
     pub etc: BTreeSet<PathBuf>,
-    /// The files under etc/ that belong to blocks this machine doesn't have.
     pub etc_elsewhere: BTreeSet<PathBuf>,
-    /// The files under etc/ the fleet keeps encrypted, whichever machines get them.
     pub secret_etc: BTreeSet<PathBuf>,
     pub ignore: Ignore,
-    /// What in /etc looks secret but isn't.
     pub not_secret: Paths,
-    /// The type's users, in name order.
     pub members: Vec<Member>,
-    /// Read from the machine by `load`.
     local: Option<Local>,
 }
 
 struct Local {
     admin: User,
     keys: Keys,
-    /// Whether root's key opens the /etc secrets.
     etc_open: bool,
 }
 
-/// A user of the type: what it has outside chezmoi, and its own secrets and lists.
 pub struct Member {
     pub name: String,
     pub dir: PathBuf,
     pub config: UserConfig,
     pub ignore: Ignore,
-    /// What looks secret but isn't.
     pub not_secret: Paths,
-    /// Read from the machine by `Fleet::load`. None when the machine lacks the user.
     pub user: Option<User>,
-    /// Whether the user's chezmoi reads the fleet, with the user's key and recipients.
     pub chezmoi: bool,
-    /// Whether the user's key opens the user's secrets.
     pub open: bool,
 }
 
@@ -69,9 +54,7 @@ pub struct Member {
 #[serde(deny_unknown_fields, default)]
 pub struct System {
     pub packages: Vec<String>,
-    /// Packages other repos build: checked, never installed.
     pub built_packages: Vec<String>,
-    /// Installs the listed packages that aren't in pacman's repos. It takes pacman's `-S --needed`.
     pub aur_helper: Option<String>,
     pub services: Vec<String>,
     /// Files in etc/ that need another mode than 644, or 755 for executables. git keeps only the
@@ -81,31 +64,26 @@ pub struct System {
     options: BTreeMap<String, Block>,
 }
 
-/// user.toml: what a user of the type has outside chezmoi.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields, default)]
 pub struct UserConfig {
     pub shell: Option<String>,
     pub groups: Vec<String>,
     pub user_services: Vec<String>,
-    /// Keeps the user's services running while nobody is logged in.
     pub linger: bool,
     pub installers: Vec<Installer>,
     pub tools: Tools,
 }
 
-/// What a piece of hardware or an option adds to the type.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields, default)]
 struct Block {
     packages: Vec<String>,
     built_packages: Vec<String>,
     services: Vec<String>,
-    /// Files under etc/ that only machines with the block get.
     etc: Vec<PathBuf>,
 }
 
-/// What the install asks, kept on the machine.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Machine {
@@ -121,7 +99,6 @@ pub const MACHINE: &str = "/etc/mothership/machine.toml";
 pub struct Mode(pub u32);
 
 impl Mode {
-    /// A secret is for its owner only.
     pub fn default_for(executable: bool, secret: bool) -> Mode {
         let mode = if executable { 0o755 } else { 0o644 };
         Mode(if secret { mode & 0o700 } else { mode })
@@ -143,7 +120,6 @@ impl<'de> Deserialize<'de> for Mode {
 #[serde(deny_unknown_fields)]
 pub struct Installer {
     pub name: String,
-    /// A shell command, run as the user.
     pub run: String,
     pub creates: String,
 }
@@ -170,7 +146,6 @@ impl Tools {
     }
 }
 
-/// What installs tools outside the package manager, as the user.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Manager {
     Cargo,
@@ -181,7 +156,6 @@ pub enum Manager {
 impl Manager {
     pub const ALL: [Manager; 3] = [Manager::Cargo, Manager::Uv, Manager::Bun];
 
-    /// The key under `[tools]`.
     pub fn name(self) -> &'static str {
         match self {
             Manager::Cargo => "cargo",
@@ -194,7 +168,6 @@ impl Manager {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 #[serde(untagged)]
 pub enum Tool {
-    /// From the manager's registry.
     Name(String),
     Git(GitTool),
 }
@@ -262,12 +235,10 @@ impl Fleet {
         self.local.as_ref().expect("Fleet::load reads the machine")
     }
 
-    /// Who owns the checkout, and commits it.
     pub fn admin(&self) -> &User {
         &self.local().admin
     }
 
-    /// Every key this machine holds.
     pub fn keys(&self) -> &Keys {
         &self.local().keys
     }
@@ -393,7 +364,6 @@ impl Fleet {
         self.type_dir.join("system.toml")
     }
 
-    /// The keys that open the /etc secrets.
     pub fn recipients(&self) -> PathBuf {
         self.type_dir.join(secrets::RECIPIENTS)
     }
@@ -402,7 +372,6 @@ impl Fleet {
         self.type_dir.join("etc")
     }
 
-    /// The fleet's file for /etc/`rel`.
     pub fn etc_source(&self, rel: &Path) -> PathBuf {
         let path = self.etc_dir().join(rel);
         if !self.secret_etc.contains(rel) {
@@ -413,7 +382,6 @@ impl Fleet {
         PathBuf::from(name)
     }
 
-    /// What apply writes to /etc/`rel`, decrypted.
     pub fn etc_contents(&self, rel: &Path) -> Result<Vec<u8>> {
         let source = self.etc_source(rel);
         if self.secret_etc.contains(rel) {
@@ -422,7 +390,6 @@ impl Fleet {
         fs::read(&source).with_context(|| format!("reading {}", source.display()))
     }
 
-    /// `rel` is the file's path under /etc.
     pub fn etc_mode(&self, rel: &Path) -> Result<Mode> {
         if let Some(mode) = self.system.etc_modes.get(rel) {
             return Ok(*mode);
@@ -435,7 +402,6 @@ impl Fleet {
         ))
     }
 
-    /// What apply installs, leaving out the built packages.
     pub fn packages(&self) -> BTreeSet<String> {
         self.system.packages.iter().cloned().collect()
     }
@@ -481,7 +447,6 @@ impl Member {
         self.dir.join(secrets::RECIPIENTS)
     }
 
-    /// The machine's user, which `Fleet::load` found.
     pub fn user(&self) -> &User {
         self.user.as_ref().expect("checked by the caller")
     }
@@ -489,7 +454,6 @@ impl Member {
 
 const USER_TOML: &str = "user.toml";
 
-/// Each folder under users/ is one user of the type.
 fn members(dir: &Path) -> Result<Vec<Member>> {
     let mut members = Vec::new();
     let entries = match fs::read_dir(dir) {
@@ -525,8 +489,6 @@ fn read_toml<T: de::DeserializeOwned>(path: &Path) -> Result<T> {
     .with_context(|| format!("parsing {}", path.display()))
 }
 
-/// The user's chezmoi must read the fleet, decrypt with the user's key and encrypt for the
-/// user's recipients, which the fleet's config template sets up.
 fn reads_fleet(member: &Member, user: &User, fleet_dir: &Path) -> Result<bool> {
     let dump = cmd::stdout(
         cmd::As::User(user),

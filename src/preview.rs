@@ -19,28 +19,11 @@ pub enum Preview {
     None,
     Text(String),
     Contents(PathBuf),
-    Diff {
-        old: PathBuf,
-        new: PathBuf,
-    },
-    /// Against the version pacman installed.
-    Original {
-        path: PathBuf,
-        archive: PathBuf,
-    },
-    Chezmoi {
-        path: PathBuf,
-        user: User,
-    },
-    /// `user` names the user of a user unit.
-    Unit {
-        name: String,
-        user: Option<String>,
-    },
-    Dconf {
-        section: String,
-        user: User,
-    },
+    Diff { old: PathBuf, new: PathBuf },
+    Original { path: PathBuf, archive: PathBuf },
+    Chezmoi { path: PathBuf, user: User },
+    Unit { name: String, user: Option<String> },
+    Dconf { section: String, user: User },
 }
 
 impl Preview {
@@ -157,7 +140,6 @@ fn original(path: &Path, archive: &Path, color: bool) -> Result<Vec<String>> {
     diff(file.path(), path, color)
 }
 
-/// The file headers name temporary or source paths.
 fn hunks(diff: &str) -> Vec<String> {
     let start = diff.lines().position(|l| strip_ansi(l).starts_with("@@"));
     lines(diff).into_iter().skip(start.unwrap_or(0)).collect()

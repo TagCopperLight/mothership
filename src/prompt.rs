@@ -23,7 +23,6 @@ impl Prompt {
         }
     }
 
-    /// None once the input ends.
     pub fn ask(&mut self, question: &str) -> Result<Option<String>> {
         print!("{question} ");
         io::stdout().flush()?;

@@ -26,7 +26,6 @@ use std::{
     thread::{self, ScopedJoinHandle},
 };
 
-/// Declared in report order.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Kind {
     Package,
@@ -55,7 +54,6 @@ impl Kind {
         Kind::Pref,
     ];
 
-    /// The type's own kinds live outside the homes, the rest belong to each user.
     pub fn level(self) -> Level {
         match self {
             Kind::Package | Kind::Etc | Kind::Service => Level::Machine,
@@ -63,7 +61,6 @@ impl Kind {
         }
     }
 
-    /// The word ignore.txt uses.
     pub fn name(self) -> &'static str {
         match self {
             Kind::Package => "package",
@@ -99,28 +96,21 @@ impl Kind {
     }
 }
 
-/// Whether an item is a secret, and why.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Secret {
     No,
-    /// Only its owner can read it, and not-secret.txt doesn't clear it.
     Guessed,
-    /// The fleet keeps it encrypted.
     Fleet,
-    /// The fleet keeps it encrypted, and this machine's key can't open it.
     Locked,
 }
 
 pub struct Item {
     pub kind: Kind,
-    /// The index of the type's user it belongs to, None for the machine's own.
     pub member: Option<usize>,
     pub subject: String,
     pub detail: String,
     pub secret: Secret,
-    /// None when the fleet has no place for it yet.
     pub add: Option<Add>,
-    /// Why it has no add, when the fleet has a place for its kind but not for this one.
     pub no_add: Option<&'static str>,
     pub revert: Option<Revert>,
     pub preview: Preview,
@@ -190,7 +180,6 @@ pub fn ignore_line(item: &Item) -> String {
     format!("{} {}", item.kind.name(), globset::escape(&item.subject))
 }
 
-/// The ignore line, with the user it belongs to.
 pub fn key(fleet: &Fleet, item: &Item) -> String {
     match item.member {
         None => ignore_line(item),
@@ -198,7 +187,6 @@ pub fn key(fleet: &Fleet, item: &Item) -> String {
     }
 }
 
-/// The kind's title, with the user an item of theirs belongs to.
 pub fn title(fleet: &Fleet, item: &Item) -> String {
     match item.member {
         None => item.kind.title().to_owned(),
@@ -240,15 +228,12 @@ pub fn collect() -> Result<Report> {
     })
 }
 
-/// Apply acts on what it can bring back: everything but untracked config and settings.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Checks {
     All,
     Apply,
 }
 
-/// The machine's checks, then each user's. They mostly wait on programs or the disk, so they
-/// run at once.
 pub fn checks(fleet: &Fleet, db: &Db, which: Checks) -> Result<Vec<Item>> {
     let ships = Ships::new(fleet, db)?;
     thread::scope(|s| {
@@ -266,8 +251,6 @@ pub fn checks(fleet: &Fleet, db: &Db, which: Checks) -> Result<Vec<Item>> {
     })
 }
 
-/// A user the machine lacks has nothing else to check, and a user whose chezmoi doesn't read
-/// the fleet has no files to compare.
 fn member(fleet: &Fleet, ships: &Ships, i: usize, which: Checks) -> Result<Vec<Item>> {
     let member = &fleet.members[i];
     let mut items = Vec::new();
@@ -320,10 +303,6 @@ fn tracked(fleet: &Fleet, member: &Member, which: Checks) -> Result<Vec<Item>> {
     Ok(items)
 }
 
-/// What a new machine of the type gets before its services and account are set: the files of
-/// the packages it installs and their dependencies, its etc/, and chezmoi's files. Review only
-/// offers to declare a unit, group or shell that comes from there, so apply can set it up on
-/// that machine too.
 pub struct Ships<'a> {
     fleet: &'a Fleet,
     db: &'a Db,
@@ -391,7 +370,6 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-/// Grouped by user and kind, one line per item. `items` come sorted that way.
 pub fn print(fleet: &Fleet, items: &[&Item], detail: impl Fn(&Item) -> String) {
     for group in items.chunk_by(|a, b| (a.member, a.kind) == (b.member, b.kind)) {
         println!("{} ({})", title(fleet, group[0]), group.len());
@@ -449,7 +427,6 @@ fn owner_only(meta: &fs::Metadata) -> bool {
     meta.is_file() && meta.permissions().mode() & 0o044 == 0
 }
 
-/// Stops at the first one, since a big folder of caches holds none.
 fn holds_owner_only(dir: &Path) -> bool {
     let Ok(entries) = fs::read_dir(dir) else {
         return true;

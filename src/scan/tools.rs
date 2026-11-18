@@ -42,12 +42,9 @@ pub fn scan(member: &Member) -> Result<Vec<Item>> {
     Ok(items)
 }
 
-/// Where an installed tool came from.
 #[derive(Debug, PartialEq)]
 enum Source {
-    /// A source the fleet can declare, and apply install the same way.
     Declarable(Tool),
-    /// Any other, such as a local folder, an editable install or a tag: review offers no add.
     Other(String),
 }
 
@@ -65,7 +62,6 @@ fn from(tool: &Tool) -> String {
     }
 }
 
-/// A user without the manager has no tools from it, unless the fleet declares some.
 fn uses(user: &User, tools: &Tools, manager: Manager) -> bool {
     !tools.of(manager).is_empty() || crate::tools::has(user, manager)
 }
@@ -143,7 +139,6 @@ fn installed(user: &User, manager: Manager) -> Result<BTreeMap<String, Source>> 
     }
 }
 
-/// Lines like `name v1.0.0:`, or `name v1.0.0 (https://host/repo?branch=dev#1a2b3c4d):` for git.
 fn cargo_list(text: &str) -> BTreeMap<String, Source> {
     text.lines()
         .filter(|line| !line.starts_with(char::is_whitespace))
@@ -187,7 +182,6 @@ fn git_source(name: &str, url: &str, query: &str) -> Source {
     }))
 }
 
-/// uv keeps how it installed each tool in a receipt in the tool's folder.
 fn uv_tools(dir: &Path) -> Result<BTreeMap<String, Source>> {
     let mut tools = BTreeMap::new();
     let entries = match fs::read_dir(dir) {
@@ -207,8 +201,6 @@ fn uv_tools(dir: &Path) -> Result<BTreeMap<String, Source>> {
     Ok(tools)
 }
 
-/// The first requirement is the tool. One with a version, extras or anything beyond a plain
-/// name or git URL can't be declared.
 fn uv_receipt(text: &str) -> Result<(String, Source)> {
     let receipt: toml::Table = toml::from_str(text)?;
     let requirement = receipt
@@ -243,8 +235,6 @@ fn uv_receipt(text: &str) -> Result<(String, Source)> {
     Ok((name, source))
 }
 
-/// bun writes this file on the first `bun add -g`, so no file means no globals. A version range
-/// is the registry, and `git+URL#branch` a git source.
 fn bun_globals(path: &Path) -> Result<BTreeMap<String, Source>> {
     let text = match fs::read_to_string(path) {
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(BTreeMap::new()),

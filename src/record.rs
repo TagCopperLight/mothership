@@ -23,12 +23,10 @@ pub const PATH: &str = "/var/lib/mothership/applied.json";
 pub struct Record {
     packages: BTreeSet<String>,
     services: BTreeSet<String>,
-    /// The MD5 of each /etc file as apply last left it.
     etc: BTreeMap<PathBuf, String>,
     users: BTreeMap<String, UserRecord>,
 }
 
-/// What a user of the type had declared.
 #[derive(Serialize, Deserialize, Default, Clone)]
 #[serde(default, deny_unknown_fields)]
 struct UserRecord {
@@ -57,9 +55,6 @@ impl Record {
             .with_context(|| format!("writing {}", path.display()))
     }
 
-    /// A file that still matches what apply wrote, or what its package shipped, wasn't edited.
-    /// `user` names the user a revert of theirs belongs to. A user the machine lacks, or whose
-    /// chezmoi doesn't read the fleet, is never something I chose.
     pub fn fleet_changed(&self, revert: &Revert, user: Option<&str>, db: &Db) -> Result<bool> {
         let empty = UserRecord::default();
         let mine = user.and_then(|u| self.users.get(u)).unwrap_or(&empty);
@@ -87,7 +82,6 @@ impl Record {
                 }
             },
             Revert::RestoreEtc { path, .. } => self.unchanged(path)?,
-            // Folders apply never wrote into, root's secrets among them, stay unread.
             Revert::DeleteEtc(path) if path.is_dir() => {
                 self.etc.keys().any(|written| written.starts_with(path))
                     && walk::files(path)?
@@ -102,7 +96,6 @@ impl Record {
         })
     }
 
-    /// Review's reverts write /etc too, and apply must know those files as its own afterwards.
     pub fn reverted(&mut self, revert: &Revert) -> Result<()> {
         match revert {
             Revert::WriteEtc(path) => {
@@ -121,8 +114,6 @@ impl Record {
         Ok(self.etc.contains_key(path) && hash(path)?.as_ref() == self.etc.get(path))
     }
 
-    /// An /etc file left edited keeps its old entry, so it stays an edit. A user the machine
-    /// lacked got nothing but their account, so they keep their old entry too.
     pub fn after(fleet: &Fleet, before: &Record, etc_root: &Path) -> Result<Record> {
         let mut etc = BTreeMap::new();
         for rel in &fleet.etc {
@@ -166,7 +157,6 @@ impl Record {
     }
 }
 
-/// Apply never writes a secret this machine can't open.
 fn wanted(fleet: &Fleet, rel: &Path) -> Result<Option<String>> {
     if !fleet.secret_etc.contains(rel) {
         return hash(&fleet.etc_source(rel));
@@ -177,7 +167,6 @@ fn wanted(fleet: &Fleet, rel: &Path) -> Result<Option<String>> {
     Ok(Some(pacman::md5(&fleet.etc_contents(rel)?)))
 }
 
-/// A link's hash is its target's path.
 fn hash(path: &Path) -> Result<Option<String>> {
     let bytes = match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_symlink() => fs::read_link(path)?.into_os_string().into_encoded_bytes(),

@@ -15,17 +15,13 @@ use std::{
 
 pub const RECIPIENTS: &str = "recipients.txt";
 pub const ROOT_KEY: &str = "/etc/mothership/key.txt";
-/// The secrets a user's templates decrypt, in the user's folder of the type.
 pub const SECRETS: &str = "secrets";
-/// What marks a file of the type's etc/ as encrypted, as chezmoi marks its own.
 pub const AGE: &str = ".age";
 
-/// Where the fleet's chezmoi config template points each user's chezmoi.
 pub fn key_path(user: &User) -> PathBuf {
     user.home.join(".config/mothership/key.txt")
 }
 
-/// The keys this machine holds: root's and its users'.
 pub struct Keys(Vec<x25519::Identity>);
 
 impl Keys {
@@ -69,7 +65,6 @@ fn read_key(path: &Path) -> Result<Option<x25519::Identity>> {
     Ok(Some(key))
 }
 
-/// Whether the key at `key` is among the recipients in `list`.
 pub fn opens(list: &Path, key: &Path) -> Result<bool> {
     let Some(key) = read_key(key)? else {
         return Ok(false);
@@ -78,7 +73,6 @@ pub fn opens(list: &Path, key: &Path) -> Result<bool> {
     Ok(read(list)?.iter().any(|r| r.key == public))
 }
 
-/// For every recipient in `list`.
 pub fn encrypt(list: &Path, bytes: &[u8]) -> Result<Vec<u8>> {
     encrypt_for(&read(list)?, bytes).with_context(|| format!("encrypting for {}", list.display()))
 }
@@ -104,7 +98,6 @@ struct Recipient {
     key: String,
 }
 
-/// age's recipients format, with each key named by the comment above it.
 fn parse(text: &str) -> Result<Vec<Recipient>> {
     let mut list = Vec::new();
     let mut name = None;
@@ -139,7 +132,6 @@ fn read(path: &Path) -> Result<Vec<Recipient>> {
     }
 }
 
-/// Makes root's key and each user's when they have none, and shows their public halves.
 pub fn key(fleet: &Fleet) -> Result<()> {
     let mut owners = vec![("root".to_owned(), None, fleet.recipients())];
     for member in &fleet.members {
@@ -171,7 +163,6 @@ pub fn key(fleet: &Fleet) -> Result<()> {
     Ok(())
 }
 
-/// Readable by its owner only, like age-keygen's.
 fn make_key(path: &Path, owner: Option<&User>) -> Result<()> {
     let dir = path.parent().context("the key has no folder")?;
     match owner {
@@ -197,7 +188,6 @@ fn make_key(path: &Path, owner: Option<&User>) -> Result<()> {
     Ok(())
 }
 
-/// A list of recipients: a type's /etc secrets, or one user's.
 enum Scope {
     Root,
     User(String),
@@ -209,7 +199,6 @@ struct Target {
     list: PathBuf,
 }
 
-/// `<type>/root` or `<type>/<user>`.
 fn target(fleet: &Fleet, text: &str) -> Result<Target> {
     let (type_name, scope) = text
         .split_once('/')
@@ -277,8 +266,6 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Writes the recipients and encrypts every secret of the list for them. Returns the secrets as
-/// shown. Nothing changes when one fails.
 fn rewrite(fleet: &Fleet, target: &Target, list: &[Recipient]) -> Result<Vec<String>> {
     let all = secrets_of(fleet, target)?;
     let sealed = all
@@ -293,9 +280,6 @@ fn rewrite(fleet: &Fleet, target: &Target, list: &[Recipient]) -> Result<Vec<Str
     Ok(all.into_keys().collect())
 }
 
-/// Each secret as shown, and its encrypted file in the fleet. The type's etc/ counts whole,
-/// blocks included. A user's secrets are the encrypted files chezmoi gives them on that type,
-/// and those in the user's `secrets/`, which go by their path in the fleet.
 fn secrets_of(fleet: &Fleet, target: &Target) -> Result<BTreeMap<String, PathBuf>> {
     let type_dir = fleet.dir.join("types").join(&target.type_name);
     let mut all = BTreeMap::new();

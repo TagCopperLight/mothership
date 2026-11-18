@@ -23,7 +23,6 @@ use fleet::Fleet;
 const USAGE: &str = "usage: mothership scan | review | apply | key \
                      | trust <type>/<root|user> <name> <key> | retire <type>/<root|user> <name>";
 
-/// Every command reads each user's home and keys, and the record in /var/lib/mothership.
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if !matches!(
@@ -54,7 +53,6 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-/// What a command writes into the checkout goes back to the admin, even when it fails.
 fn edit_fleet(command: impl FnOnce(&Fleet) -> anyhow::Result<()>) -> anyhow::Result<()> {
     let fleet = Fleet::load()?;
     let result = command(&fleet);

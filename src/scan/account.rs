@@ -12,9 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Packages create their groups through these, systemd's basic ones included.
 const SYSUSERS: [&str; 2] = ["/etc/sysusers.d", "/usr/lib/sysusers.d"];
-/// `loginctl enable-linger` leaves a file named after the user here.
 const LINGER: &str = "/var/lib/systemd/linger";
 
 pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
@@ -101,7 +99,6 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
     Ok(items)
 }
 
-/// The groups the sysusers files of the fleet's packages and etc/ create.
 fn shipped_groups(ships: &Ships) -> Result<BTreeSet<String>> {
     let mut groups = BTreeSet::new();
     for dir in SYSUSERS {
@@ -121,7 +118,6 @@ fn shipped_groups(ships: &Ships) -> Result<BTreeSet<String>> {
     Ok(groups)
 }
 
-/// `g name`, `u name` (a user with its own group) and `m user group` each create a group.
 fn sysusers_groups(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|line| {

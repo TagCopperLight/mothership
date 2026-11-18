@@ -5,7 +5,6 @@ use crate::{
 };
 use anyhow::Result;
 
-/// Each runs as the user, since the tools live in their home.
 pub fn install(user: &User, manager: Manager, tool: &Tool) -> Result<()> {
     let spec = spec(manager, tool);
     let spec: Vec<&str> = spec.iter().map(String::as_str).collect();
@@ -30,7 +29,6 @@ pub fn run_installer(user: &User, installer: &Installer) -> Result<()> {
     cmd::run(As::User(user), "sh", &["-c", &installer.run])
 }
 
-/// Whether the user has the manager at all.
 pub fn has(user: &User, manager: Manager) -> bool {
     match manager {
         Manager::Bun => user.home.join(".bun/bin/bun").exists(),
@@ -43,7 +41,6 @@ pub fn has(user: &User, manager: Manager) -> bool {
     }
 }
 
-/// What follows the manager's install command.
 fn spec(manager: Manager, tool: &Tool) -> Vec<String> {
     let Tool::Git(tool) = tool else {
         return vec![tool.name().to_owned()];

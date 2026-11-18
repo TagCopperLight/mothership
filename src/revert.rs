@@ -13,51 +13,25 @@ use std::{
     process::Command,
 };
 
-/// How to make the machine match the fleet again, the other way from `edit::Add`.
 pub enum Revert {
     Install(String),
     Uninstall(String),
-    InstallTool {
-        manager: Manager,
-        tool: Tool,
-    },
-    /// The fleet moved it to another source.
-    ReinstallTool {
-        manager: Manager,
-        tool: Tool,
-    },
-    UninstallTool {
-        manager: Manager,
-        name: String,
-    },
+    InstallTool { manager: Manager, tool: Tool },
+    ReinstallTool { manager: Manager, tool: Tool },
+    UninstallTool { manager: Manager, name: String },
     RunInstaller(String),
     WriteEtc(PathBuf),
-    RestoreEtc {
-        path: PathBuf,
-        archive: PathBuf,
-    },
+    RestoreEtc { path: PathBuf, archive: PathBuf },
     DeleteEtc(PathBuf),
-    /// The machine lacks a user the type lists.
     CreateUser,
-    /// The user's chezmoi doesn't read the fleet.
     InitChezmoi,
     Linger(bool),
     Shell(String),
     Join(String),
     Leave(String),
-    Enable {
-        unit: String,
-        user: bool,
-    },
-    Disable {
-        unit: String,
-        user: bool,
-    },
-    /// `edited` when the file changed here since chezmoi last wrote it.
-    ApplyFile {
-        path: PathBuf,
-        edited: bool,
-    },
+    Enable { unit: String, user: bool },
+    Disable { unit: String, user: bool },
+    ApplyFile { path: PathBuf, edited: bool },
 }
 
 impl Revert {
@@ -83,7 +57,6 @@ impl Revert {
     }
 }
 
-/// A revert, with the index of the type's user it belongs to.
 pub type Owned<'a> = (Option<usize>, &'a Revert);
 
 /// The machine goes first, then each user. Packages go first, since the rest may come from
@@ -141,7 +114,6 @@ fn run_machine(fleet: &Fleet, reverts: &[&Revert]) -> Result<()> {
     Ok(())
 }
 
-/// A user the machine lacks has no other reverts until it exists.
 fn run_member(member: &Member, reverts: &[&Revert]) -> Result<()> {
     if reverts.iter().any(|r| matches!(r, Revert::CreateUser)) {
         let mut args = vec!["--create-home"];
@@ -222,7 +194,6 @@ fn run_member(member: &Member, reverts: &[&Revert]) -> Result<()> {
     Ok(())
 }
 
-/// pacman installs what its repos have, and the fleet's AUR helper the rest, as the user.
 fn install_packages(fleet: &Fleet, names: &[&str]) -> Result<()> {
     let install = split_install(
         names,
@@ -247,11 +218,9 @@ fn install_packages(fleet: &Fleet, names: &[&str]) -> Result<()> {
 #[derive(Debug, PartialEq)]
 struct Install<'a> {
     repo: Vec<&'a str>,
-    /// The helper, and what it installs.
     aur: Option<(&'a str, Vec<&'a str>)>,
 }
 
-/// Fails before anything is installed when AUR packages have no helper to install them.
 fn split_install<'a>(
     names: &[&'a str],
     in_repos: &BTreeSet<String>,
@@ -274,7 +243,6 @@ fn split_install<'a>(
     })
 }
 
-/// A package another one needs stays, as a dependency.
 fn uninstall_packages(names: &[&str]) -> Result<()> {
     cmd::root("pacman", &[&["-D", "--asdeps"], names].concat())?;
     let out = Command::new("pacman")

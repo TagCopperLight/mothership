@@ -43,7 +43,6 @@ pub fn bytes(who: As, program: &str, args: &[&str]) -> Result<Vec<u8>> {
     output(who.command(program, args), program, args)
 }
 
-/// The output of a command, which fails when the command fails.
 pub fn output(mut command: Command, program: &str, args: &[&str]) -> Result<Vec<u8>> {
     let out = command
         .stdin(Stdio::null())
@@ -59,7 +58,6 @@ pub fn output(mut command: Command, program: &str, args: &[&str]) -> Result<Vec<
     Ok(out.stdout)
 }
 
-/// Runs a program in this terminal, so it can ask its own questions.
 pub fn run(who: As, program: &str, args: &[&str]) -> Result<()> {
     status(who.command(program, args), program, args)
 }

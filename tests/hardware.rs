@@ -1,7 +1,6 @@
 use super::*;
 use tempfile::TempDir;
 
-/// A machine's /proc and /sys in a temporary folder.
 struct Root(TempDir);
 
 impl Root {

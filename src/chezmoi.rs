@@ -7,7 +7,6 @@ use anyhow::Result;
 use serde::Deserialize;
 use std::{collections::BTreeMap, fs, path::PathBuf, process::Command};
 
-/// What the user's chezmoi manages, by their absolute path. `include` is chezmoi's entry types.
 pub fn managed(user: &User, include: &str) -> Result<Vec<PathBuf>> {
     let args = ["managed", "--include", include, "--path-style", "absolute"];
     Ok(cmd::stdout(As::User(user), "chezmoi", &args)?
@@ -48,8 +47,6 @@ struct Managed {
     source_absolute: PathBuf,
 }
 
-/// The encrypted files chezmoi gives `user` on `type_name`, with their paths in the home, read
-/// from the fleet's rules rather than a machine's.
 pub fn encrypted(fleet: &Fleet, type_name: &str, user: &str) -> Result<Vec<(PathBuf, PathBuf)>> {
     let dir = tempfile::TempDir::new()?;
     // Without encryption set, chezmoi keeps .age in the names.

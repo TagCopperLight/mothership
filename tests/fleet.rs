@@ -109,7 +109,6 @@ fn each_folder_under_users_is_a_user_of_the_type() {
         users.join("tag/recipients.txt")
     );
 
-    // A machine kind in a user's ignore.txt, or a user's in the type's, stops the load.
     fs::write(users.join("dev/ignore.txt"), "package htop\n").unwrap();
     assert!(load(&dir, &[], &[Hardware::CpuIntel]).is_err());
     fs::write(users.join("dev/ignore.txt"), "").unwrap();

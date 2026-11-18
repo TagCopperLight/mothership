@@ -59,7 +59,6 @@ struct Checkout {
 }
 
 impl Checkout {
-    /// A machine with a battery, without dual boot.
     fn new() -> Self {
         let dir = TempDir::new().unwrap();
         let type_dir = dir.path().join("types/workstation");

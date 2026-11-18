@@ -23,11 +23,8 @@ pub struct Package {
     pub arch: String,
     pub description: String,
     pub explicit: bool,
-    /// Absolute paths. Folders end with `/`.
     pub files: Vec<String>,
-    /// Config files pacman keeps on upgrade, with the MD5 of the version it installed.
     pub backups: Vec<(PathBuf, String)>,
-    /// Names without their version constraints, like `sh` from `sh>=5`.
     pub depends: Vec<String>,
     pub provides: Vec<String>,
 }
@@ -68,7 +65,6 @@ impl Db {
 }
 
 impl Db {
-    /// The named packages and all they depend on, as installed here.
     pub fn with_depends(&self, names: &BTreeSet<String>) -> BTreeSet<String> {
         let mut found = BTreeSet::new();
         let mut todo: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -129,7 +125,6 @@ impl Package {
     }
 }
 
-/// The names pacman's sync databases have.
 pub fn in_repos() -> Result<BTreeSet<String>> {
     Ok(cmd::stdout(As::Root, "pacman", &["-Slq"])?
         .lines()
@@ -137,7 +132,6 @@ pub fn in_repos() -> Result<BTreeSet<String>> {
         .collect())
 }
 
-/// The file as the package shipped it, from the archive in pacman's cache.
 pub fn shipped(archive: &Path, path: &Path) -> Result<Vec<u8>> {
     let member = path.strip_prefix("/")?.to_string_lossy().into_owned();
     cmd::bytes(
@@ -147,7 +141,6 @@ pub fn shipped(archive: &Path, path: &Path) -> Result<Vec<u8>> {
     )
 }
 
-/// pacman records config files by their MD5.
 pub fn md5(bytes: &[u8]) -> String {
     Md5::digest(bytes)
         .iter()

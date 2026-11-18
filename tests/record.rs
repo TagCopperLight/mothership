@@ -10,7 +10,6 @@ fn md5(text: &str) -> String {
     pacman::md5(text.as_bytes())
 }
 
-/// A machine whose /etc lives in a temporary folder.
 struct Machine {
     dir: TempDir,
 }
@@ -66,7 +65,6 @@ fn me(record: &mut Record) -> &mut UserRecord {
     record.users.entry("me".into()).or_default()
 }
 
-/// For the user me, whose record the tests fill.
 fn changed(record: &Record, revert: Revert) -> bool {
     record
         .fleet_changed(&revert, Some("me"), &no_packages())
@@ -115,7 +113,6 @@ fn services_groups_and_shell_follow_the_same_rule() {
     assert!(!changed(&before, enable("sshd.service", false)));
     assert!(changed(&before, disable("sshd.service", false)));
     assert!(!changed(&before, disable("mine.service", false)));
-    // User units have a list of their own.
     assert!(!changed(&before, disable("sshd.service", true)));
     assert!(changed(&before, enable("sshd.service", true)));
 
@@ -143,7 +140,6 @@ fn each_user_has_a_record_of_their_own() {
     assert!(!other(Revert::Leave("docker".into())));
     assert!(changed(&before, Revert::Linger(false)));
     assert!(other(Revert::Linger(true)));
-    // Nobody chooses a missing user or a chezmoi that doesn't read the fleet.
     assert!(changed(&before, Revert::CreateUser));
     assert!(changed(&before, Revert::InitChezmoi));
 }
@@ -269,7 +265,6 @@ fn a_symlink_is_hashed_by_its_target() {
     assert_eq!(hash(&machine.path("missing")).unwrap(), None);
 }
 
-/// `user` is the user.toml of the type's user me.
 fn fleet(dir: &Path, system: &str, user: &str, etc: &[&str]) -> Fleet {
     let type_dir = dir.join("types/workstation");
     fs::create_dir_all(type_dir.join("etc")).unwrap();
@@ -315,7 +310,6 @@ linger = true
 
     let after = Record::after(&fleet, &before, machine.dir.path()).unwrap();
     let names = |set: &BTreeSet<String>| set.iter().cloned().collect::<Vec<_>>();
-    // Built packages come from elsewhere, so apply never removes them.
     assert_eq!(names(&after.packages), ["vim", "zip"]);
     assert_eq!(names(&after.services), ["sshd.service"]);
     let me = &after.users["me"];
@@ -365,7 +359,6 @@ fn a_revert_in_review_leaves_the_file_as_apply_wrote_it() {
     assert!(!changed(&edited, Revert::WriteEtc(path.clone())));
     edited.reverted(&Revert::WriteEtc(path.clone())).unwrap();
     assert_eq!(edited.etc.get(&path), Some(&md5("fleet")));
-    // A later fleet change to the file reaches it again.
     assert!(changed(&edited, Revert::WriteEtc(path)));
 }
 
@@ -417,7 +410,6 @@ fn tools_and_installers_follow_the_same_rule() {
     assert!(!changed(&before, install("ripgrep")));
     assert!(changed(&before, uninstall("ripgrep")));
     assert!(!changed(&before, uninstall("bat")));
-    // Each manager has a list of its own.
     let uv = Revert::InstallTool {
         manager: Manager::Uv,
         tool: Tool::Name("ripgrep".into()),

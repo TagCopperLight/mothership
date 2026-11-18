@@ -17,8 +17,6 @@ pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
     Ok(items)
 }
 
-/// The fleet holds no dconf settings yet, so every section set on the machine counts. A user
-/// without a dconf database has none.
 fn dconf(user: &User) -> Result<Vec<Item>> {
     if !user.home.join(".config/dconf/user").exists() {
         return Ok(Vec::new());

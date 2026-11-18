@@ -2,7 +2,6 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Deserializer, de};
 use std::{collections::BTreeSet, fs, io::ErrorKind, path::Path};
 
-/// What mothership can find on a machine. Each device type says what each one brings.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Hardware {
     CpuIntel,
@@ -11,7 +10,6 @@ pub enum Hardware {
     GpuAmd,
     GpuNvidia,
     Battery,
-    /// The fingerprint sensor of the MateBook 14.
     Gxfp5130,
 }
 
@@ -26,7 +24,6 @@ impl Hardware {
         Hardware::Gxfp5130,
     ];
 
-    /// The key under `[hardware]` in system.toml.
     pub fn name(self) -> &'static str {
         match self {
             Hardware::CpuIntel => "cpu-intel",
@@ -50,7 +47,6 @@ impl<'de> Deserialize<'de> for Hardware {
     }
 }
 
-/// `root` is `/` on a real machine.
 pub fn detect(root: &Path) -> Result<BTreeSet<Hardware>> {
     let mut found = BTreeSet::from([cpu(root)?]);
     found.extend(gpus(root)?);
@@ -118,7 +114,6 @@ fn battery(root: &Path) -> Result<bool> {
     Ok(false)
 }
 
-/// A machine without the bus has no folder for it.
 fn entries(dir: &Path) -> Result<Vec<String>> {
     match fs::read_dir(dir) {
         Ok(entries) => entries

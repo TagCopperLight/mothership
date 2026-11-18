@@ -20,7 +20,6 @@ use std::{
 const DAY: u64 = 24 * 60 * 60;
 const LATER: u64 = 7 * DAY;
 
-/// What review writes into the checkout goes back to the admin, even when an answer fails.
 pub fn run() -> Result<()> {
     let report = scan::collect()?;
     let result = ask(&report);
@@ -68,7 +67,6 @@ fn ask(report: &scan::Report) -> Result<()> {
             println!("  {why}, so it can't be added yet");
         }
         let add = item.add.as_ref();
-        // For a secret the scan missed.
         let encrypted = add
             .filter(|_| item.secret == Secret::No)
             .and_then(Add::encrypted);
@@ -162,7 +160,6 @@ fn ask(report: &scan::Report) -> Result<()> {
     Ok(())
 }
 
-/// False when I cancelled or it failed, so the item is asked again.
 fn done(result: Result<bool>) -> bool {
     result.unwrap_or_else(|e| {
         println!("  failed: {e:#}");
@@ -170,7 +167,6 @@ fn done(result: Result<bool>) -> bool {
     })
 }
 
-/// Returns false when I cancel.
 fn revert_one(
     fleet: &Fleet,
     record: &mut Record,
@@ -197,7 +193,6 @@ struct Waiting {
     last: u64,
 }
 
-/// Keyed by `scan::key`.
 struct Later<'a> {
     fleet: &'a Fleet,
     path: PathBuf,

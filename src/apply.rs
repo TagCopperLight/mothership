@@ -9,15 +9,12 @@ use crate::{
 use anyhow::Result;
 use std::path::Path;
 
-/// A new user, or a user's chezmoi set up, brings checks the scan couldn't make before, so apply
-/// goes round again until a round brings none.
 pub fn run() -> Result<()> {
     let mut prompt = Prompt::new();
     while round(&mut prompt)? {}
     Ok(())
 }
 
-/// Whether to go round again.
 fn round(prompt: &mut Prompt) -> Result<bool> {
     let fleet = Fleet::load()?;
     let db = Db::load()?;
@@ -73,7 +70,6 @@ fn round(prompt: &mut Prompt) -> Result<bool> {
         .any(|item| matches!(item.revert, Some(Revert::CreateUser | Revert::InitChezmoi))))
 }
 
-/// A user's item goes by the user's name.
 fn shown(fleet: &Fleet, item: &Item) -> String {
     match item.member {
         None => item.subject.clone(),

@@ -53,7 +53,6 @@ impl Key {
     }
 }
 
-/// How to make the fleet accept what this machine has.
 #[derive(Clone)]
 pub enum Add {
     ListPackage(String),
@@ -62,7 +61,6 @@ pub enum Add {
         key: Key,
         name: String,
     },
-    /// Replaces the tool's entry when it has one.
     DeclareTool {
         manager: Manager,
         tool: Tool,
@@ -74,7 +72,6 @@ pub enum Add {
     UndeclareInstaller(String),
     Shell(String),
     Linger(bool),
-    /// `encrypt` keeps the file encrypted in the fleet, as every secret.
     Track {
         path: PathBuf,
         encrypt: bool,
@@ -96,7 +93,6 @@ pub enum Add {
 }
 
 impl Add {
-    /// The same add, encrypting the file. None for an add that copies no file.
     pub fn encrypted(&self) -> Option<Add> {
         let mut add = self.clone();
         match &mut add {
@@ -149,8 +145,6 @@ impl Add {
         }
     }
 
-    /// Returns false when I cancel along the way. `member` is the user an item of theirs
-    /// belongs to.
     pub fn apply(
         &self,
         fleet: &Fleet,
@@ -257,7 +251,6 @@ fn chezmoi_add(member: &Member, path: &Path, encrypt: bool) -> Result<()> {
     chezmoi::write_for(member.user(), &["add", "--encrypt", &path])
 }
 
-/// A missing file starts empty.
 fn append_line(path: &Path, line: &str) -> Result<()> {
     let mut text = match fs::read_to_string(path) {
         Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
@@ -271,14 +264,11 @@ fn append_line(path: &Path, line: &str) -> Result<()> {
     fs::write(path, text).with_context(|| format!("writing {}", path.display()))
 }
 
-/// Into the user's ignore.txt for an item of theirs, the type's otherwise.
 pub fn ignore(fleet: &Fleet, member: Option<&Member>, line: &str) -> Result<()> {
     let path = member.map_or_else(|| fleet.ignore_path(), Member::ignore_path);
     append_line(&path, line)
 }
 
-/// The scan shows the item as an ordinary one from then on: in the user's not-secret.txt for a
-/// file of theirs, the type's for /etc.
 pub fn not_secret(fleet: &Fleet, member: Option<&Member>, subject: &str) -> Result<()> {
     let path = member.map_or_else(|| fleet.not_secret_path(), Member::not_secret_path);
     append_line(&path, &globset::escape(subject))
@@ -302,8 +292,6 @@ fn package_key(fleet: &Fleet, name: &str) -> Result<Key> {
     Ok(Key::BuiltPackages)
 }
 
-/// The file a key lives in: system.toml, with the tables the machine's blocks add, or the
-/// user's user.toml.
 fn file(fleet: &Fleet, member: Option<&Member>, key: Key) -> Result<(PathBuf, Vec<Vec<String>>)> {
     match (key.level(), member) {
         (Level::Machine, _) => Ok((fleet.system_path(), fleet.tables.clone())),
@@ -312,7 +300,6 @@ fn file(fleet: &Fleet, member: Option<&Member>, key: Key) -> Result<(PathBuf, Ve
     }
 }
 
-/// The name may come from one of the machine's blocks.
 fn undeclare(fleet: &Fleet, member: Option<&Member>, keys: &[Key], name: &str) -> Result<()> {
     let (path, tables) = file(fleet, member, keys[0])?;
     edit_toml(&path, |doc| {
@@ -447,7 +434,6 @@ fn remove(array: &mut Array, name: &str) -> bool {
         Some(next) => prefix(next),
         None => raw(array.trailing()),
     };
-    // Lines above the removed item stay, and its own line's comment goes with it.
     let joined = match next.split_once('\n') {
         None => own,
         Some((_, below)) => {
@@ -476,7 +462,6 @@ fn raw(text: &toml_edit::RawString) -> String {
     text.as_str().unwrap_or_default().to_owned()
 }
 
-/// A tool is either its name or a table with its name and source.
 fn names(entry: &Value, name: &str) -> bool {
     entry.as_str() == Some(name)
         || entry
@@ -491,8 +476,6 @@ fn etc_rel(path: &Path) -> &Path {
         .expect("the /etc scan reports paths under /etc")
 }
 
-/// A mode git can't keep goes into `etc_modes`. A secret replaces the file in clear, and the
-/// other way round.
 fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()> {
     if fleet.etc_elsewhere.contains(rel) {
         bail!(
@@ -571,7 +554,6 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()>
     }
 }
 
-/// A block's file also leaves the block's `etc`.
 fn remove_etc(fleet: &Fleet, rel: &Path) -> Result<()> {
     let dest = fleet.etc_source(rel);
     fs::remove_file(&dest).with_context(|| format!("removing {}", dest.display()))?;

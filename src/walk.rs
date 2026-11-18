@@ -11,8 +11,6 @@ pub struct Walk {
     pub unreadable: Vec<PathBuf>,
 }
 
-/// An unknown folder is reported whole, so one new app gives one line. Folders in `known_dirs`
-/// and folders that hold a known path are opened.
 pub fn unknown(
     root: &Path,
     known: &HashSet<PathBuf>,
@@ -67,8 +65,6 @@ fn visit(
     Ok(())
 }
 
-/// A folder holding only skipped paths and empty folders holds no config. One we can't read
-/// isn't known to be empty.
 fn holds_config(dir: &Path, skip: &dyn Fn(&Path) -> bool) -> bool {
     let Ok(entries) = fs::read_dir(dir) else {
         return true;

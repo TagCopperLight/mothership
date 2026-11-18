@@ -1,5 +1,3 @@
-# A throwaway Arch machine for the scenarios. They run with no network, so everything they
-# install comes from the packages built here.
 FROM archlinux:base AS machine
 RUN pacman -Syu --noconfirm --needed base-devel git sudo chezmoi rust uv dconf \
  && rm -rf /var/cache/pacman/pkg/*

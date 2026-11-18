@@ -17,9 +17,7 @@ pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<I
     let home = &user.home;
     let tools = &member.config.tools;
     let mut known: HashSet<PathBuf> = managed.iter().cloned().collect();
-    // The checkout, when it lives in a home.
     known.insert(fleet.dir.clone());
-    // chezmoi's config and the user's key, and the database the dconf check reads.
     known.insert(home.join(".config/chezmoi"));
     known.insert(secrets::key_path(user));
     known.insert(home.join(".config/dconf"));

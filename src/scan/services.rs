@@ -14,7 +14,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// A preset file in an earlier folder hides the file of the same name in a later one.
 const SYSTEM_PRESETS: [&str; 3] = [
     "/etc/systemd/system-preset",
     "/run/systemd/system-preset",
@@ -67,7 +66,6 @@ pub fn scan_user(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
     )
 }
 
-/// Where a scope's units live and are enabled: the system's, or one user's.
 struct Unit<'a> {
     kind: Kind,
     key: Key,
@@ -149,7 +147,6 @@ fn with_also(declared: &[String], unit_dirs: &[PathBuf]) -> Result<BTreeSet<Stri
     Ok(covered)
 }
 
-/// The first folder that has the unit wins, like systemd's own lookup.
 fn unit_file(unit: &str, unit_dirs: &[PathBuf]) -> Option<PathBuf> {
     unit_dirs.iter().map(|d| d.join(unit)).find(|p| p.exists())
 }
@@ -171,7 +168,6 @@ fn also(unit: &str, unit_dirs: &[PathBuf]) -> Result<Vec<String>> {
     Ok(units)
 }
 
-/// A template's instances count as the template, the way systemd lists them.
 fn enabled(unit_dirs: &[&PathBuf]) -> Result<BTreeSet<String>> {
     let mut units = BTreeSet::new();
     for dir in unit_dirs {
@@ -197,7 +193,6 @@ fn enabled(unit_dirs: &[&PathBuf]) -> Result<BTreeSet<String>> {
     Ok(units)
 }
 
-/// Links to /dev/null mask a unit.
 fn target(link: &Path) -> Option<String> {
     let target = fs::read_link(link).ok()?;
     (target != Path::new("/dev/null"))
@@ -214,7 +209,6 @@ fn is_dependency_dir(path: &Path) -> bool {
         })
 }
 
-/// The first line that matches a unit decides, and a unit no line matches is enabled.
 struct Presets {
     rules: Vec<(bool, globset::GlobMatcher)>,
 }
@@ -263,7 +257,6 @@ impl Presets {
     }
 }
 
-/// What `systemctl enable` creates: the services check reports those, not the file scans.
 pub fn is_enablement(path: &Path) -> bool {
     let in_unit_dir = path.parent().is_some_and(|dir| {
         dir == Path::new("/etc/systemd/system")

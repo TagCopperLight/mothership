@@ -97,7 +97,6 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         .partition(|path| path.ends_with('/'));
     let mut known: HashSet<PathBuf> = owned_files.into_iter().map(PathBuf::from).collect();
     known.extend(declared_paths);
-    // The machine's own type and key.
     known.insert(PathBuf::from(fleet::MACHINE));
     known.insert(PathBuf::from(secrets::ROOT_KEY));
     let known_dirs = owned_dirs

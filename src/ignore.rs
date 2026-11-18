@@ -3,14 +3,12 @@ use anyhow::{Context, Result, anyhow, bail};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use std::{collections::HashMap, fs, io::ErrorKind, path::Path};
 
-/// Which ignore.txt: the type's, for what lives outside the homes, or a user's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Level {
     Machine,
     User,
 }
 
-/// ignore.txt: `<kind> <glob>` lines.
 pub struct Ignore {
     sets: HashMap<Kind, GlobSet>,
 }
@@ -49,7 +47,6 @@ impl Ignore {
     }
 }
 
-/// A list of paths as the scan shows them, one glob per line.
 pub struct Paths(GlobSet);
 
 impl Paths {
@@ -66,8 +63,6 @@ impl Paths {
     }
 }
 
-/// Each line with its place in the file, leaving out blank lines and comments. A missing file
-/// holds none.
 fn lines(path: &Path) -> Result<Vec<(String, String)>> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
@@ -83,7 +78,6 @@ fn lines(path: &Path) -> Result<Vec<(String, String)>> {
         .collect())
 }
 
-/// `*` stays in one folder, `**` crosses folders.
 fn glob(pattern: &str, at: &str) -> Result<Glob> {
     GlobBuilder::new(pattern.trim())
         .literal_separator(true)

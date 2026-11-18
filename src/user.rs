@@ -15,20 +15,17 @@ pub struct User {
 }
 
 impl User {
-    /// Gives a file root wrote to this user.
     pub fn own(&self, path: &Path) -> Result<()> {
         unix::fs::lchown(path, Some(self.uid), Some(self.gid))
             .with_context(|| format!("giving {} to {}", path.display(), self.name))
     }
 
-    /// Like `fs::create_dir_all`, with each new folder owned by the user.
     pub fn create_dir_all(&self, dir: &Path) -> Result<()> {
         let missing: Vec<&Path> = dir.ancestors().take_while(|d| !d.exists()).collect();
         fs::create_dir_all(dir)?;
         missing.into_iter().try_for_each(|d| self.own(d))
     }
 
-    /// `~/rest` in the user's home.
     pub fn expand(&self, path: &str) -> PathBuf {
         match path.strip_prefix("~/") {
             Some(rest) => self.home.join(rest),
@@ -49,7 +46,6 @@ pub fn is_root() -> bool {
     unsafe { libc::geteuid() == 0 }
 }
 
-/// None when the machine has no such user.
 pub fn by_name(name: &str) -> Result<Option<User>> {
     find(|user| user.name == name)
 }
