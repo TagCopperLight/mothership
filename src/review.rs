@@ -1,9 +1,11 @@
 use crate::{
     edit,
-    fleet::tilde,
+    fleet::{Fleet, tilde},
     prompt::Prompt,
+    record::{self, Record},
+    revert::{self, Revert},
     scan::{self, Item},
-    user,
+    user, walk,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -11,7 +13,7 @@ use std::{
     collections::BTreeMap,
     fs,
     io::{ErrorKind, IsTerminal},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -21,6 +23,12 @@ const LATER: u64 = 7 * DAY;
 pub fn run() -> Result<()> {
     let report = scan::collect()?;
     let mut later = Later::load()?;
+    // Only root can change the machine, and only root can save what it changed in the record.
+    let mut record = if user::is_root() {
+        Some(Record::load(Path::new(record::PATH))?)
+    } else {
+        None
+    };
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let due: Vec<&Item> = report
         .shown
@@ -36,7 +44,7 @@ pub fn run() -> Result<()> {
     };
 
     let mut prompt = Prompt::new();
-    let (mut added, mut ignored, mut put_off, mut passed) = (0, 0, 0, 0);
+    let (mut added, mut reverted, mut ignored, mut put_off, mut passed) = (0, 0, 0, 0, 0);
     'items: for (n, item) in due.iter().enumerate() {
         if terminal {
             print!("\x1b[2J\x1b[3J\x1b[H");
@@ -53,30 +61,43 @@ pub fn run() -> Result<()> {
         } else {
             item.add.as_ref()
         };
+        let revert = item.revert.as_ref().filter(|_| record.is_some());
         item.preview.show(terminal);
         if let Some(add) = add {
             println!("  add: {}", add.describe());
         }
-        let choices = if add.is_some() {
-            "(a)dd (i)gnore (l)ater (p)ass (q)uit"
-        } else {
-            "(i)gnore (l)ater (p)ass (q)uit"
-        };
+        if let Some(revert) = revert {
+            println!("  revert: {}", revert.describe());
+        }
+        let mut choices = Vec::new();
+        if add.is_some() {
+            choices.push("(a)dd");
+        }
+        if revert.is_some() {
+            choices.push("(r)evert");
+        }
+        choices.extend(["(i)gnore", "(l)ater", "(p)ass", "(q)uit"]);
         loop {
-            match prompt.ask(&format!("  {choices}?"))?.as_deref() {
+            match prompt.ask(&format!("  {}?", choices.join(" ")))?.as_deref() {
                 None | Some("q") => break 'items,
                 Some("a") if add.is_some() => {
-                    match add.expect("checked").apply(&report.fleet, &mut prompt) {
-                        Ok(true) => {
-                            later.remove(item);
-                            added += 1;
-                        }
-                        Ok(false) => continue,
-                        Err(e) => {
-                            println!("  failed: {e:#}");
-                            continue;
-                        }
+                    let add = add.expect("checked");
+                    if !done(add.apply(&report.fleet, &mut prompt)) {
+                        continue;
                     }
+                    later.remove(item);
+                    added += 1;
+                }
+                Some("r") if revert.is_some() => {
+                    let record = record
+                        .as_mut()
+                        .expect("revert is only offered with a record");
+                    let revert = revert.expect("checked");
+                    if !done(revert_one(&report.fleet, record, revert, &mut prompt)) {
+                        continue;
+                    }
+                    later.remove(item);
+                    reverted += 1;
                 }
                 Some("i") => {
                     edit::ignore(&report.fleet, &scan::ignore_line(item))?;
@@ -98,7 +119,13 @@ pub fn run() -> Result<()> {
     if terminal {
         print!("\x1b[2J\x1b[3J\x1b[H");
     }
-    println!("{added} added, {ignored} ignored, {put_off} put off for later, {passed} passed");
+    println!(
+        "{added} added, {reverted} reverted, {ignored} ignored, {put_off} put off for later, \
+         {passed} passed"
+    );
+    if record.is_none() && due.iter().any(|item| item.revert.is_some()) {
+        println!("Run it with sudo to also revert this machine to the fleet.");
+    }
     if waiting > 0 {
         println!("{waiting} put off before and not due yet");
     }
@@ -109,6 +136,35 @@ pub fn run() -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// False when I cancelled or it failed, so the item is asked again.
+fn done(result: Result<bool>) -> bool {
+    result.unwrap_or_else(|e| {
+        println!("  failed: {e:#}");
+        false
+    })
+}
+
+/// Returns false when I cancel.
+fn revert_one(
+    fleet: &Fleet,
+    record: &mut Record,
+    revert: &Revert,
+    prompt: &mut Prompt,
+) -> Result<bool> {
+    if let Revert::DeleteEtc(path) = revert
+        && path.is_dir()
+    {
+        let count = walk::files(path)?.len();
+        if !prompt.confirm(&format!("  That deletes {count} files. Go on"))? {
+            return Ok(false);
+        }
+    }
+    revert::run(fleet, &[revert])?;
+    record.reverted(revert)?;
+    record.save(Path::new(record::PATH))?;
+    Ok(true)
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -160,9 +216,10 @@ impl Later {
     fn save(mut self, current: &[Item]) -> Result<()> {
         let keys: Vec<String> = current.iter().map(scan::ignore_line).collect();
         self.items.retain(|key, _| keys.contains(key));
-        fs::create_dir_all(self.path.parent().expect("has a parent"))?;
+        user::create_dir_all(self.path.parent().expect("has a parent"))?;
         fs::write(&self.path, serde_json::to_string_pretty(&self.items)?)
-            .with_context(|| format!("writing {}", self.path.display()))
+            .with_context(|| format!("writing {}", self.path.display()))?;
+        user::own(&self.path)
     }
 }
 

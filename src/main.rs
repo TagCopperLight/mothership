@@ -6,6 +6,7 @@ mod ignore;
 mod pacman;
 mod preview;
 mod prompt;
+mod record;
 mod revert;
 mod review;
 mod scan;

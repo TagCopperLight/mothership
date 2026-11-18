@@ -1,0 +1,10 @@
+pkgname=alpha
+pkgver=1
+pkgrel=1
+pkgdesc="A library other packages need"
+arch=(any)
+options=(!debug)
+
+package() {
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/alpha/README" <<< "alpha"
+}

@@ -2,7 +2,7 @@ use crate::{
     cmd,
     fleet::{Fleet, Mode},
     prompt::Prompt,
-    walk,
+    user, walk,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -268,7 +268,7 @@ fn etc_rel(path: &Path) -> &Path {
 fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path) -> Result<()> {
     let dest = fleet.etc_dir().join(rel);
     let dest = dest.as_path();
-    fs::create_dir_all(dest.parent().expect("under etc/"))?;
+    user::create_dir_all(dest.parent().expect("under etc/"))?;
     let meta = fs::symlink_metadata(path)?;
     if meta.is_symlink() {
         match fs::remove_file(dest) {
@@ -276,6 +276,7 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path) -> Result<()> {
             _ => {}
         }
         unix::fs::symlink(fs::read_link(path)?, dest)?;
+        user::own(dest)?;
     } else if meta.is_dir() {
         bail!(
             "{} is a folder: copy the files you want one by one",
@@ -289,6 +290,7 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path) -> Result<()> {
             read => read?,
         };
         fs::write(dest, bytes)?;
+        user::own(dest)?;
         let mode = meta.permissions().mode() & 0o7777;
         let default = Mode::default_for(mode & 0o111 != 0);
         fs::set_permissions(dest, fs::Permissions::from_mode(default.0))?;

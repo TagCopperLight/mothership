@@ -7,7 +7,7 @@ You need Arch, `chezmoi`, `cargo`, `uv` and `dconf`, with the fleet repo as chez
 ## Commands
 
 - `mothership scan` lists every difference between the machine and its type.
-- `mothership review` asks about each difference: **add** it to the fleet, **ignore** it for good, put it off a week (**later**), or skip it this time (**pass**). It edits the fleet checkout and never commits.
+- `mothership review` asks about each difference: **add** it to the fleet, **ignore** it for good, put it off a week (**later**), or skip it this time (**pass**). It edits the fleet checkout and never commits. Under sudo it can also **revert** the machine to the fleet.
 - `sudo mothership apply` makes the machine follow the fleet. It shows its plan and asks first.
 
 Paths that look like secrets get a `[secret]` mark, and review won't add them.
@@ -48,4 +48,4 @@ cargo = ["cargo-nextest", { name = "mytool", git = "https://github.com/me/mytool
 
 ## Development
 
-`./ci.sh` runs what CI runs: rustfmt, clippy and the tests.
+`./ci.sh` runs what CI runs: rustfmt, clippy and the tests. `e2e/run.py` runs the scenarios in `e2e/scenarios/` on a throwaway Arch container, as a user would, and needs Docker.

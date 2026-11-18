@@ -307,3 +307,43 @@ fn the_record_survives_a_save_and_starts_empty() {
     assert_eq!(loaded.packages, saved.packages);
     assert_eq!(loaded.etc, saved.etc);
 }
+
+#[test]
+fn a_revert_in_review_leaves_the_file_as_apply_wrote_it() {
+    let machine = Machine::new();
+    let path = machine.write("a.conf", "fleet");
+    let mut edited = record(|r| {
+        r.etc.insert(path.clone(), md5("older"));
+    });
+    assert!(!changed(&edited, Revert::WriteEtc(path.clone())));
+    edited.reverted(&Revert::WriteEtc(path.clone())).unwrap();
+    assert_eq!(edited.etc.get(&path), Some(&md5("fleet")));
+    // A later fleet change to the file reaches it again.
+    assert!(changed(&edited, Revert::WriteEtc(path)));
+}
+
+#[test]
+fn a_file_review_deleted_or_restored_leaves_the_record() {
+    let machine = Machine::new();
+    let (a, b, c) = (
+        machine.path("unit.d/a.conf"),
+        machine.path("unit.d/b.conf"),
+        machine.path("c.conf"),
+    );
+    let mut before = record(|r| {
+        for path in [&a, &b, &c] {
+            r.etc.insert(path.clone(), md5("x"));
+        }
+    });
+    before
+        .reverted(&Revert::DeleteEtc(machine.path("unit.d")))
+        .unwrap();
+    assert_eq!(before.etc.keys().collect::<Vec<_>>(), [&c]);
+    before
+        .reverted(&Revert::RestoreEtc {
+            path: c,
+            archive: PathBuf::new(),
+        })
+        .unwrap();
+    assert!(before.etc.is_empty());
+}

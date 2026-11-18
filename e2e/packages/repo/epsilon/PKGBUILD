@@ -1,0 +1,11 @@
+pkgname=epsilon
+pkgver=1
+pkgrel=1
+pkgdesc="An app that needs alpha"
+arch=(any)
+options=(!debug)
+depends=(alpha)
+
+package() {
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/epsilon/README" <<< "epsilon"
+}

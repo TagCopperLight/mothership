@@ -1,0 +1,2 @@
+# What every machine needs
+base base-devel git sudo chezmoi rust uv dconf

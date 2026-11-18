@@ -1,0 +1,20 @@
+# What `mothership scan` never reports on the test machine.
+
+# Caches and state
+home ~/.cache
+home ~/.local/state
+home ~/.cargo
+home ~/.bash_logout
+
+# Files the container and pacman generate
+etc /etc/{hosts,resolv.conf}
+etc /etc/{.pwd.lock,hostname,ld.so.cache,locale.conf,os-release}
+etc /etc/{passwd,group,shadow,gshadow,subuid,subgid}-
+etc /etc/ca-certificates/extracted/*
+etc /etc/ssl/certs/**
+etc /etc/pacman.d/gnupg
+etc /etc/{audisp,audit/plugins.d,audit/rules.d}
+
+# Readable only by root, and left as their packages shipped them
+etc /etc/{credstore,credstore.encrypted,cryptsetup-keys.d,ssl/private}
+etc /etc/{crypttab,default/useradd,libaudit.conf,sudoers}

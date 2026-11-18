@@ -1,0 +1,8 @@
+#!/bin/bash
+# Stands in for yay: `fake-aur -S --needed <names>` installs the packages built into /aur.
+set -euo pipefail
+files=()
+for arg in "$@"; do
+    [[ $arg == -* ]] || files+=(/aur/"$arg"-1-1-any.pkg.tar.zst)
+done
+sudo pacman -U --noconfirm --needed "${files[@]}"

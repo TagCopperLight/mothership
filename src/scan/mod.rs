@@ -239,9 +239,13 @@ pub fn print(items: &[&Item], detail: impl Fn(&Item) -> String) {
     }
 }
 
-/// A guess, so the report can warn before anything gets committed in clear.
+/// A guess, so the report can warn before anything gets committed in clear. Review never shows
+/// a secret's contents, since its screen can end up in logs and transcripts.
 fn looks_secret(mut item: Item, path: &Path) -> Item {
     item.secret = guess_secret(path);
+    if item.secret {
+        item.preview = Preview::None;
+    }
     item
 }
 
@@ -263,3 +267,7 @@ fn guess_secret(path: &Path) -> bool {
     fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() < 64 * 1024)
         && fs::read(path).is_ok_and(|bytes| bytes.windows(11).any(|w| w == b"PRIVATE KEY"))
 }
+
+#[cfg(test)]
+#[path = "../../tests/scan.rs"]
+mod tests;

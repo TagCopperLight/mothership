@@ -1,0 +1,10 @@
+pkgname=zeta
+pkgver=1
+pkgrel=1
+pkgdesc="An app only the AUR has"
+arch=(any)
+options=(!debug)
+
+package() {
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/zeta/README" <<< "zeta"
+}
