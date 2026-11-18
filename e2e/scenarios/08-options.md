@@ -8,11 +8,11 @@ $ echo y | sudo mothership apply &>/dev/null
 $ printf 'type = "workstation"\noptions = ["extra"]\n' |
 > sudo tee /etc/mothership/machine.toml >/dev/null
 $ echo y | sudo mothership apply
-Packages (1)
-  beta  install
-
-/etc (1)
-  /etc/option.conf  write the fleet's version
+Coming from the fleet · 2
+  Packages
+    + beta              install
+  Files
+    + /etc/option.conf  create
 
 Apply [y/N]? y
 ...
@@ -25,11 +25,11 @@ Turning it off again removes both.
 ```console
 $ printf 'type = "workstation"\n' | sudo tee /etc/mothership/machine.toml >/dev/null
 $ echo y | sudo mothership apply
-Packages (1)
-  beta  uninstall
-
-/etc (1)
-  /etc/option.conf  delete
+Coming from the fleet · 2
+  Packages
+    - beta              uninstall  An app the fleet never lists
+  Files
+    - /etc/option.conf  delete
 
 Apply [y/N]? y
 ...

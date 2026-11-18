@@ -33,14 +33,15 @@ $ mkdir -p ~/.ssh ~/.config/app &&
 > echo "TOKEN-SECRET" > ~/.config/app/token
 $ echo "psk=WIFI-SECRET" | sudo install -m 600 /dev/stdin /etc/wifi.conf
 $ sudo mothership scan
-/etc (1)
-  /etc/wifi.conf  from no package  [secret]
+Changed on this machine · 3
+  Files
+    + /etc/wifi.conf  new  secret
+    + ~/.config/app   new  1 file
+    + ~/.ssh          new  secret  1 file
 
-Untracked config in ~, me (2)
-  ~/.config/app  not in the fleet
-  ~/.ssh         not in the fleet  [secret]
-
-3 differences, \d+ ignored (re)
+3 to review     sudo mothership review
+The fleet has 2 changes not committed  git -C /var/lib/mothership/fleet status
+\d+ ignored (re)
 ```
 
 Review adds the marked ones encrypted, and I answer **secret** for the token. The fleet holds no
@@ -48,25 +49,30 @@ secret in clear.
 
 ```console
 $ printf 'a\ns\ny\na\ny\n' | sudo mothership review
-[1/3] /etc
-/etc/wifi.conf  from no package  [secret]
-  add: copy it into the type's etc/, encrypted
-  revert: delete
-  (a)dd (n)ot secret (r)evert (i)gnore (l)ater (p)ass (q)uit? a
-[2/3] Untracked config in ~, me
-~/.config/app  not in the fleet
-    folder with 1 files
-    token
-  add: add it to chezmoi
-  (a)dd (s)ecret (i)gnore (l)ater (p)ass (q)uit? s
-  That adds 1 files. Go on [y/N]? y
-[3/3] Untracked config in ~, me
-~/.ssh  not in the fleet  [secret]
-  add: add it to chezmoi, encrypted
-  (a)dd (n)ot secret (i)gnore (l)ater (p)ass (q)uit? a
-  That adds 1 files. Go on [y/N]? y
-3 added, 0 reverted, 0 ignored, 0 put off for later, 0 passed
-Check the changes with `git -C /var/lib/mothership/fleet diff`, then commit.
+[1/3] Files
+    + /etc/wifi.conf  new  secret
+  a  add         copy it into the type's etc/, encrypted
+  n  not secret  list it in not-secret.txt, and add it later in clear
+  r  revert      delete
+  i ignore · l later · p pass · q quit
+  › a
+[2/3] Files
+    + ~/.config/app  new  1 file
+      token
+  a  add         add it to chezmoi
+  s  secret      add it to chezmoi, encrypted
+  i ignore · l later · p pass · q quit
+  › s
+  That adds 1 file. Go on [y/N]? y
+[3/3] Files
+    + ~/.ssh  new  secret  1 file
+  a  add         add it to chezmoi, encrypted
+  n  not secret  list it in not-secret.txt, and add it later in clear
+  i ignore · l later · p pass · q quit
+  › a
+  That adds 1 file. Go on [y/N]? y
+3 added
+Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
 $ cd /var/lib/mothership/fleet && find dot_ssh dot_config types/workstation/etc/wifi.conf.age | sort
 dot_config
 dot_config/app
@@ -89,20 +95,24 @@ so, and the scan shows the folder as an ordinary one from then on.
 $ mkdir -p ~/.config/editor && echo "theme = dark" > ~/.config/editor/settings &&
 > chmod 600 ~/.config/editor/settings
 $ printf 'n\n' | sudo mothership review
-[1/1] Untracked config in ~, me
-~/.config/editor  not in the fleet  [secret]
-  add: add it to chezmoi, encrypted
-  (a)dd (n)ot secret (i)gnore (l)ater (p)ass (q)uit? n
-0 added, 0 reverted, 0 ignored, 0 put off for later, 0 passed
+[1/1] Files
+    + ~/.config/editor  new  secret  1 file
+  a  add         add it to chezmoi, encrypted
+  n  not secret  list it in not-secret.txt, and add it later in clear
+  i ignore · l later · p pass · q quit
+  › n
 1 marked not secret, which the next review shows as ordinary files
-Check the changes with `git -C /var/lib/mothership/fleet diff`, then commit.
+Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
 $ cat /var/lib/mothership/fleet/types/workstation/users/me/not-secret.txt
 ~/.config/editor
 $ sudo mothership scan
-Untracked config in ~, me (1)
-  ~/.config/editor  not in the fleet
+Changed on this machine · 1
+  Files
+    + ~/.config/editor  new  1 file
 
-1 differences, \d+ ignored (re)
+1 to review     sudo mothership review
+The fleet has 1 change not committed  git -C /var/lib/mothership/fleet status
+\d+ ignored (re)
 $ rm -r ~/.config/editor
 ```
 
@@ -112,13 +122,15 @@ change it.
 ```console
 $ echo "machine example.com login me" > ~/.netrc && chmod 600 ~/.netrc && chezmoi add ~/.netrc
 $ printf 'a\n' | sudo mothership review
-[1/1] Files chezmoi tracks, me
-~/.netrc  in the fleet in clear  [secret]
-  add: copy this machine's version into chezmoi, encrypted
-  (a)dd (n)ot secret (i)gnore (l)ater (p)ass (q)uit? a
+[1/1] Files
+    ! ~/.netrc  secret in clear  git history keeps it: change it once encrypted
+  a  add         copy this machine's version into chezmoi, encrypted
+  n  not secret  list it in not-secret.txt, and add it later in clear
+  i ignore · l later · p pass · q quit
+  › a
   git history keeps the version in clear, so change it.
-1 added, 0 reverted, 0 ignored, 0 put off for later, 0 passed
-Check the changes with `git -C /var/lib/mothership/fleet diff`, then commit.
+1 added
+Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
 $ ls /var/lib/mothership/fleet | grep netrc
 encrypted_private_dot_netrc.age
 ```
@@ -128,23 +140,27 @@ Apply and revert write secrets decrypted, for their owner only. Review never sho
 ```console
 $ sudo rm /etc/wifi.conf && echo "MINE" > ~/.ssh/id_test
 $ echo y | sudo mothership apply
-/etc (1)
-  /etc/wifi.conf  write the fleet's version
+Coming from the fleet · 1
+  Files
+    + /etc/wifi.conf  create  secret
 
 Left alone, since they were edited on this machine:
-  me: ~/.ssh/id_test
+  Files
+    ~ ~/.ssh/id_test  edited  secret
 
+1 changed on this machine, for sudo mothership review
 Apply [y/N]? y
 $ sudo stat -c '%a %U' /etc/wifi.conf && sudo cat /etc/wifi.conf
 600 root
 psk=WIFI-SECRET
 $ printf 'r\n' | sudo mothership review
-[1/1] Files chezmoi tracks, me
-~/.ssh/id_test  edited here  [secret]
-  add: copy this machine's version into chezmoi, encrypted
-  revert: write the fleet's version
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? r
-0 added, 1 reverted, 0 ignored, 0 put off for later, 0 passed
+[1/1] Files
+    ~ ~/.ssh/id_test  edited  secret
+  a  add         copy this machine's version into chezmoi, encrypted
+  r  revert      write the fleet's version
+  i ignore · l later · p pass · q quit
+  › r
+1 reverted
 $ stat -c '%a' ~/.ssh/id_test && cat ~/.ssh/id_test
 600
 SSH-SECRET
@@ -157,22 +173,25 @@ secrets alone.
 $ sudo mv /etc/mothership/key.txt /root/laptop.txt && mv ~/.config/mothership/key.txt ~/laptop.txt
 $ sudo mothership key >/dev/null
 $ sudo mothership scan
-/etc (1)
-  /etc/wifi.conf  this machine's key can't open it  [secret]
+Needs attention · 4
+  Files
+    ? /etc/wifi.conf       locked  this machine's key isn't on its list
+    ? ~/.config/app/token  locked  this machine's key isn't on its list
+    ? ~/.netrc             locked  this machine's key isn't on its list
+    ? ~/.ssh/id_test       locked  this machine's key isn't on its list
 
-Files chezmoi tracks, me (3)
-  ~/.config/app/token  this machine's key can't open it  [secret]
-  ~/.netrc             this machine's key can't open it  [secret]
-  ~/.ssh/id_test       this machine's key can't open it  [secret]
-
-4 differences, \d+ ignored (re)
+4 to review     sudo mothership review
+The fleet has 2 changes not committed  git -C /var/lib/mothership/fleet status
+\d+ ignored (re)
 $ echo y | sudo mothership apply
-Left alone, since this machine's keys can't open them:
-  /etc/wifi.conf
-  me: ~/.config/app/token
-  me: ~/.netrc
-  me: ~/.ssh/id_test
+Left alone, since this machine's key can't open them:
+  Files
+    ? /etc/wifi.conf       locked  this machine's key isn't on its list
+    ? ~/.config/app/token  locked  this machine's key isn't on its list
+    ? ~/.netrc             locked  this machine's key isn't on its list
+    ? ~/.ssh/id_test       locked  this machine's key isn't on its list
 
+4 changed on this machine, for sudo mothership review
 Nothing to apply.
 ```
 
@@ -198,7 +217,9 @@ Error: workstation/me already holds desktop
 $ sudo mv /etc/mothership/key.txt /root/laptop.txt && sudo mv /root/desktop.txt /etc/mothership/key.txt
 $ mv ~/.config/mothership/key.txt ~/laptop.txt && mv ~/desktop.txt ~/.config/mothership/key.txt
 $ sudo mothership scan
-0 differences, \d+ ignored (re)
+✓ Nothing differs from the workstation type
+The fleet has 9 changes not committed  git -C /var/lib/mothership/fleet status
+\d+ ignored (re)
 $ sudo mothership retire workstation/me laptop
 laptop is gone from workstation/me. Commit and push the fleet.
 git history keeps the versions laptop opens, so change these:

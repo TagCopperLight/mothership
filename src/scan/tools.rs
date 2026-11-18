@@ -1,4 +1,4 @@
-use super::{Item, Kind, join};
+use super::{Change, Item, Kind, join};
 use crate::{
     cmd::{self, As},
     edit::{Add, Key},
@@ -32,9 +32,11 @@ pub fn scan(member: &Member) -> Result<Vec<Item>> {
             .map(|installer| {
                 Item::new(
                     Kind::Tool,
+                    Change::Removed,
                     installer.name.as_str(),
-                    "declared, not installed",
+                    "not installed",
                 )
+                .noting(format!("{} is missing", installer.creates))
                 .with(Add::UndeclareInstaller(installer.name.clone()))
                 .reverting(Revert::RunInstaller(installer.name.clone()))
             }),
@@ -82,25 +84,19 @@ fn compare(tools: &Tools, manager: Manager, installed: &BTreeMap<String, Source>
             Source::Other(text) => (text.clone(), None),
         };
         let item = match tools.find(manager, name) {
-            None => Item::new(
-                Kind::Tool,
-                subject(name),
-                format!("installed from {machine}, not declared"),
-            )
-            .reverting(Revert::UninstallTool {
-                manager,
-                name: name.clone(),
-            }),
+            None => Item::new(Kind::Tool, Change::Added, subject(name), "installed")
+                .noting(format!("from {machine}"))
+                .reverting(Revert::UninstallTool {
+                    manager,
+                    name: name.clone(),
+                }),
             Some(tool) if *source == Source::Declarable(tool.clone()) => continue,
-            Some(tool) => Item::new(
-                Kind::Tool,
-                subject(name),
-                format!("installed from {machine}, declared from {}", from(tool)),
-            )
-            .reverting(Revert::ReinstallTool {
-                manager,
-                tool: tool.clone(),
-            }),
+            Some(tool) => Item::new(Kind::Tool, Change::Edited, subject(name), "other source")
+                .noting(format!("from {machine}, the fleet says {}", from(tool)))
+                .reverting(Revert::ReinstallTool {
+                    manager,
+                    tool: tool.clone(),
+                }),
         };
         items.push(match add {
             Some(add) => item.with(add),
@@ -112,15 +108,20 @@ fn compare(tools: &Tools, manager: Manager, installed: &BTreeMap<String, Source>
             .iter()
             .filter(|tool| !installed.contains_key(tool.name()))
             .map(|tool| {
-                Item::new(Kind::Tool, subject(tool.name()), "declared, not installed")
-                    .with(Add::Undeclare {
-                        key: Key::Tools(manager),
-                        name: tool.name().to_owned(),
-                    })
-                    .reverting(Revert::InstallTool {
-                        manager,
-                        tool: tool.clone(),
-                    })
+                Item::new(
+                    Kind::Tool,
+                    Change::Removed,
+                    subject(tool.name()),
+                    "uninstalled",
+                )
+                .with(Add::Undeclare {
+                    key: Key::Tools(manager),
+                    name: tool.name().to_owned(),
+                })
+                .reverting(Revert::InstallTool {
+                    manager,
+                    tool: tool.clone(),
+                })
             }),
     );
     items

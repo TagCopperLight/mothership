@@ -1,4 +1,4 @@
-use super::{Item, Kind, Ships};
+use super::{Change, Item, Kind, Ships};
 use crate::{
     edit::{Add, Key},
     fleet::{Fleet, Member},
@@ -96,7 +96,7 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
         .iter()
         .filter(|unit| !presets.enables(unit) && !covered.contains(*unit))
     {
-        let item = Item::new(kind, unit, "enabled, not declared")
+        let item = Item::new(kind, Change::Added, unit, "enabled")
             .reverting(Revert::Disable {
                 unit: unit.clone(),
                 user: kind == Kind::UserService,
@@ -119,7 +119,7 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
             .iter()
             .filter(|unit| !enabled.contains(*unit))
             .map(|unit| {
-                Item::new(kind, unit, "declared, not enabled")
+                Item::new(kind, Change::Removed, unit, "disabled")
                     .with(Add::Undeclare {
                         key,
                         name: unit.clone(),

@@ -1,4 +1,4 @@
-use super::{Item, Kind, Ships};
+use super::{Change, Item, Kind, Ships};
 use crate::{
     edit::{Add, Key},
     fleet::Member,
@@ -21,13 +21,14 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
     let mut items = Vec::new();
     let lingers = Path::new(LINGER).join(&user.name).exists();
     if lingers != config.linger {
-        let detail = if lingers {
-            "on, not declared"
+        let (change, detail) = if lingers {
+            (Change::Added, "turned on")
         } else {
-            "declared, off"
+            (Change::Removed, "turned off")
         };
         items.push(
-            Item::new(Kind::Account, "linger", detail)
+            Item::new(Kind::Account, change, "linger", detail)
+                .noting("user services run without a login")
                 .with(Add::Linger(lingers))
                 .reverting(Revert::Linger(config.linger)),
         );
@@ -37,8 +38,9 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
     {
         let item = Item::new(
             Kind::Account,
+            Change::Edited,
             format!("shell {}", user.shell),
-            format!("the fleet says {shell}"),
+            format!("changed from {shell}"),
         )
         .reverting(Revert::Shell(shell.clone()));
         items.push(if ships.path(Path::new(&user.shell), None)? {
@@ -67,7 +69,7 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
             .iter()
             .filter(|g| !declared.iter().any(|d| d == *g))
             .map(|g| {
-                let item = Item::new(Kind::Account, format!("group {g}"), "member, not declared")
+                let item = Item::new(Kind::Account, Change::Added, format!("group {g}"), "joined")
                     .reverting(Revert::Leave(g.to_string()));
                 if created.contains(*g) {
                     item.with(Add::Declare {
@@ -84,16 +86,12 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
             .iter()
             .filter(|d| !actual.contains(&d.as_str()))
             .map(|g| {
-                Item::new(
-                    Kind::Account,
-                    format!("group {g}"),
-                    "declared, not a member",
-                )
-                .with(Add::Undeclare {
-                    key: Key::Groups,
-                    name: g.clone(),
-                })
-                .reverting(Revert::Join(g.clone()))
+                Item::new(Kind::Account, Change::Removed, format!("group {g}"), "left")
+                    .with(Add::Undeclare {
+                        key: Key::Groups,
+                        name: g.clone(),
+                    })
+                    .reverting(Revert::Join(g.clone()))
             }),
     );
     Ok(items)

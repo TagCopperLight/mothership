@@ -12,30 +12,32 @@ Error: mothership reads every user's home: run it with sudo
 [exit 1]
 ```
 
-The scan finds what the fleet wants and the machine lacks.
+The scan finds what the fleet wants and the machine lacks. Nothing was ever applied here, so it
+all comes from the fleet, and apply brings it.
 
 ```console
 $ sudo mothership scan
-Packages (2)
-  alpha  listed, not installed
-  gamma  listed, not installed
+Coming from the fleet · 3
+  Packages
+    + alpha            install
+    + gamma            install
+  Files
+    + /etc/fleet.conf  create
 
-/etc (1)
-  /etc/fleet.conf  missing, the fleet has it
-
-3 differences, \d+ ignored (re)
+3 to apply      sudo mothership apply
+\d+ ignored (re)
 ```
 
 Apply shows its plan and asks first.
 
 ```console
 $ echo n | sudo mothership apply
-Packages (2)
-  alpha  install
-  gamma  install
-
-/etc (1)
-  /etc/fleet.conf  write the fleet's version
+Coming from the fleet · 3
+  Packages
+    + alpha            install
+    + gamma            install
+  Files
+    + /etc/fleet.conf  create
 
 Apply [y/N]? n
 $ pacman -Qq alpha
@@ -47,12 +49,12 @@ Once I say yes, it installs the packages and writes the file.
 
 ```console
 $ echo y | sudo mothership apply
-Packages (2)
-  alpha  install
-  gamma  install
-
-/etc (1)
-  /etc/fleet.conf  write the fleet's version
+Coming from the fleet · 3
+  Packages
+    + alpha            install
+    + gamma            install
+  Files
+    + /etc/fleet.conf  create
 
 Apply [y/N]? y
 ...
@@ -71,7 +73,8 @@ The machine now matches its fleet, so a second apply has nothing to do.
 
 ```console
 $ sudo mothership scan
-0 differences, \d+ ignored (re)
+✓ Nothing differs from the workstation type
+\d+ ignored (re)
 $ echo y | sudo mothership apply
 Nothing to apply.
 ```

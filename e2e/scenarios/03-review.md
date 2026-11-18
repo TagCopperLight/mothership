@@ -21,66 +21,78 @@ $ mkdir -p ~/.config/newapp ~/.config/tokens &&
 $ sudo usermod -aG audio me
 ```
 
-Review goes through the machine first, then my own part. I add `beta` to the fleet's packages,
-put `gamma` off, pass on the files I edited, add the new app's config and ignore the tokens.
-Review never shows a secret's contents. Then I quit.
+Review goes through what changed on the machine, grouped like scan shows it. I add `beta` to
+the fleet's packages, put `gamma` off, add the new app's config, ignore the tokens and pass on
+the rest. Review never shows a secret's contents. Then I quit.
 
 ```console
-$ printf 'a\nl\np\np\np\na\ny\ni\nq\n' | sudo mothership review
+$ printf 'a\nl\np\na\ny\ni\np\np\nq\n' | sudo mothership review
 [1/8] Packages
-beta  installed, not listed
-    An app the fleet never lists
-  add: add it to `packages` in system.toml
-  revert: uninstall
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? a
+    + beta  installed  An app the fleet never lists
+  a  add         add it to `packages` in system.toml
+  r  revert      uninstall
+  i ignore · l later · p pass · q quit
+  › a
 [2/8] Packages
-gamma  listed, not installed
-  add: remove it from system.toml
-  revert: install
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? l
-[3/8] /etc
-/etc/fleet.conf  differs from the fleet
-    @@ -1 +1,2 @@
-     managed = yes
-    +mine = yes
-  add: copy it into the type's etc/
-  revert: write the fleet's version
-  (a)dd (s)ecret (r)evert (i)gnore (l)ater (p)ass (q)uit? p
-[4/8] /etc
-/etc/profile.d/proxy.sh  from no package
-    export HTTP_PROXY=http://proxy:3128
-  add: copy it into the type's etc/
-  revert: delete
-  (a)dd (s)ecret (r)evert (i)gnore (l)ater (p)ass (q)uit? p
-[5/8] Files chezmoi tracks, me
-~/.gitconfig  edited here
-    @@ -1,3 +1,5 @@
-     [user]
-         name = Me
-         email = me@example.com
-    +[core]
-    +    editor = vim
-  add: copy this machine's version into chezmoi
-  revert: write the fleet's version
-  (a)dd (s)ecret (r)evert (i)gnore (l)ater (p)ass (q)uit? p
-[6/8] Untracked config in ~, me
-~/.config/newapp  not in the fleet
-    folder with 1 files
-    settings.ini
-  add: add it to chezmoi
-  (a)dd (s)ecret (i)gnore (l)ater (p)ass (q)uit? a
-  That adds 1 files. Go on [y/N]? y
-[7/8] Untracked config in ~, me
-~/.config/tokens  not in the fleet  [secret]
-  add: add it to chezmoi, encrypted
-  (a)dd (n)ot secret (i)gnore (l)ater (p)ass (q)uit? i
-[8/8] Account, me
-group audio  member, not declared
-  add: add it to `groups` in user.toml
-  revert: leave
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? q
-2 added, 0 reverted, 1 ignored, 1 put off for later, 3 passed
-Check the changes with `git -C /var/lib/mothership/fleet diff`, then commit.
+    - gamma  uninstalled
+  a  add         remove it from system.toml
+  r  revert      install
+  i ignore · l later · p pass · q quit
+  › l
+[3/8] Files
+    + /etc/profile.d/proxy.sh  new
+      export HTTP_PROXY=http://proxy:3128
+  a  add         copy it into the type's etc/
+  s  secret      copy it into the type's etc/, encrypted
+  r  revert      delete
+  i ignore · l later · p pass · q quit
+  › p
+[4/8] Files
+    + ~/.config/newapp  new  1 file
+      settings.ini
+  a  add         add it to chezmoi
+  s  secret      add it to chezmoi, encrypted
+  i ignore · l later · p pass · q quit
+  › a
+  That adds 1 file. Go on [y/N]? y
+[5/8] Files
+    + ~/.config/tokens  new  secret  1 file
+  a  add         add it to chezmoi, encrypted
+  n  not secret  list it in not-secret.txt, and add it later in clear
+  i ignore · l later · p pass · q quit
+  › i
+[6/8] Files
+    ~ /etc/fleet.conf  edited
+      @@ -1 +1,2 @@
+       managed = yes
+      +mine = yes
+  a  add         copy it into the type's etc/
+  s  secret      copy it into the type's etc/, encrypted
+  r  revert      write the fleet's version
+  i ignore · l later · p pass · q quit
+  › p
+[7/8] Files
+    ~ ~/.gitconfig  edited
+      @@ -1,3 +1,5 @@
+       [user]
+           name = Me
+           email = me@example.com
+      +[core]
+      +    editor = vim
+  a  add         copy this machine's version into chezmoi
+  s  secret      copy this machine's version into chezmoi, encrypted
+  r  revert      write the fleet's version
+  i ignore · l later · p pass · q quit
+  › p
+[8/8] Account
+    + group audio  joined
+  a  add         add it to `groups` in user.toml
+  r  revert      leave
+  i ignore · l later · p pass · q quit
+  › q
+2 added, 1 ignored, 1 put off for later, 3 passed
+1 not seen yet, for next time
+Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
 ```
 
 Review edited the fleet checkout and committed nothing. What it wrote is mine, since I own the
@@ -111,46 +123,53 @@ $ cd /var/lib/mothership/fleet &&
 > git add -A && git commit -qm "Keep beta and newapp, raise the level"
 ```
 
-`gamma` waits for next week. I revert my edits to `/etc/fleet.conf` and `~/.gitconfig`, add the
-proxy script to the fleet, and leave the `audio` group.
+`gamma` waits for next week. I add the proxy script to the fleet, revert my edits to
+`/etc/fleet.conf` and `~/.gitconfig`, and leave the `audio` group.
 
 ```console
-$ printf 'r\na\nr\nr\n' | sudo mothership review
-[1/4] /etc
-/etc/fleet.conf  differs from the fleet
-    @@ -1,2 +1,2 @@
-     managed = yes
-    -level = 2
-    +mine = yes
-  add: copy it into the type's etc/
-  revert: write the fleet's version
-  (a)dd (s)ecret (r)evert (i)gnore (l)ater (p)ass (q)uit? r
-[2/4] /etc
-/etc/profile.d/proxy.sh  from no package
-    export HTTP_PROXY=http://proxy:3128
-  add: copy it into the type's etc/
-  revert: delete
-  (a)dd (s)ecret (r)evert (i)gnore (l)ater (p)ass (q)uit? a
-[3/4] Files chezmoi tracks, me
-~/.gitconfig  edited here
-    @@ -1,3 +1,5 @@
-     [user]
-         name = Me
-         email = me@example.com
-    +[core]
-    +    editor = vim
-  add: copy this machine's version into chezmoi
-  revert: write the fleet's version
-  (a)dd (s)ecret (r)evert (i)gnore (l)ater (p)ass (q)uit? r
-[4/4] Account, me
-group audio  member, not declared
-  add: add it to `groups` in user.toml
-  revert: leave
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? r
+$ printf 'a\nr\nr\nr\n' | sudo mothership review
+[1/4] Files
+    + /etc/profile.d/proxy.sh  new
+      export HTTP_PROXY=http://proxy:3128
+  a  add         copy it into the type's etc/
+  s  secret      copy it into the type's etc/, encrypted
+  r  revert      delete
+  i ignore · l later · p pass · q quit
+  › a
+[2/4] Files
+    ~ /etc/fleet.conf  edited
+      @@ -1,2 +1,2 @@
+       managed = yes
+      -level = 2
+      +mine = yes
+  a  add         copy it into the type's etc/
+  s  secret      copy it into the type's etc/, encrypted
+  r  revert      write the fleet's version
+  i ignore · l later · p pass · q quit
+  › r
+[3/4] Files
+    ~ ~/.gitconfig  edited
+      @@ -1,3 +1,5 @@
+       [user]
+           name = Me
+           email = me@example.com
+      +[core]
+      +    editor = vim
+  a  add         copy this machine's version into chezmoi
+  s  secret      copy this machine's version into chezmoi, encrypted
+  r  revert      write the fleet's version
+  i ignore · l later · p pass · q quit
+  › r
+[4/4] Account
+    + group audio  joined
+  a  add         add it to `groups` in user.toml
+  r  revert      leave
+  i ignore · l later · p pass · q quit
+  › r
 Removing user me from group audio
-1 added, 3 reverted, 0 ignored, 0 put off for later, 0 passed
+1 added, 3 reverted
 1 put off before and not due yet
-Check the changes with `git -C /var/lib/mothership/fleet diff`, then commit.
+Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
 ```
 
 The machine is back to the fleet, and the files review added are mine. The script
@@ -184,10 +203,11 @@ $ cd /var/lib/mothership/fleet &&
 > printf 'managed = yes\nlevel = 3\n' > types/workstation/etc/fleet.conf &&
 > git add -A && git commit -qm "Add the proxy, raise the level"
 $ echo y | sudo mothership apply
-/etc (1)
-  /etc/fleet.conf  write the fleet's version
+Coming from the fleet · 1
+  Files
+    ~ /etc/fleet.conf  update
 
-1 other differences wait for `mothership review`.
+1 changed on this machine, for sudo mothership review
 Apply [y/N]? y
 $ cat /etc/fleet.conf
 managed = yes

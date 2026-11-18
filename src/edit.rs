@@ -5,7 +5,7 @@ use crate::{
     ignore::Level,
     pacman,
     prompt::Prompt,
-    secrets, walk,
+    secrets, style, walk,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -80,6 +80,7 @@ pub enum Add {
         path: PathBuf,
         encrypt: bool,
     },
+    Forget(PathBuf),
     CopyEtc {
         path: PathBuf,
         encrypt: bool,
@@ -140,6 +141,7 @@ impl Add {
             Add::CopyEtc { encrypt, .. } => {
                 format!("copy it into the type's etc/{}", encrypted_suffix(*encrypt))
             }
+            Add::Forget(_) => "remove it from chezmoi".into(),
             Add::RemoveEtc(_) => "remove it from the type's etc/".into(),
             Add::Pref { .. } => "write this machine's value into user.js".into(),
         }
@@ -190,7 +192,8 @@ impl Add {
             Add::Track { path, encrypt } => {
                 if path.is_dir() {
                     let count = walk::files(path)?.len();
-                    if !prompt.confirm(&format!("  That adds {count} files. Go on"))? {
+                    let files = style::count(count, "file");
+                    if !prompt.confirm(&format!("  That adds {files}. Go on"))? {
                         return Ok(false);
                     }
                 }
@@ -214,6 +217,10 @@ impl Add {
                     }
                 }
             }
+            Add::Forget(path) => chezmoi::write_for(
+                member()?.user(),
+                &["forget", "--force", &path.to_string_lossy()],
+            )?,
             Add::CopyEtc { path, encrypt } => copy_etc(fleet, etc_rel(path), path, *encrypt)?,
             Add::RemoveEtc(path) => remove_etc(fleet, etc_rel(path))?,
             Add::Pref {

@@ -1,4 +1,4 @@
-use super::{Item, Kind, services};
+use super::{Change, Item, Kind, services};
 use crate::{
     edit::Add,
     fleet::{Fleet, Manager, Member},
@@ -53,7 +53,7 @@ pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<I
         .unknown
         .iter()
         .map(|path| {
-            Item::new(Kind::Home, user.tilde(path), "not in the fleet")
+            Item::new(Kind::Home, Change::Added, user.tilde(path), "new")
                 .with(Add::Track {
                     path: path.clone(),
                     encrypt: false,
@@ -62,10 +62,13 @@ pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<I
                 .guessing(path)
         })
         .collect();
-    items.extend(
-        walk.unreadable
-            .iter()
-            .map(|path| Item::new(Kind::Home, user.tilde(path), "unreadable")),
-    );
+    items.extend(walk.unreadable.iter().map(|path| {
+        Item::new(
+            Kind::Home,
+            Change::Unreadable,
+            user.tilde(path),
+            "unreadable",
+        )
+    }));
     Ok(items)
 }

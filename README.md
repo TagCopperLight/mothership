@@ -18,9 +18,15 @@ A type can have several users. Each gets their own part of the type, their own s
 
 `sudo mothership apply` brings in the changes made to the fleet since the last apply: it installs or removes packages and tools, writes the files and turns services on or off. It shows you the plan first and waits for your approval. Apply never undoes a change you made on the machine itself. It lists the files you edited, leaves them alone, and leaves your other changes to review.
 
-`sudo mothership scan` lists everything that differs between the machine and its type: a package you installed by hand, a file you edited in `/etc`, a new folder in `~/.config`, a service you enabled.
+`sudo mothership scan` lists everything that differs between the machine and its type, in three parts:
 
-`sudo mothership review` goes through those differences one at a time and asks what to do with each:
+- **Changed on this machine**: what you did by hand, such as a package you installed, a file you edited in `/etc`, a new folder in `~/.config` or a service you enabled. Review sorts these.
+- **Coming from the fleet**: what changed in the fleet since the last apply. Apply brings these.
+- **Needs attention**: a secret the fleet holds in clear, or a file scan can't read.
+
+Each line starts with what happened to the machine: `+` it gained something, `~` something was edited, `-` something is gone. On the fleet's side, the sign shows what apply will do. Scan also says when the fleet has changes nobody committed or pushed yet.
+
+`sudo mothership review` goes through the changes made on this machine one at a time and asks what to do with each. In a terminal, one key answers, with no Enter:
 
 | Answer | What happens |
 |---|---|

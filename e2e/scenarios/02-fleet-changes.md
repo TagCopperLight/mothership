@@ -35,22 +35,22 @@ and removed by hand wait for review.
 
 ```console
 $ echo y | sudo mothership apply
-Packages (3)
-  alpha    uninstall
-  epsilon  install
-  zeta     install
-
-/etc (1)
-  /etc/new.conf  write the fleet's version
-
-Account, me (2)
-  shell /bin/bash  make /usr/bin/bash the login shell
-  group video      join
+Coming from the fleet · 6
+  Packages
+    - alpha            uninstall                           A library other packages need
+    + epsilon          install
+    + zeta             install
+  Files
+    + /etc/new.conf    create
+  Account
+    ~ shell /bin/bash  make /usr/bin/bash the login shell
+    + group video      join
 
 Left alone, since they were edited on this machine:
-  /etc/fleet.conf
+  Files
+    ~ /etc/fleet.conf  edited
 
-2 other differences wait for `mothership review`.
+3 changed on this machine, for sudo mothership review
 Apply [y/N]? y
 ...
 ```
@@ -86,8 +86,9 @@ A second apply keeps leaving my changes alone.
 ```console
 $ echo y | sudo mothership apply
 Left alone, since they were edited on this machine:
-  /etc/fleet.conf
+  Files
+    ~ /etc/fleet.conf  edited
 
-2 other differences wait for `mothership review`.
+3 changed on this machine, for sudo mothership review
 Nothing to apply.
 ```

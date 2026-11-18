@@ -289,18 +289,13 @@ fn tracking_a_folder_stops_unless_confirmed() {
 #[test]
 fn appends_ignore_lines_the_ignore_list_then_matches() {
     let checkout = Checkout::new();
-    let item = crate::scan::Item {
-        kind: crate::scan::Kind::Home,
-        member: Some(0),
-        subject: "~/.config/odd [name]*".into(),
-        detail: String::new(),
-        secret: crate::scan::Secret::No,
-        add: None,
-        no_add: None,
-        revert: None,
-        preview: crate::preview::Preview::None,
-        guess: None,
-    };
+    let mut item = crate::scan::Item::new(
+        crate::scan::Kind::Home,
+        crate::scan::Change::Added,
+        "~/.config/odd [name]*",
+        "new",
+    );
+    item.member = Some(0);
     let me = &checkout.fleet.members[0];
     ignore(&checkout.fleet, Some(me), &crate::scan::ignore_line(&item)).unwrap();
     let ignore = Ignore::load(&me.ignore_path(), Level::User).unwrap();

@@ -1,8 +1,9 @@
 use crate::{
-    cmd,
+    cmd::{self, As},
     hardware::{self, Hardware},
     ignore::{Ignore, Level, Paths},
     secrets::{self, Keys},
+    style,
     user::{self, User},
     walk,
 };
@@ -404,6 +405,29 @@ impl Fleet {
 
     pub fn packages(&self) -> BTreeSet<String> {
         self.system.packages.iter().cloned().collect()
+    }
+
+    /// What review wrote and nobody committed or pushed yet, which no other machine has.
+    pub fn unsaved(&self) -> Result<Vec<String>> {
+        let dir = self.dir.to_string_lossy();
+        let args = ["-C", &dir, "status", "--porcelain=v2", "--branch"];
+        let status = cmd::stdout(As::User(self.admin()), "git", &args)?;
+        let changed = status.lines().filter(|l| !l.starts_with('#')).count();
+        let ahead: usize = status
+            .lines()
+            .find_map(|l| l.strip_prefix("# branch.ab +"))
+            .and_then(|ab| ab.split_whitespace().next())
+            .map(str::parse)
+            .transpose()?
+            .unwrap_or(0);
+        let mut unsaved = Vec::new();
+        if changed > 0 {
+            unsaved.push(format!("{} not committed", style::count(changed, "change")));
+        }
+        if ahead > 0 {
+            unsaved.push(format!("{} not pushed", style::count(ahead, "commit")));
+        }
+        Ok(unsaved)
     }
 
     /// Root writes into the checkout, and the admin commits it, so whatever root wrote goes back

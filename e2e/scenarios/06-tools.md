@@ -23,9 +23,10 @@ Apply installs both, in my home and as me.
 
 ```console
 $ echo y | sudo mothership apply
-Tools outside pacman, me (2)
-  cargo hello  install
-  greeter      run its installer
+Coming from the fleet · 2
+  Tools
+    + cargo hello  install
+    + greeter      run its installer  ~/.greeter is missing
 
 Apply [y/N]? y
 ...
@@ -43,8 +44,9 @@ $ cd /var/lib/mothership/fleet &&
 > sed -i 's|"file:///crates/hello" }|"file:///crates/hello", branch = "loud" }|' types/workstation/users/me/user.toml &&
 > git commit -qam "Follow the loud branch"
 $ echo y | sudo mothership apply
-Tools outside pacman, me (1)
-  cargo hello  reinstall from the fleet's source
+Coming from the fleet · 1
+  Tools
+    ~ cargo hello  reinstall from the fleet's source  from file:///crates/hello, the fleet says file:///crates/hello, branch loud
 
 Apply [y/N]? y
 ...
@@ -59,16 +61,18 @@ doesn't run the installer again: the missing folder waits for review.
 $ cd /var/lib/mothership/fleet && sed -i '/^\[tools\]/,$d' types/workstation/users/me/user.toml &&
 > git commit -qam "Drop hello" && rm -r ~/.greeter
 $ echo y | sudo mothership apply
-Tools outside pacman, me (1)
-  cargo hello  uninstall
+Coming from the fleet · 1
+  Tools
+    - cargo hello  uninstall  from file:///crates/hello, branch loud
 
-1 other differences wait for `mothership review`.
+1 changed on this machine, for sudo mothership review
 Apply [y/N]? y
 ...
 $ cargo install --list
-$ sudo mothership scan | head -2
-Tools outside pacman, me (1)
-  greeter  declared, not installed
+$ sudo mothership scan | head -3
+Changed on this machine · 1
+  Tools
+    - greeter  not installed  ~/.greeter is missing
 ```
 
 I install `hello` again by hand, from its `loud` branch. Review offers to declare it with that
@@ -77,20 +81,23 @@ source, and once added, the scan finds nothing left to say about it.
 ```console
 $ cargo install -q --git file:///crates/hello --branch loud hello &>/dev/null
 $ printf 'a\nq\n' | sudo mothership review
-\[1/\d+\] Tools outside pacman, me (re)
-cargo hello  installed from file:///crates/hello, branch loud, not declared
-  add: write this machine's source into `tools.cargo` in user.toml
-  revert: uninstall
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? a
-\[2/\d+\] Tools outside pacman, me (re)
-greeter  declared, not installed
-  add: remove its installer from user.toml
-  revert: run its installer
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? q
+[1/2] Tools
+    + cargo hello  installed  from file:///crates/hello, branch loud
+  a  add         write this machine's source into `tools.cargo` in user.toml
+  r  revert      uninstall
+  i ignore · l later · p pass · q quit
+  › a
+[2/2] Tools
+    - greeter  not installed  ~/.greeter is missing
+  a  add         remove its installer from user.toml
+  r  revert      run its installer
+  i ignore · l later · p pass · q quit
+  › q
 ...
 $ grep hello /var/lib/mothership/fleet/types/workstation/users/me/user.toml
 cargo = [{ name = "hello", git = "file:///crates/hello", branch = "loud" }]
-$ sudo mothership scan | head -2
-Tools outside pacman, me (1)
-  greeter  declared, not installed
+$ sudo mothership scan | head -3
+Changed on this machine · 1
+  Tools
+    - greeter  not installed  ~/.greeter is missing
 ```

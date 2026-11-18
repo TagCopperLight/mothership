@@ -10,10 +10,11 @@ $ cd /var/lib/mothership/fleet &&
 > printf 'b = 1\n' > types/workstation/etc/kept.conf &&
 > git add -A && git commit -qm "Configure gamma, add two files"
 $ echo y | sudo mothership apply
-/etc (3)
-  /etc/extra.conf  write the fleet's version
-  /etc/gamma.conf  write the fleet's version
-  /etc/kept.conf   write the fleet's version
+Coming from the fleet · 3
+  Files
+    ~ /etc/gamma.conf  update
+    + /etc/extra.conf  create
+    + /etc/kept.conf   create
 
 Apply [y/N]? y
 $ cat /etc/gamma.conf
@@ -35,14 +36,14 @@ the extra file. It keeps the file I edited, for review.
 
 ```console
 $ echo y | sudo mothership apply
-Packages (1)
-  alpha  uninstall
+Coming from the fleet · 3
+  Packages
+    - alpha            uninstall                      A library other packages need
+  Files
+    - /etc/extra.conf  delete
+    ~ /etc/gamma.conf  restore the package's version  owned by gamma
 
-/etc (2)
-  /etc/gamma.conf  restore the package's version
-  /etc/extra.conf  delete
-
-1 other differences wait for `mothership review`.
+1 changed on this machine, for sudo mothership review
 Apply [y/N]? y
 ...
 $ pacman -Qq alpha

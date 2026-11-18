@@ -4,7 +4,8 @@ use crate::{
     prompt::Prompt,
     record::{self, Record},
     revert::{self, Owned, Revert},
-    scan::{self, Checks, Item, Secret},
+    scan::{self, Checks, Secret, Section},
+    style::Style,
 };
 use anyhow::Result;
 use std::path::Path;
@@ -20,14 +21,13 @@ fn round(prompt: &mut Prompt) -> Result<bool> {
     let db = Db::load()?;
     let record_path = Path::new(record::PATH);
     let record = Record::load(record_path)?;
-    let mut items = scan::checks(&fleet, &db, Checks::Apply)?;
-    items.sort_by_key(|item| (item.member, item.kind));
+    let mut items = scan::checks(&fleet, &db, &record, Checks::Apply)?;
+    scan::sort(&fleet, &mut items);
 
     let (mut todo, mut edited, mut locked, mut left) = (Vec::new(), Vec::new(), Vec::new(), 0);
     for item in &items {
-        let user = item.member.map(|i| fleet.members[i].name.as_str());
         match &item.revert {
-            Some(revert) if record.fleet_changed(revert, user, &db)? => todo.push(item),
+            _ if item.section == Section::Fleet => todo.push(item),
             _ if scan::ignored(&fleet, item) => {}
             _ if item.secret == Secret::Locked => locked.push(item),
             Some(Revert::WriteEtc(_) | Revert::ApplyFile { .. }) => edited.push(item),
@@ -35,23 +35,23 @@ fn round(prompt: &mut Prompt) -> Result<bool> {
         }
     }
 
-    scan::print(&fleet, &todo, |item| {
-        item.revert.as_ref().expect("filtered above").describe()
-    });
+    let style = Style::stdout();
+    scan::print_section(&fleet, Section::Fleet, &todo, style, &|_| None);
     for (items, why) in [
         (&edited, "they were edited on this machine"),
-        (&locked, "this machine's keys can't open them"),
+        (&locked, "this machine's key can't open them"),
     ] {
         if !items.is_empty() {
             println!("Left alone, since {why}:");
-            for item in items {
-                println!("  {}", shown(&fleet, item));
-            }
-            println!();
+            scan::print_groups(&fleet, items, style, &|_| None);
         }
     }
-    if left > 0 {
-        println!("{left} other differences wait for `mothership review`.");
+    let review = left + edited.len() + locked.len();
+    if review > 0 {
+        println!(
+            "{review} changed on this machine, for {}",
+            style.command("review")
+        );
     }
     if todo.is_empty() {
         println!("Nothing to apply.");
@@ -68,11 +68,4 @@ fn round(prompt: &mut Prompt) -> Result<bool> {
     Ok(todo
         .iter()
         .any(|item| matches!(item.revert, Some(Revert::CreateUser | Revert::InitChezmoi))))
-}
-
-fn shown(fleet: &Fleet, item: &Item) -> String {
-    match item.member {
-        None => item.subject.clone(),
-        Some(i) => format!("{}: {}", fleet.members[i].name, item.subject),
-    }
 }

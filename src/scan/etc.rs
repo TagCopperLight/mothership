@@ -1,4 +1,4 @@
-use super::{Item, Kind, Secret, services};
+use super::{Change, Item, Kind, Secret, services};
 use crate::{
     edit::Add,
     fleet::{self, Fleet},
@@ -42,11 +42,12 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
             continue;
         }
         let source = fleet.etc_source(rel);
-        let item = |detail| Item::new(Kind::Etc, path.display().to_string(), detail);
+        let item =
+            |change, detail| Item::new(Kind::Etc, change, path.display().to_string(), detail);
         let item = match compare(fleet, rel, &path)? {
             Compare::Same => None,
             Compare::Differs => Some(
-                item("differs from the fleet")
+                item(Change::Edited, "edited")
                     .with(Add::CopyEtc {
                         path: path.clone(),
                         encrypt: false,
@@ -58,12 +59,12 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                     }),
             ),
             Compare::Missing => Some(
-                item("missing, the fleet has it")
+                item(Change::Removed, "deleted")
                     .with(Add::RemoveEtc(path.clone()))
                     .reverting(Revert::WriteEtc(path.clone()))
                     .showing(Preview::Contents(source)),
             ),
-            Compare::Unreadable => Some(item("unreadable without root")),
+            Compare::Unreadable => Some(item(Change::Unreadable, "unreadable")),
         };
         items.extend(item.map(|item| {
             if secret {
@@ -110,7 +111,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         &services::is_enablement,
     )?;
     items.extend(walk.unknown.iter().map(|path| {
-        Item::new(Kind::Etc, path.display().to_string(), "from no package")
+        Item::new(Kind::Etc, Change::Added, path.display().to_string(), "new")
             .with(Add::CopyEtc {
                 path: path.clone(),
                 encrypt: false,
@@ -122,8 +123,9 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     items.extend(walk.unreadable.iter().map(|path| {
         Item::new(
             Kind::Etc,
+            Change::Unreadable,
             path.display().to_string(),
-            "unreadable without root",
+            "unreadable",
         )
     }));
     Ok(items)
@@ -154,18 +156,19 @@ fn compare(fleet: &Fleet, rel: &Path, path: &Path) -> Result<Compare> {
 }
 
 fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
-    let item = |detail| Item::new(Kind::Etc, path.display().to_string(), detail);
+    let item = |change, detail| Item::new(Kind::Etc, change, path.display().to_string(), detail);
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         // pacman leaves a config file the package no longer ships, or that I deleted.
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
         Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-            return Ok(Some(item("unreadable without root")));
+            return Ok(Some(item(Change::Unreadable, "unreadable")));
         }
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
     Ok((pacman::md5(&bytes) != md5).then(|| {
-        let item = item("changed from the package's version")
+        let item = item(Change::Edited, "edited")
+            .noting(format!("owned by {}", package.name))
             .with(Add::CopyEtc {
                 path: path.to_path_buf(),
                 encrypt: false,

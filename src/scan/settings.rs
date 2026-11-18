@@ -1,9 +1,10 @@
-use super::{Item, Kind};
+use super::{Change, Item, Kind};
 use crate::{
     cmd::{self, As},
     edit::Add,
     fleet::Member,
     preview::Preview,
+    style,
     user::User,
 };
 use anyhow::Result;
@@ -36,10 +37,13 @@ fn dconf(user: &User) -> Result<Vec<Item>> {
     Ok(sections
         .into_iter()
         .map(|(section, keys)| {
-            Item::new(Kind::Dconf, &section, format!("{keys} keys set")).showing(Preview::Dconf {
-                section,
-                user: user.clone(),
-            })
+            let keys = style::count(keys, "key");
+            Item::new(Kind::Dconf, Change::Added, &section, "set")
+                .noting(keys)
+                .showing(Preview::Dconf {
+                    section,
+                    user: user.clone(),
+                })
         })
         .collect())
 }
@@ -52,23 +56,23 @@ fn prefs(user_js: &PathBuf) -> Result<Vec<Item>> {
     Ok(actual
         .iter()
         .filter_map(|(key, value)| {
-            let detail = match wanted.get(key) {
-                None => "set in the app, not in user.js",
-                Some(w) if w != value => "changed in the app, user.js resets it",
+            let (change, detail, note) = match wanted.get(key) {
+                None => (Change::Added, "set in the app", format!("= {value}")),
+                Some(w) if w != value => (
+                    Change::Edited,
+                    "changed in the app",
+                    format!("{w} → {value}, user.js resets it"),
+                ),
                 Some(_) => return None,
             };
-            let mut shown = format!("the app: {value}");
-            if let Some(w) = wanted.get(key) {
-                shown += &format!("\nuser.js: {w}");
-            }
             Some(
-                Item::new(Kind::Pref, key, detail)
+                Item::new(Kind::Pref, change, key, detail)
+                    .noting(note)
                     .with(Add::Pref {
                         user_js: user_js.clone(),
                         key: key.clone(),
                         value: value.clone(),
-                    })
-                    .showing(Preview::Text(shown)),
+                    }),
             )
         })
         .collect())

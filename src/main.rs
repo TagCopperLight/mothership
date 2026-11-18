@@ -5,6 +5,7 @@ mod edit;
 mod fleet;
 mod hardware;
 mod ignore;
+mod later;
 mod pacman;
 mod preview;
 mod prompt;
@@ -13,6 +14,7 @@ mod revert;
 mod review;
 mod scan;
 mod secrets;
+mod style;
 mod tools;
 mod user;
 mod walk;
@@ -24,6 +26,8 @@ const USAGE: &str = "usage: mothership scan | review | apply | key \
                      | trust <type>/<root|user> <name> <key> | retire <type>/<root|user> <name>";
 
 fn main() -> anyhow::Result<()> {
+    // Rust ignores SIGPIPE, so `mothership scan | head` would panic on the closed pipe.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let args: Vec<String> = std::env::args().skip(1).collect();
     if !matches!(
         args.first().map(String::as_str),

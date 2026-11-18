@@ -1,6 +1,7 @@
 use crate::{
     cmd::{self, As},
     pacman,
+    style::{self, strip_ansi},
     user::User,
     walk,
 };
@@ -14,10 +15,11 @@ use std::{
 
 const LINES: usize = 16;
 const SNIFF: usize = 8 * 1024;
+/// Under the item's subject, past its sign.
+const INDENT: &str = "      ";
 
 pub enum Preview {
     None,
-    Text(String),
     Contents(PathBuf),
     Diff { old: PathBuf, new: PathBuf },
     Original { path: PathBuf, archive: PathBuf },
@@ -32,19 +34,18 @@ impl Preview {
             Ok(lines) => lines,
             Err(e) => vec![format!("can't show it: {e:#}")],
         };
-        let width = terminal_size::terminal_size().map_or(100, |(w, _)| usize::from(w.0));
+        let width = style::width().saturating_sub(INDENT.len());
         for line in lines.iter().take(LINES) {
-            println!("    {}", clip(line, width.saturating_sub(4)));
+            println!("{INDENT}{}", style::clip(line, width));
         }
         if lines.len() > LINES {
-            println!("    … {} more lines", lines.len() - LINES);
+            println!("{INDENT}… {} more lines", lines.len() - LINES);
         }
     }
 
     fn render(&self, color: bool) -> Result<Vec<String>> {
         Ok(match self {
             Preview::None => Vec::new(),
-            Preview::Text(text) => text.lines().map(str::to_owned).collect(),
             Preview::Contents(path) => contents(path)?,
             Preview::Diff { old, new } => diff(old, new, color)?,
             Preview::Original { path, archive } => original(path, archive, color)?,
@@ -93,9 +94,7 @@ fn contents(path: &Path) -> Result<Vec<String>> {
     }
     if meta.is_dir() {
         let files = walk::files(path)?;
-        let mut out = vec![format!("folder with {} files", files.len())];
-        out.extend(files.iter().map(|f| f.display().to_string()));
-        return Ok(out);
+        return Ok(files.iter().map(|f| f.display().to_string()).collect());
     }
     let mut head = Vec::new();
     fs::File::open(path)?
@@ -143,41 +142,4 @@ fn original(path: &Path, archive: &Path, color: bool) -> Result<Vec<String>> {
 fn hunks(diff: &str) -> Vec<String> {
     let start = diff.lines().position(|l| strip_ansi(l).starts_with("@@"));
     lines(diff).into_iter().skip(start.unwrap_or(0)).collect()
-}
-
-fn strip_ansi(line: &str) -> String {
-    let mut out = String::new();
-    let mut chars = line.chars();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            chars.by_ref().find(|c| c.is_ascii_alphabetic());
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-fn clip(line: &str, width: usize) -> String {
-    let mut out = String::new();
-    let mut visible = 0;
-    let mut chars = line.chars();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            out.push(c);
-            for c in chars.by_ref() {
-                out.push(c);
-                if c.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else if visible < width {
-            out.push(c);
-            visible += 1;
-        }
-    }
-    if line.contains('\x1b') {
-        out.push_str("\x1b[0m");
-    }
-    out
 }

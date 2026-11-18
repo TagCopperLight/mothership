@@ -24,35 +24,36 @@ doesn't offer to add them.
 
 ```console
 $ printf 'a\na\np\np\np\nq\n' | sudo mothership review
-\[1/\d+\] Packages (re)
-omega  installed, not listed
-    An app built on this machine
-  add: add it to `packages` in system.toml
-  revert: uninstall
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? a
+[1/5] Packages
+    + omega  installed  An app built on this machine
+  a  add         add it to `packages` in system.toml
+  r  revert      uninstall
+  i ignore · l later · p pass · q quit
+  › a
   It is in neither pacman's repos nor the AUR: fake-aur -Si omega failed: -> No AUR package found for omega
   It goes into `built_packages`.
-\[2/\d+\] Packages (re)
-zeta  installed, not listed
-    An app only the AUR has
-  add: add it to `packages` in system.toml
-  revert: uninstall
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? a
-\[3/\d+\] /etc (re)
-/etc/systemd/system/mine.service  from no package
+[2/5] Packages
+    + zeta  installed  An app only the AUR has
+  a  add         add it to `packages` in system.toml
+  r  revert      uninstall
+  i ignore · l later · p pass · q quit
+  › a
+[3/5] Files
+    + /etc/systemd/system/mine.service  new
 ...
-  (a)dd (s)ecret (r)evert (i)gnore (l)ater (p)ass (q)uit? p
-\[4/\d+\] System services (re)
-mine.service  enabled, not declared
-...
-  its unit file comes from outside the fleet, so it can't be added yet
-  revert: disable and stop
-  (r)evert (i)gnore (l)ater (p)ass (q)uit? p
-\[5/\d+\] Account, me (re)
-group mine  member, not declared
-  no package the fleet lists creates this group, so it can't be added yet
-  revert: leave
-  (r)evert (i)gnore (l)ater (p)ass (q)uit? p
+  › p
+[4/5] Services
+    + mine.service  enabled
+  r  revert      disable and stop
+  can't add: its unit file comes from outside the fleet
+  i ignore · l later · p pass · q quit
+  › p
+[5/5] Account
+    + group mine  joined
+  r  revert      leave
+  can't add: no package the fleet lists creates this group
+  i ignore · l later · p pass · q quit
+  › p
 ...
 ```
 

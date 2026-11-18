@@ -1,4 +1,4 @@
-use super::{Item, Kind, Secret, join, looks_secret};
+use super::{Change, Item, Kind, Secret, join, looks_secret};
 use crate::{
     chezmoi,
     cmd::{self, As},
@@ -59,17 +59,18 @@ pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
             continue;
         }
         let edited = here != b' ';
-        let detail = if edited {
-            "edited here"
-        } else {
-            "changed in the repo, not applied"
-        };
+        let (change, detail) = chezmoi_status(if edited { here } else { target }, edited);
         let path = user.home.join(&line[3..]);
-        let item = Item::new(Kind::File, format!("~/{}", &line[3..]), detail)
-            .with(Add::Update {
+        let add = if edited && change == Change::Removed {
+            Add::Forget(path.clone())
+        } else {
+            Add::Update {
                 path: path.clone(),
                 encrypt: false,
-            })
+            }
+        };
+        let item = Item::new(Kind::File, change, format!("~/{}", &line[3..]), detail)
+            .with(add)
             .reverting(Revert::ApplyFile {
                 path: path.clone(),
                 edited,
@@ -104,7 +105,14 @@ pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
         };
         let item = looks_secret(
             &member.not_secret,
-            Item::new(Kind::File, user.tilde(path), "in the fleet in clear").with(add),
+            Item::new(
+                Kind::File,
+                Change::InClear,
+                user.tilde(path),
+                "secret in clear",
+            )
+            .noting("git history keeps it: change it once encrypted")
+            .with(add),
             path,
         );
         if item.secret == Secret::Guessed {
@@ -112,4 +120,17 @@ pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
         }
     }
     Ok(items)
+}
+
+/// chezmoi's first column says what changed here since it last wrote the file, the second what
+/// its apply would do. A file chezmoi would add is one the machine lacks.
+fn chezmoi_status(code: u8, edited: bool) -> (Change, &'static str) {
+    match (code, edited) {
+        (b'A', true) => (Change::Added, "created"),
+        (b'D', true) => (Change::Removed, "deleted"),
+        (_, true) => (Change::Edited, "edited"),
+        (b'A', false) => (Change::Removed, "missing"),
+        (b'D', false) => (Change::Added, "dropped by the fleet"),
+        (_, false) => (Change::Edited, "changed in the fleet"),
+    }
 }

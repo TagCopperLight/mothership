@@ -13,13 +13,13 @@ Apply fails before it installs anything, and changes nothing else.
 
 ```console
 $ echo y | sudo mothership apply
-Packages (3)
-  alpha  install
-  gamma  install
-  zeta   install
-
-/etc (1)
-  /etc/fleet.conf  write the fleet's version
+Coming from the fleet · 4
+  Packages
+    + alpha            install
+    + gamma            install
+    + zeta             install
+  Files
+    + /etc/fleet.conf  create
 
 Apply [y/N]? y
 Error: zeta not in pacman's repos, and system.toml sets no aur_helper
