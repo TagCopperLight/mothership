@@ -1,9 +1,13 @@
 # Secrets go into the fleet encrypted
 
-The machine follows its fleet. It makes its key and trusts it, as the first machine of its type.
+The machine follows its fleet. Trusting a key needs this machine's own key, since chezmoi reads
+it even to encrypt. It makes its key and trusts it, as the first machine of its type.
 
 ```console
 $ echo y | sudo mothership apply &>/dev/null
+$ mothership trust recovery age1hk92umraas504tfkt4mdn5w6xqqp49wedf3pk4za9jvr53x7y5uqf4vwl6
+Error: this machine has no key yet: make it with `mothership key` first
+[exit 1]
 $ mothership key | sed 's/age1[a-z0-9]*/<key>/'
 <key>
 Add it from a machine that opens the secrets, or here for the first one:

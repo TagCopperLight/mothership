@@ -196,6 +196,10 @@ pub fn retire(name: &str) -> Result<()> {
 /// paths on the machine. Nothing changes when one fails.
 fn rewrite(fleet: &Fleet, list: &[Recipient]) -> Result<Vec<String>> {
     let secrets = fleet.secrets();
+    // chezmoi reads the key even to encrypt, which only needs the recipients.
+    if public_key(&secrets.key)?.is_none() {
+        bail!("this machine has no key yet: make it with `mothership key` first");
+    }
     let all = type_secrets(fleet)?;
     if !all.is_empty() {
         secrets.check_open()?;
