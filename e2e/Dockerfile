@@ -34,7 +34,10 @@ RUN useradd -m -G wheel -s /bin/bash me \
  && install -m 440 /fleet/types/workstation/etc/sudoers.d/wheel /etc/sudoers.d/wheel \
  && mkdir -p /home/me/.local/share /home/me/.config/chezmoi \
  && cp -r /fleet /home/me/.local/share/chezmoi && rm -rf /fleet \
- && printf '[data]\nprofile = "workstation"\n' > /home/me/.config/chezmoi/chezmoi.toml \
+ && printf '%s\n' 'encryption = "age"' '[age]' 'useBuiltin = true' \
+      'identity = "~/.config/mothership/key.txt"' \
+      'recipientsFile = "~/.local/share/chezmoi/types/workstation/recipients.txt"' \
+      '[data]' 'profile = "workstation"' > /home/me/.config/chezmoi/chezmoi.toml \
  && printf 'type = "workstation"\n' | install -D -m 644 /dev/stdin /etc/mothership/machine.toml \
  && chown -R me:me /home/me \
  && runuser -u me -- git -C /home/me/.local/share/chezmoi init -q -b main \

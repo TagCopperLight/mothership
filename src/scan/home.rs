@@ -17,8 +17,9 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
     let tools = &fleet.system.tools;
     let mut known: HashSet<PathBuf> = managed.iter().cloned().collect();
     known.insert(fleet.dir.clone());
-    // The machine's own type, and the database the dconf check reads.
+    // The machine's own type and key, and the database the dconf check reads.
     known.insert(home.join(".config/chezmoi"));
+    known.insert(fleet.secrets().key.clone());
     known.insert(home.join(".config/dconf"));
     known.extend(
         fleet
@@ -54,7 +55,10 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
         .map(|path| {
             looks_secret(
                 Item::new(Kind::Home, fleet::tilde(path), "not in the fleet")
-                    .with(Add::Track(path.clone()))
+                    .with(Add::Track {
+                        path: path.clone(),
+                        encrypt: false,
+                    })
                     .showing(Preview::Contents(path.clone())),
                 path,
             )

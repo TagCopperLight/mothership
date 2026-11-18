@@ -2,6 +2,7 @@ use crate::{
     cmd,
     hardware::{self, Hardware},
     ignore::Ignore,
+    secrets::{self, Secrets},
     user, walk,
 };
 use anyhow::{Context, Result, bail};
@@ -20,11 +21,15 @@ pub struct Fleet {
     pub system: System,
     /// Where `system` comes from in system.toml: the top level, then each block merged in.
     pub tables: Vec<Vec<String>>,
-    /// The files under etc/ this machine gets.
+    /// The files under etc/ this machine gets, by their path under /etc.
     pub etc: BTreeSet<PathBuf>,
     /// The files under etc/ that belong to blocks this machine doesn't have.
     pub etc_elsewhere: BTreeSet<PathBuf>,
+    /// The files under etc/ the fleet keeps encrypted, whichever machines get them.
+    pub secret_etc: BTreeSet<PathBuf>,
     pub ignore: Ignore,
+    /// Read from chezmoi's config by `load`.
+    secrets: Option<Secrets>,
 }
 
 #[derive(Deserialize, Default)]
@@ -75,8 +80,10 @@ pub const MACHINE: &str = "/etc/mothership/machine.toml";
 pub struct Mode(pub u32);
 
 impl Mode {
-    pub fn default_for(executable: bool) -> Mode {
-        Mode(if executable { 0o755 } else { 0o644 })
+    /// A secret is for its owner only.
+    pub fn default_for(executable: bool, secret: bool) -> Mode {
+        let mode = if executable { 0o755 } else { 0o644 };
+        Mode(if secret { mode & 0o700 } else { mode })
     }
 }
 
@@ -177,15 +184,23 @@ impl Fleet {
             &fs::read_to_string(MACHINE).with_context(|| format!("reading {MACHINE}"))?,
         )
         .with_context(|| format!("parsing {MACHINE}"))?;
-        let data: serde_json::Value =
-            serde_json::from_str(&cmd::stdout("chezmoi", &["data", "--format", "json"])?)?;
+        let config: serde_json::Value = serde_json::from_str(&cmd::stdout(
+            "chezmoi",
+            &["dump-config", "--format", "json"],
+        )?)?;
         let dir = PathBuf::from(
-            data["chezmoi"]["sourceDir"]
+            config["sourceDir"]
                 .as_str()
-                .context("chezmoi data has no sourceDir")?,
+                .context("chezmoi's config has no sourceDir")?,
         );
         let hardware = hardware::detect(Path::new("/"))?;
-        Fleet::new(dir, &machine.device_type, &machine.options, &hardware)
+        let mut fleet = Fleet::new(dir, &machine.device_type, &machine.options, &hardware)?;
+        fleet.secrets = Some(Secrets::new(&config, &fleet.type_dir)?);
+        Ok(fleet)
+    }
+
+    pub fn secrets(&self) -> &Secrets {
+        self.secrets.as_ref().expect("Fleet::load reads them")
     }
 
     /// Every piece of hardware the machine has needs a block, even an empty one, so that new
@@ -233,7 +248,19 @@ impl Fleet {
             .chain(system.options.values())
             .collect();
 
-        let all: BTreeSet<PathBuf> = walk::files(&type_dir.join("etc"))?.into_iter().collect();
+        let (mut all, mut secret_etc) = (BTreeSet::new(), BTreeSet::new());
+        for file in walk::files(&type_dir.join("etc"))? {
+            let rel = match file.to_str().and_then(|f| f.strip_suffix(secrets::AGE)) {
+                Some(rel) => {
+                    secret_etc.insert(PathBuf::from(rel));
+                    PathBuf::from(rel)
+                }
+                None => file,
+            };
+            if !all.insert(rel.clone()) {
+                bail!("etc/{} is both in clear and encrypted", rel.display());
+            }
+        }
         let mut owned = BTreeSet::new();
         for file in active
             .iter()
@@ -274,7 +301,9 @@ impl Fleet {
             tables,
             etc,
             etc_elsewhere,
+            secret_etc,
             ignore,
+            secrets: None,
         })
     }
 
@@ -286,14 +315,37 @@ impl Fleet {
         self.type_dir.join("etc")
     }
 
-    /// `rel` is the file's path under etc/.
+    /// The fleet's file for /etc/`rel`.
+    pub fn etc_source(&self, rel: &Path) -> PathBuf {
+        let path = self.etc_dir().join(rel);
+        if !self.secret_etc.contains(rel) {
+            return path;
+        }
+        let mut name = path.into_os_string();
+        name.push(secrets::AGE);
+        PathBuf::from(name)
+    }
+
+    /// What apply writes to /etc/`rel`, decrypted.
+    pub fn etc_contents(&self, rel: &Path) -> Result<Vec<u8>> {
+        let source = self.etc_source(rel);
+        if self.secret_etc.contains(rel) {
+            return self.secrets().decrypt(&source);
+        }
+        fs::read(&source).with_context(|| format!("reading {}", source.display()))
+    }
+
+    /// `rel` is the file's path under /etc.
     pub fn etc_mode(&self, rel: &Path) -> Result<Mode> {
         if let Some(mode) = self.system.etc_modes.get(rel) {
             return Ok(*mode);
         }
-        let path = self.etc_dir().join(rel);
+        let path = self.etc_source(rel);
         let meta = fs::metadata(&path).with_context(|| format!("reading {}", path.display()))?;
-        Ok(Mode::default_for(meta.permissions().mode() & 0o111 != 0))
+        Ok(Mode::default_for(
+            meta.permissions().mode() & 0o111 != 0,
+            self.secret_etc.contains(rel),
+        ))
     }
 
     /// What apply installs, leaving out the built packages.

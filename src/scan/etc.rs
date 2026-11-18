@@ -27,7 +27,6 @@ const ACCOUNT_FILES: [&str; 7] = [
 ];
 
 pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
-    let fleet_etc = fleet.etc_dir();
     let declared = &fleet.etc;
     let declared_paths: HashSet<PathBuf> = declared
         .iter()
@@ -37,13 +36,21 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     let mut items = Vec::new();
     for rel in declared {
         let path = Path::new("/etc").join(rel);
-        let source = fleet_etc.join(rel);
+        let secret = fleet.secret_etc.contains(rel);
+        if secret && !fleet.secrets().open {
+            items.push(Item::locked(Kind::Etc, path.display().to_string()));
+            continue;
+        }
+        let source = fleet.etc_source(rel);
         let item = |detail| Item::new(Kind::Etc, path.display().to_string(), detail);
-        items.extend(match compare(&source, &path)? {
+        let item = match compare(fleet, rel, &path)? {
             Compare::Same => None,
             Compare::Differs => Some(
                 item("differs from the fleet")
-                    .with(Add::CopyEtc(path.clone()))
+                    .with(Add::CopyEtc {
+                        path: path.clone(),
+                        encrypt: false,
+                    })
                     .reverting(Revert::WriteEtc(path.clone()))
                     .showing(Preview::Diff {
                         old: source,
@@ -57,7 +64,8 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                     .showing(Preview::Contents(source)),
             ),
             Compare::Unreadable => Some(item("unreadable without root")),
-        });
+        };
+        items.extend(item.map(|item| if secret { item.secret() } else { item }));
     }
 
     let mut changed = Vec::new();
@@ -97,7 +105,10 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     items.extend(walk.unknown.iter().map(|path| {
         looks_secret(
             Item::new(Kind::Etc, path.display().to_string(), "from no package")
-                .with(Add::CopyEtc(path.clone()))
+                .with(Add::CopyEtc {
+                    path: path.clone(),
+                    encrypt: false,
+                })
                 .reverting(Revert::DeleteEtc(path.clone()))
                 .showing(Preview::Contents(path.clone())),
             path,
@@ -120,11 +131,13 @@ enum Compare {
     Unreadable,
 }
 
-fn compare(source: &Path, path: &Path) -> Result<Compare> {
-    let same = if fs::symlink_metadata(source)?.is_symlink() {
-        fs::read_link(path).map(|target| target == fs::read_link(source).unwrap_or_default())
+fn compare(fleet: &Fleet, rel: &Path, path: &Path) -> Result<Compare> {
+    let source = fleet.etc_source(rel);
+    let same = if fs::symlink_metadata(&source)?.is_symlink() {
+        fs::read_link(path).map(|target| target == fs::read_link(&source).unwrap_or_default())
     } else {
-        fs::read(path).map(|bytes| bytes == fs::read(source).unwrap_or_default())
+        let wanted = fleet.etc_contents(rel)?;
+        fs::read(path).map(|bytes| bytes == wanted)
     };
     Ok(match same {
         Ok(true) => Compare::Same,
@@ -147,8 +160,11 @@ fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
     Ok((pacman::md5(&bytes) != md5).then(|| {
-        item("changed from the package's version")
-            .with(Add::CopyEtc(path.to_path_buf()))
+        let item = item("changed from the package's version")
+            .with(Add::CopyEtc {
+                path: path.to_path_buf(),
+                encrypt: false,
+            })
             .reverting(Revert::RestoreEtc {
                 path: path.to_path_buf(),
                 archive: package.archive(),
@@ -156,6 +172,7 @@ fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
             .showing(Preview::Original {
                 path: path.to_path_buf(),
                 archive: package.archive(),
-            })
+            });
+        looks_secret(item, path)
     }))
 }

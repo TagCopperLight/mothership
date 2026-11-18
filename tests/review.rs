@@ -7,6 +7,7 @@ fn item(subject: &str) -> Item {
         subject: subject.into(),
         detail: String::new(),
         secret: false,
+        locked: false,
         add: None,
         no_add: None,
         revert: None,

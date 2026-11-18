@@ -13,6 +13,7 @@ use std::{
     collections::BTreeSet,
     fs,
     io::ErrorKind,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     thread::{self, ScopedJoinHandle},
 };
@@ -87,6 +88,8 @@ pub struct Item {
     pub subject: String,
     pub detail: String,
     pub secret: bool,
+    /// A secret of the fleet this machine's key can't open.
+    pub locked: bool,
     /// None when the fleet has no place for it yet.
     pub add: Option<Add>,
     /// Why it has no add, when the fleet has a place for its kind but not for this one.
@@ -102,11 +105,28 @@ impl Item {
             subject: subject.into(),
             detail: detail.into(),
             secret: false,
+            locked: false,
             add: None,
             no_add: None,
             revert: None,
             preview: Preview::None,
         }
+    }
+
+    fn locked(kind: Kind, subject: impl Into<String>) -> Self {
+        let mut item = Item::new(kind, subject, "this machine's key can't open it");
+        item.secret = true;
+        item.locked = true;
+        item
+    }
+
+    /// Review never shows a secret's contents, since its screen can end up in logs and
+    /// transcripts, and adds it encrypted.
+    fn secret(mut self) -> Self {
+        self.secret = true;
+        self.preview = Preview::None;
+        self.add = self.add.map(|add| add.encrypted().unwrap_or(add));
+        self
     }
 
     fn reverting(mut self, revert: Revert) -> Self {
@@ -145,18 +165,17 @@ pub fn collect() -> Result<Report> {
     if !Path::new("/usr/bin/pacman").exists() {
         bail!("mothership only knows Arch machines for now");
     }
-    // The checks mostly wait on programs or the disk, so they run at once. chezmoi status is the
-    // slowest and needs nothing, so it starts first.
+    // The checks mostly wait on programs or the disk, so they run at once.
     let (fleet, items) = thread::scope(|s| {
-        let files = s.spawn(files::scan);
         let fleet = s.spawn(Fleet::load);
         let db = s.spawn(Db::load);
         let managed = s.spawn(managed);
         let fleet = join(fleet)?;
         let (db, managed) = (join(db)?, join(managed)?);
-        let mut items = thread::scope(|s| {
+        let items = thread::scope(|s| {
             let (fleet, db, managed) = (&fleet, &db, &managed);
             let checks = vec![
+                s.spawn(move || files::scan(fleet, managed)),
                 s.spawn(move || system(fleet, db)),
                 s.spawn(move || tools::scan(fleet)),
                 s.spawn(move || home::scan(fleet, managed)),
@@ -164,7 +183,6 @@ pub fn collect() -> Result<Report> {
             ];
             checks.into_iter().map(join).collect::<Result<Vec<_>>>()
         })?;
-        items.push(join(files)?);
         Ok::<_, anyhow::Error>((fleet, items.into_iter().flatten().collect::<Vec<Item>>()))
     })?;
 
@@ -249,7 +267,7 @@ fn join<T>(handle: ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
-fn managed() -> Result<Vec<PathBuf>> {
+pub fn managed() -> Result<Vec<PathBuf>> {
     let args = [
         "managed",
         "--path-style",
@@ -300,34 +318,45 @@ pub fn print(items: &[&Item], detail: impl Fn(&Item) -> String) {
     }
 }
 
-/// A guess, so the report can warn before anything gets committed in clear. Review never shows
-/// a secret's contents, since its screen can end up in logs and transcripts.
-fn looks_secret(mut item: Item, path: &Path) -> Item {
-    item.secret = guess_secret(path);
-    if item.secret {
-        item.preview = Preview::None;
-        return item.because("secrets wait for the secrets system");
+/// A guess, so a secret is never added in clear by mistake: a file only its owner can read, or
+/// a folder holding one. A folder it can't open counts too.
+fn looks_secret(item: Item, path: &Path) -> Item {
+    if guess_secret(path) {
+        item.secret()
+    } else {
+        item
     }
-    item
 }
 
 fn guess_secret(path: &Path) -> bool {
-    let text = path.to_string_lossy().to_lowercase();
-    if text.contains("/.ssh") || text.contains("/.gnupg") || text.starts_with("/etc/ssh/") {
+    fs::symlink_metadata(path).is_ok_and(|meta| {
+        if meta.is_dir() {
+            holds_owner_only(path)
+        } else {
+            owner_only(&meta)
+        }
+    })
+}
+
+fn owner_only(meta: &fs::Metadata) -> bool {
+    meta.is_file() && meta.permissions().mode() & 0o044 == 0
+}
+
+/// Stops at the first one, since a big folder of caches holds none.
+fn holds_owner_only(dir: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
         return true;
-    }
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    if ["key", "token", "secret", "credential", "password", ".pem"]
-        .iter()
-        .any(|word| name.contains(word))
-    {
-        return true;
-    }
-    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() < 64 * 1024)
-        && fs::read(path).is_ok_and(|bytes| bytes.windows(11).any(|w| w == b"PRIVATE KEY"))
+    };
+    entries.into_iter().any(|entry| {
+        let Ok((path, Ok(meta))) = entry.map(|e| (e.path(), e.metadata())) else {
+            return true;
+        };
+        if meta.is_dir() {
+            holds_owner_only(&path)
+        } else {
+            owner_only(&meta)
+        }
+    })
 }
 
 #[cfg(test)]

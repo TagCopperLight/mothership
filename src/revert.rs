@@ -251,11 +251,11 @@ fn change_etc(fleet: &Fleet, revert: &Revert) -> Result<()> {
     let change = || match revert {
         Revert::WriteEtc(_) => {
             let rel = path.strip_prefix("/etc")?;
-            let source = fleet.etc_dir().join(rel);
+            let source = fleet.etc_source(rel);
             if fs::symlink_metadata(&source)?.is_symlink() {
                 link(path, &fs::read_link(&source)?)
             } else {
-                write(path, &fs::read(&source)?, fleet.etc_mode(rel)?)
+                write(path, &fleet.etc_contents(rel)?, fleet.etc_mode(rel)?)
             }
         }
         Revert::RestoreEtc { archive, .. } => {

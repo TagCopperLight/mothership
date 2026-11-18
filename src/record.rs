@@ -120,10 +120,9 @@ impl Record {
     /// An /etc file left edited keeps its old entry, so it stays an edit.
     pub fn after(fleet: &Fleet, before: &Record, etc_root: &Path) -> Result<Record> {
         let mut etc = BTreeMap::new();
-        let etc_dir = fleet.etc_dir();
         for rel in &fleet.etc {
             let path = etc_root.join(rel);
-            let wanted = hash(&etc_dir.join(rel))?;
+            let wanted = wanted(fleet, rel)?;
             let entry = if hash(&path)? == wanted {
                 wanted
             } else {
@@ -145,6 +144,17 @@ impl Record {
             etc,
         })
     }
+}
+
+/// Apply never writes a secret this machine can't open.
+fn wanted(fleet: &Fleet, rel: &Path) -> Result<Option<String>> {
+    if !fleet.secret_etc.contains(rel) {
+        return hash(&fleet.etc_source(rel));
+    }
+    if !fleet.secrets().open {
+        return Ok(None);
+    }
+    Ok(Some(pacman::md5(&fleet.etc_contents(rel)?)))
 }
 
 /// A link's hash is its target's path.

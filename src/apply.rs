@@ -16,13 +16,14 @@ pub fn run() -> Result<()> {
     let record = Record::load(record_path)?;
     let mut items = scan::system(&fleet, &db)?;
     items.extend(scan::tools::scan(&fleet)?);
-    items.extend(scan::files::scan()?);
+    items.extend(scan::files::scan(&fleet, &scan::managed()?)?);
 
-    let (mut todo, mut edited, mut left) = (Vec::new(), Vec::new(), 0);
+    let (mut todo, mut edited, mut locked, mut left) = (Vec::new(), Vec::new(), Vec::new(), 0);
     for item in &items {
         match &item.revert {
             Some(revert) if record.fleet_changed(revert, &db)? => todo.push(item),
             _ if fleet.ignore.matches(item) => {}
+            _ if item.locked => locked.push(item),
             Some(Revert::WriteEtc(_) | Revert::ApplyFile { .. }) => edited.push(item),
             _ => left += 1,
         }
@@ -31,12 +32,17 @@ pub fn run() -> Result<()> {
     scan::print(&todo, |item| {
         item.revert.as_ref().expect("filtered above").describe()
     });
-    if !edited.is_empty() {
-        println!("Left alone, since they were edited on this machine:");
-        for item in &edited {
-            println!("  {}", item.subject);
+    for (items, why) in [
+        (&edited, "they were edited on this machine"),
+        (&locked, "this machine's key can't open them"),
+    ] {
+        if !items.is_empty() {
+            println!("Left alone, since {why}:");
+            for item in items {
+                println!("  {}", item.subject);
+            }
+            println!();
         }
-        println!();
     }
     if left > 0 {
         println!("{left} other differences wait for `mothership review`.");

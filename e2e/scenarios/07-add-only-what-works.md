@@ -41,7 +41,7 @@ zeta  installed, not listed
 \[3/\d+\] /etc (re)
 /etc/systemd/system/mine.service  from no package
 ...
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? p
+  (a)dd (s)ecret (r)evert (i)gnore (l)ater (p)ass (q)uit? p
 \[4/\d+\] System services (re)
 mine.service  enabled, not declared
 ...

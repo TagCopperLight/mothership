@@ -1,5 +1,5 @@
 use crate::{
-    edit,
+    edit::{self, Add},
     fleet::{Fleet, tilde},
     prompt::Prompt,
     record::{self, Record},
@@ -59,6 +59,8 @@ pub fn run() -> Result<()> {
             println!("  {why}, so it can't be added yet");
         }
         let add = item.add.as_ref();
+        // For a secret the scan missed.
+        let encrypted = add.filter(|_| !item.secret).and_then(Add::encrypted);
         let revert = item.revert.as_ref().filter(|_| record.is_some());
         item.preview.show(terminal);
         if let Some(add) = add {
@@ -71,6 +73,9 @@ pub fn run() -> Result<()> {
         if add.is_some() {
             choices.push("(a)dd");
         }
+        if encrypted.is_some() {
+            choices.push("(s)ecret");
+        }
         if revert.is_some() {
             choices.push("(r)evert");
         }
@@ -78,8 +83,12 @@ pub fn run() -> Result<()> {
         loop {
             match prompt.ask(&format!("  {}?", choices.join(" ")))?.as_deref() {
                 None | Some("q") => break 'items,
-                Some("a") if add.is_some() => {
-                    let add = add.expect("checked");
+                Some(answer @ ("a" | "s")) => {
+                    let add = match answer {
+                        "a" => add,
+                        _ => encrypted.as_ref(),
+                    };
+                    let Some(add) = add else { continue };
                     if !done(add.apply(&report.fleet, &mut prompt)) {
                         continue;
                     }

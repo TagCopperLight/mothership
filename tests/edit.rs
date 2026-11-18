@@ -253,7 +253,13 @@ fn tracking_a_folder_stops_unless_confirmed() {
     let folder = checkout.dir.path().join("app");
     fs::create_dir(&folder).unwrap();
     fs::write(folder.join("config"), "").unwrap();
-    assert!(!checkout.apply(Add::Track(folder), "n"));
+    assert!(!checkout.apply(
+        Add::Track {
+            path: folder,
+            encrypt: false
+        },
+        "n"
+    ));
 }
 
 #[test]
@@ -264,6 +270,7 @@ fn appends_ignore_lines_the_ignore_list_then_matches() {
         subject: "~/.config/odd [name]*".into(),
         detail: String::new(),
         secret: false,
+        locked: false,
         add: None,
         no_add: None,
         revert: None,
@@ -293,12 +300,14 @@ fn copies_files_and_symlinks_into_etc() {
         fleet,
         Path::new("sub/locale.conf"),
         &machine.join("locale.conf"),
+        false,
     )
     .unwrap();
     copy_etc(
         fleet,
         Path::new("resolv.conf"),
         &machine.join("resolv.conf"),
+        false,
     )
     .unwrap();
     assert_eq!(
@@ -309,7 +318,7 @@ fn copies_files_and_symlinks_into_etc() {
         fs::read_link(etc.join("resolv.conf")).unwrap(),
         Path::new("/run/resolv.conf")
     );
-    assert!(copy_etc(fleet, Path::new("machine"), &machine).is_err());
+    assert!(copy_etc(fleet, Path::new("machine"), &machine, false).is_err());
     assert!(!checkout.system().contains("etc_modes"));
 }
 
@@ -320,7 +329,7 @@ fn copying_keeps_a_mode_git_cannot_in_etc_modes() {
     fs::write(&machine, "%wheel ALL=(ALL:ALL) ALL\n").unwrap();
     fs::set_permissions(&machine, fs::Permissions::from_mode(0o640)).unwrap();
     let rel = Path::new("sudoers.d/wheel");
-    copy_etc(&checkout.fleet, rel, &machine).unwrap();
+    copy_etc(&checkout.fleet, rel, &machine, false).unwrap();
     assert!(
         checkout
             .system()
@@ -331,7 +340,7 @@ fn copying_keeps_a_mode_git_cannot_in_etc_modes() {
     assert_eq!(mode, 0o644);
 
     fs::set_permissions(&machine, fs::Permissions::from_mode(0o644)).unwrap();
-    copy_etc(&checkout.fleet, rel, &machine).unwrap();
+    copy_etc(&checkout.fleet, rel, &machine, false).unwrap();
     assert!(!checkout.system().contains("sudoers.d/wheel"));
 }
 
@@ -368,7 +377,7 @@ fn copying_over_the_file_of_an_option_off_here_fails() {
     let checkout = Checkout::new();
     let machine = checkout.dir.path().join("dual");
     fs::write(&machine, "mine").unwrap();
-    assert!(copy_etc(&checkout.fleet, Path::new("grub.d/dual"), &machine).is_err());
+    assert!(copy_etc(&checkout.fleet, Path::new("grub.d/dual"), &machine, false).is_err());
     assert_eq!(checkout.read("types/workstation/etc/grub.d/dual"), "");
 }
 

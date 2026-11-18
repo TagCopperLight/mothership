@@ -1,15 +1,34 @@
 use crate::user;
 use anyhow::{Context, Result, bail};
-use std::process::Command;
+use std::{
+    io::Write,
+    process::{Command, Stdio},
+};
 
 pub fn stdout(program: &str, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8(bytes(program, args)?)?)
 }
 
 pub fn bytes(program: &str, args: &[&str]) -> Result<Vec<u8>> {
-    let out = as_user(program, args)
-        .output()
+    piped(program, args, &[])
+}
+
+/// Like `bytes`, with `input` on the program's stdin, where secrets go instead of the arguments.
+pub fn piped(program: &str, args: &[&str], input: &[u8]) -> Result<Vec<u8>> {
+    let mut child = as_user(program, args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .with_context(|| format!("running {program}"))?;
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    // Written beside the read, so a program that answers while it reads never fills its pipe.
+    let (out, written) = std::thread::scope(|s| {
+        let writer = s.spawn(move || stdin.write_all(input));
+        let out = child.wait_with_output();
+        (out, writer.join().expect("writing stdin panicked"))
+    });
+    let out = out?;
     if !out.status.success() {
         bail!(
             "{program} {} failed: {}",
@@ -17,6 +36,7 @@ pub fn bytes(program: &str, args: &[&str]) -> Result<Vec<u8>> {
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
+    written.with_context(|| format!("writing to {program}"))?;
     Ok(out.stdout)
 }
 

@@ -3,7 +3,7 @@
 The machine follows its fleet. Then I change it by hand:
 
 - I install `beta` and remove `gamma`.
-- I edit `/etc/fleet.conf` and add a proxy script that only root can read.
+- I edit `/etc/fleet.conf` and add a proxy script that only root and its group can read.
 - I edit `~/.gitconfig`, which chezmoi tracks.
 - I add config for a new app, and a folder of tokens.
 - I join the `audio` group.
@@ -13,11 +13,11 @@ $ echo y | sudo mothership apply &>/dev/null
 $ sudo pacman -S --noconfirm beta &>/dev/null
 $ sudo pacman -R --noconfirm gamma &>/dev/null
 $ echo "mine = yes" | sudo tee -a /etc/fleet.conf >/dev/null
-$ echo "export HTTP_PROXY=http://proxy:3128" | sudo install -m 600 /dev/stdin /etc/profile.d/proxy.sh
+$ echo "export HTTP_PROXY=http://proxy:3128" | sudo install -m 640 /dev/stdin /etc/profile.d/proxy.sh
 $ printf '[core]\n\teditor = vim\n' >> ~/.gitconfig
 $ mkdir -p ~/.config/newapp ~/.config/tokens &&
 > echo "theme = dark" > ~/.config/newapp/settings.ini &&
-> echo "abc123" > ~/.config/tokens/api
+> echo "abc123" > ~/.config/tokens/api && chmod 600 ~/.config/tokens/api
 $ sudo usermod -aG audio me
 ```
 
@@ -45,25 +45,25 @@ gamma  listed, not installed
     +[core]
     +    editor = vim
   add: copy this machine's version into chezmoi
-  (a)dd (i)gnore (l)ater (p)ass (q)uit? p
+  (a)dd (s)ecret (i)gnore (l)ater (p)ass (q)uit? p
 [4/10] Untracked config in ~
 ~/.config/newapp  not in the fleet
     folder with 1 files
     settings.ini
   add: add it to chezmoi
-  (a)dd (i)gnore (l)ater (p)ass (q)uit? a
+  (a)dd (s)ecret (i)gnore (l)ater (p)ass (q)uit? a
   That adds 1 files. Go on [y/N]? y
 [5/10] Untracked config in ~
 ~/.config/tokens  not in the fleet  [secret]
-  secrets wait for the secrets system, so it can't be added yet
-  (i)gnore (l)ater (p)ass (q)uit? i
+  add: add it to chezmoi, encrypted
+  (a)dd (i)gnore (l)ater (p)ass (q)uit? i
 [6/10] /etc
 /etc/fleet.conf  differs from the fleet
     @@ -1 +1,2 @@
      managed = yes
     +mine = yes
   add: copy it into the type's etc/
-  (a)dd (i)gnore (l)ater (p)ass (q)uit? q
+  (a)dd (s)ecret (i)gnore (l)ater (p)ass (q)uit? q
 2 added, 0 reverted, 1 ignored, 1 put off for later, 1 passed
 Run it with sudo to also revert this machine to the fleet.
 Check the changes with `git -C ~/.local/share/chezmoi diff`, then commit.
@@ -110,7 +110,7 @@ $ printf 'r\nr\na\nr\n' | sudo mothership review
     +    editor = vim
   add: copy this machine's version into chezmoi
   revert: write the fleet's version
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? r
+  (a)dd (s)ecret (r)evert (i)gnore (l)ater (p)ass (q)uit? r
 [2/4] /etc
 /etc/fleet.conf  differs from the fleet
     @@ -1,2 +1,2 @@
@@ -119,13 +119,13 @@ $ printf 'r\nr\na\nr\n' | sudo mothership review
     +mine = yes
   add: copy it into the type's etc/
   revert: write the fleet's version
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? r
+  (a)dd (s)ecret (r)evert (i)gnore (l)ater (p)ass (q)uit? r
 [3/4] /etc
 /etc/profile.d/proxy.sh  from no package
     export HTTP_PROXY=http://proxy:3128
   add: copy it into the type's etc/
   revert: delete
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? a
+  (a)dd (s)ecret (r)evert (i)gnore (l)ater (p)ass (q)uit? a
 [4/4] Account
 group audio  member, not declared
   add: add it to `groups` in system.toml
@@ -157,7 +157,7 @@ me 644 etc/profile.d/proxy.sh
 $ grep -A2 '^\[etc_modes\]' ~/.local/share/chezmoi/types/workstation/system.toml
 [etc_modes]
 "sudoers.d/wheel" = "440"
-"profile.d/proxy.sh" = "600"
+"profile.d/proxy.sh" = "640"
 ```
 
 Since review wrote the fleet's version of `/etc/fleet.conf`, apply follows the fleet's next

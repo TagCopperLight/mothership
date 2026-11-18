@@ -3,7 +3,7 @@ use crate::{
     fleet::{Fleet, Manager, Mode, Tool},
     pacman,
     prompt::Prompt,
-    user, walk,
+    secrets, user, walk,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -38,6 +38,7 @@ impl Key {
 }
 
 /// How to make the fleet accept what this machine has.
+#[derive(Clone)]
 pub enum Add {
     ListPackage(String),
     UnlistPackage(String),
@@ -56,9 +57,19 @@ pub enum Add {
     },
     UndeclareInstaller(String),
     Shell(String),
-    Track(PathBuf),
-    Update(PathBuf),
-    CopyEtc(PathBuf),
+    /// `encrypt` keeps the file encrypted in the fleet, as every secret.
+    Track {
+        path: PathBuf,
+        encrypt: bool,
+    },
+    Update {
+        path: PathBuf,
+        encrypt: bool,
+    },
+    CopyEtc {
+        path: PathBuf,
+        encrypt: bool,
+    },
     RemoveEtc(PathBuf),
     Pref {
         user_js: PathBuf,
@@ -68,6 +79,20 @@ pub enum Add {
 }
 
 impl Add {
+    /// The same add, encrypting the file. None for an add that copies no file.
+    pub fn encrypted(&self) -> Option<Add> {
+        let mut add = self.clone();
+        match &mut add {
+            Add::Track { encrypt, .. }
+            | Add::Update { encrypt, .. }
+            | Add::CopyEtc { encrypt, .. } => {
+                *encrypt = true;
+                Some(add)
+            }
+            _ => None,
+        }
+    }
+
     pub fn describe(&self) -> String {
         match self {
             Add::ListPackage(_) => "add it to `packages` in system.toml".into(),
@@ -84,9 +109,18 @@ impl Add {
             }
             Add::UndeclareInstaller(_) => "remove its installer from system.toml".into(),
             Add::Shell(shell) => format!("make {shell} the type's shell"),
-            Add::Track(_) => "add it to chezmoi".into(),
-            Add::Update(_) => "copy this machine's version into chezmoi".into(),
-            Add::CopyEtc(_) => "copy it into the type's etc/".into(),
+            Add::Track { encrypt, .. } => {
+                format!("add it to chezmoi{}", encrypted_suffix(*encrypt))
+            }
+            Add::Update { encrypt, .. } => {
+                format!(
+                    "copy this machine's version into chezmoi{}",
+                    encrypted_suffix(*encrypt)
+                )
+            }
+            Add::CopyEtc { encrypt, .. } => {
+                format!("copy it into the type's etc/{}", encrypted_suffix(*encrypt))
+            }
             Add::RemoveEtc(_) => "remove it from the type's etc/".into(),
             Add::Pref { .. } => "write this machine's value into user.js".into(),
         }
@@ -115,23 +149,33 @@ impl Add {
                 doc["shell"] = value(shell.as_str());
                 Ok(())
             })?,
-            Add::Track(path) => {
+            Add::Track { path, encrypt } => {
                 if path.is_dir() {
                     let count = walk::files(path)?.len();
                     if !prompt.confirm(&format!("  That adds {count} files. Go on"))? {
                         return Ok(false);
                     }
                 }
-                cmd::run("chezmoi", &["add", &path.to_string_lossy()])?;
+                chezmoi_add(fleet, path, *encrypt)?;
             }
-            Add::Update(path) => {
+            Add::Update { path, encrypt } => {
                 let source = source_path(path)?;
                 if source.extension().is_some_and(|e| e == "tmpl") {
                     bail!("{} is a template, edit it by hand", source.display());
                 }
-                cmd::run("chezmoi", &["re-add", &path.to_string_lossy()])?;
+                let clear = !source
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("encrypted_"));
+                if !encrypt {
+                    cmd::run("chezmoi", &["re-add", &path.to_string_lossy()])?;
+                } else {
+                    chezmoi_add(fleet, path, true)?;
+                    if clear {
+                        println!("  git history keeps the version in clear, so change it.");
+                    }
+                }
             }
-            Add::CopyEtc(path) => copy_etc(fleet, etc_rel(path), path)?,
+            Add::CopyEtc { path, encrypt } => copy_etc(fleet, etc_rel(path), path, *encrypt)?,
             Add::RemoveEtc(path) => remove_etc(fleet, etc_rel(path))?,
             Add::Pref {
                 user_js,
@@ -140,6 +184,22 @@ impl Add {
             } => set_pref(&source_path(user_js)?, key, value)?,
         }
         Ok(true)
+    }
+}
+
+fn encrypted_suffix(encrypt: bool) -> &'static str {
+    if encrypt { ", encrypted" } else { "" }
+}
+
+/// chezmoi encrypts for the type's recipients, and turns a file it has in clear into an
+/// encrypted one.
+fn chezmoi_add(fleet: &Fleet, path: &Path, encrypt: bool) -> Result<()> {
+    let path = path.to_string_lossy();
+    if encrypt {
+        fleet.secrets().check_open()?;
+        cmd::run("chezmoi", &["add", "--encrypt", &path])
+    } else {
+        cmd::run("chezmoi", &["add", &path])
     }
 }
 
@@ -343,19 +403,30 @@ fn etc_rel(path: &Path) -> &Path {
         .expect("the /etc scan reports paths under /etc")
 }
 
-/// A mode git can't keep goes into `etc_modes`.
-fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path) -> Result<()> {
+/// A mode git can't keep goes into `etc_modes`. A secret replaces the file in clear, and the
+/// other way round.
+fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()> {
     if fleet.etc_elsewhere.contains(rel) {
         bail!(
             "etc/{} belongs to hardware or an option this machine doesn't have",
             rel.display()
         );
     }
-    let dest = fleet.etc_dir().join(rel);
-    let dest = dest.as_path();
+    let clear = fleet.etc_dir().join(rel);
+    let mut sealed = clear.clone().into_os_string();
+    sealed.push(secrets::AGE);
+    let sealed = PathBuf::from(sealed);
+    let (dest, other) = if encrypt {
+        (sealed.as_path(), clear.as_path())
+    } else {
+        (clear.as_path(), sealed.as_path())
+    };
     user::create_dir_all(dest.parent().expect("under etc/"))?;
     let meta = fs::symlink_metadata(path)?;
     if meta.is_symlink() {
+        if encrypt {
+            bail!("{} is a link, which holds no secret", path.display());
+        }
         match fs::remove_file(dest) {
             Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
             _ => {}
@@ -368,17 +439,24 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path) -> Result<()> {
             path.display()
         );
     } else {
-        let bytes = match fs::read(path) {
+        let mut bytes = match fs::read(path) {
             Err(e) if e.kind() == ErrorKind::PermissionDenied => {
                 bail!("{} needs root to read", path.display())
             }
             read => read?,
         };
+        if encrypt {
+            bytes = fleet.secrets().encrypt(&bytes)?;
+        }
         fs::write(dest, bytes)?;
         user::own(dest)?;
         let mode = meta.permissions().mode() & 0o7777;
-        let default = Mode::default_for(mode & 0o111 != 0);
-        fs::set_permissions(dest, fs::Permissions::from_mode(default.0))?;
+        let executable = mode & 0o111 != 0;
+        fs::set_permissions(
+            dest,
+            fs::Permissions::from_mode(Mode::default_for(executable, false).0),
+        )?;
+        let default = Mode::default_for(executable, encrypt);
         let rel = rel.to_string_lossy().into_owned();
         edit_system(fleet, |doc| {
             if Mode(mode) == default {
@@ -395,12 +473,15 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path) -> Result<()> {
             Ok(())
         })?;
     }
-    Ok(())
+    match fs::remove_file(other) {
+        Err(e) if e.kind() != ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
+    }
 }
 
 /// A block's file also leaves the block's `etc`.
 fn remove_etc(fleet: &Fleet, rel: &Path) -> Result<()> {
-    let dest = fleet.etc_dir().join(rel);
+    let dest = fleet.etc_source(rel);
     fs::remove_file(&dest).with_context(|| format!("removing {}", dest.display()))?;
     let root = fleet.etc_dir();
     for dir in dest.ancestors().skip(1).take_while(|dir| *dir != root) {

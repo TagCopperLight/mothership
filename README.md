@@ -2,22 +2,35 @@
 
 mothership keeps Linux machines in line with a git repo, the fleet repo, that describes device types such as "workstation". Each machine runs one type. [chezmoi](https://chezmoi.io) writes the files in `$HOME`; mothership handles packages, `/etc`, services, groups and the login shell.
 
-You need Arch, `chezmoi`, `cargo`, `uv` and `dconf`, with the fleet repo as chezmoi's source.
+You need Arch, `chezmoi`, `cargo`, `uv` and `dconf`, with the fleet repo as chezmoi's source. chezmoi's config encrypts with age, for the recipients of the machine's type:
+
+```toml
+encryption = "age"
+[age]
+useBuiltin = true
+identity = "~/.config/mothership/key.txt"
+recipientsFile = "~/.local/share/chezmoi/types/workstation/recipients.txt"
+```
 
 ## Commands
 
 - `mothership scan` lists every difference between the machine and its type.
 - `mothership review` asks about each difference: **add** it to the fleet, **ignore** it for good, put it off a week (**later**), or skip it this time (**pass**). It edits the fleet checkout and never commits. Under sudo it can also **revert** the machine to the fleet.
 - `sudo mothership apply` makes the machine follow the fleet. It shows its plan and asks first.
+- `mothership key` makes the machine's key when it has none, and shows its public half.
+- `mothership trust <name> <key>` adds a machine's key to the type's recipients and encrypts every secret of the type again. `mothership retire <name>` removes one, and lists the secrets to change, since git history keeps what it could open.
 
-Paths that look like secrets get a `[secret]` mark, and review won't add them. Review offers to declare a service, group or shell only when the fleet's packages, with their dependencies, or its files provide it, and puts a package found in neither pacman's repos nor the AUR into `built_packages`. It adds a tool only when it comes from the registry or from git, with at most a branch: an editable install, a local folder or a tag waits until the fleet can describe it.
+A file only its owner can read, or a folder holding one, gets a `[secret]` mark: review never shows it and adds it encrypted. For a secret the mark misses, review's **secret** answer adds the file encrypted. A secret the fleet holds in clear shows up too. A machine whose key isn't among the recipients leaves the secrets alone.
+
+Review offers to declare a service, group or shell only when the fleet's packages, with their dependencies, or its files provide it, and puts a package found in neither pacman's repos nor the AUR into `built_packages`. It adds a tool only when it comes from the registry or from git, with at most a branch: an editable install, a local folder or a tag waits until the fleet can describe it.
 
 ## The fleet repo
 
 ```text
-types/<type>/system.toml   what the type has outside $HOME
-types/<type>/etc/          files for /etc
-types/<type>/ignore.txt    what the scan never reports
+types/<type>/system.toml      what the type has outside $HOME
+types/<type>/etc/             files for /etc, secrets encrypted as <file>.age
+types/<type>/recipients.txt   the age keys that open the type's secrets, each under a `# name`
+types/<type>/ignore.txt       what the scan never reports
 ```
 
 The machine names its type and options in `/etc/mothership/machine.toml`:
