@@ -169,12 +169,19 @@ Left alone, since this machine's key can't open them:
 Nothing to apply.
 ```
 
-The laptop trusts it, then the desktop retires the laptop and lists what to change.
+Back on the laptop, a template takes a secret value from the type's `secrets/`, which chezmoi
+writes nowhere. The laptop trusts the desktop, then the desktop retires the laptop and lists what
+to change.
 
 ```console
 $ mv ~/.config/mothership/key.txt ~/desktop.txt && mv ~/laptop.txt ~/.config/mothership/key.txt
+$ cd ~/.local/share/chezmoi && mkdir -p types/workstation/secrets &&
+> echo "PROXY-SECRET" | chezmoi encrypt > types/workstation/secrets/proxy-key.age &&
+> echo '{{ include "types/workstation/secrets/proxy-key.age" | decrypt | trim }}' > dot_proxy.tmpl
+$ chezmoi apply --force ~/.proxy && cat ~/.proxy
+PROXY-SECRET
 $ mothership trust desktop "$(grep -o 'age1.*' ~/desktop.txt)"
-desktop opens the type's 4 secrets now. Commit and push the fleet.
+desktop opens the type's 5 secrets now. Commit and push the fleet.
 $ mothership trust desktop "$(grep -o 'age1.*' ~/desktop.txt)"
 Error: recipients.txt already holds desktop
 [exit 1]
@@ -185,10 +192,13 @@ $ mothership retire laptop
 laptop is gone. Commit and push the fleet.
 git history keeps the versions laptop opens, so change these:
   /etc/wifi.conf
+  types/workstation/secrets/proxy-key.age
   ~/.config/app/token
   ~/.netrc
   ~/.ssh/id_test
 $ sed 's/age1[a-z0-9]*/<key>/' ~/.local/share/chezmoi/types/workstation/recipients.txt
 # desktop
 <key>
+$ chezmoi execute-template < ~/.local/share/chezmoi/dot_proxy.tmpl
+PROXY-SECRET
 ```

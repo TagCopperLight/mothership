@@ -1,7 +1,7 @@
 use crate::{
     cmd,
     fleet::{Fleet, tilde},
-    user,
+    user, walk,
 };
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -13,6 +13,8 @@ use std::{
 };
 
 pub const RECIPIENTS: &str = "recipients.txt";
+/// The type's secrets that templates decrypt, which chezmoi doesn't manage.
+const SECRETS: &str = "secrets";
 /// What marks a file of the type's etc/ as encrypted, as chezmoi marks its own.
 pub const AGE: &str = ".age";
 
@@ -241,7 +243,8 @@ struct Managed {
 }
 
 /// Each secret's path on the machine, and its encrypted file in the fleet. The type's etc/ counts
-/// whole, blocks this machine lacks included.
+/// whole, blocks this machine lacks included. A secret of `secrets/`, which templates read, goes
+/// by its path in the fleet.
 fn type_secrets(fleet: &Fleet) -> Result<BTreeMap<String, PathBuf>> {
     let args = [
         "managed",
@@ -263,6 +266,14 @@ fn type_secrets(fleet: &Fleet) -> Result<BTreeMap<String, PathBuf>> {
             fleet.etc_source(rel),
         )
     }));
+    let dir = fleet.type_dir.join(SECRETS);
+    if dir.exists() {
+        for rel in walk::files(&dir)? {
+            let source = dir.join(&rel);
+            let shown = source.strip_prefix(&fleet.dir)?.display().to_string();
+            all.insert(shown, source);
+        }
+    }
     Ok(all)
 }
 

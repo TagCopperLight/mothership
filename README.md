@@ -30,6 +30,7 @@ Review offers to declare a service, group or shell only when the fleet's package
 types/<type>/system.toml      what the type has outside $HOME
 types/<type>/etc/             files for /etc, secrets encrypted as <file>.age
 types/<type>/recipients.txt   the age keys that open the type's secrets, each under a `# name`
+types/<type>/secrets/         secrets templates decrypt, such as `{{ include "types/workstation/secrets/key.age" | decrypt }}`
 types/<type>/ignore.txt       what the scan never reports
 types/<type>/not-secret.txt   paths that look secret but aren't, one glob per line
 ```
