@@ -1,7 +1,7 @@
 use super::{Item, Kind, looks_secret, services};
 use crate::{
     edit::Add,
-    fleet::{self, Fleet},
+    fleet::{self, Fleet, Manager},
     preview::Preview,
     user, walk,
 };
@@ -27,14 +27,14 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
             .iter()
             .map(|i| fleet::expand(&i.creates)),
     );
-    if !tools.cargo.is_empty() {
+    if !tools.of(Manager::Cargo).is_empty() {
         known.insert(home.join(".cargo"));
     }
-    if !tools.uv.is_empty() {
+    if !tools.of(Manager::Uv).is_empty() {
         known.insert(home.join(".local/share/uv"));
         known.extend(
             tools
-                .uv
+                .of(Manager::Uv)
                 .iter()
                 .map(|tool| home.join(".local/bin").join(tool.name())),
         );

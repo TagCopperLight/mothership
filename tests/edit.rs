@@ -165,14 +165,14 @@ fn declares_into_a_key_the_file_lacks() {
     );
     checkout.apply(
         Add::Declare {
-            key: Key::Uv,
+            key: Key::Tools(Manager::Uv),
             name: "ruff".into(),
         },
         "",
     );
     let system: System = toml::from_str(&checkout.system()).unwrap();
     assert_eq!(system.user_services, ["hyprwhspr.service"]);
-    assert_eq!(system.tools.uv[0].name(), "ruff");
+    assert_eq!(system.tools.of(Manager::Uv)[0].name(), "ruff");
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn undeclares_a_tool_by_name_or_by_table_and_keeps_the_comments() {
     for name in ["cargo-nextest", "chromash"] {
         checkout.apply(
             Add::Undeclare {
-                key: Key::Cargo,
+                key: Key::Tools(Manager::Cargo),
                 name: name.into(),
             },
             "",

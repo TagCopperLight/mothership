@@ -1,6 +1,6 @@
 use crate::{
     cmd,
-    fleet::{Fleet, Mode},
+    fleet::{Fleet, Manager, Mode},
     prompt::Prompt,
     user, walk,
 };
@@ -18,25 +18,17 @@ pub enum Key {
     Services,
     UserServices,
     Groups,
-    Cargo,
-    Uv,
-    Bun,
+    Tools(Manager),
 }
 
 impl Key {
-    fn path(self) -> &'static [&'static str] {
+    fn path(self) -> Vec<&'static str> {
         match self {
-            Key::Services => &["services"],
-            Key::UserServices => &["user_services"],
-            Key::Groups => &["groups"],
-            Key::Cargo => &["tools", "cargo"],
-            Key::Uv => &["tools", "uv"],
-            Key::Bun => &["tools", "bun"],
+            Key::Services => vec!["services"],
+            Key::UserServices => vec!["user_services"],
+            Key::Groups => vec!["groups"],
+            Key::Tools(manager) => vec!["tools", manager.name()],
         }
-    }
-
-    pub fn name(self) -> &'static str {
-        self.path().last().expect("paths are not empty")
     }
 }
 
@@ -219,7 +211,8 @@ fn edit_system(fleet: &Fleet, change: impl FnOnce(&mut DocumentMut) -> Result<()
 }
 
 fn array(doc: &mut DocumentMut, key: Key) -> Result<&mut Array> {
-    let (last, parents) = key.path().split_last().expect("paths are not empty");
+    let path = key.path();
+    let (last, parents) = path.split_last().expect("paths are not empty");
     let mut table = doc.as_table_mut();
     for parent in parents {
         table = table

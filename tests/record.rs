@@ -347,3 +347,50 @@ fn a_file_review_deleted_or_restored_leaves_the_record() {
         .unwrap();
     assert!(before.etc.is_empty());
 }
+
+fn tools(text: &str) -> Tools {
+    toml::from_str(text).unwrap()
+}
+
+#[test]
+fn tools_and_installers_follow_the_same_rule() {
+    let before = record(|r| {
+        r.tools = tools(r#"cargo = ["ripgrep"]"#);
+        r.installers.insert("bun".into());
+    });
+    let install = |name: &str| Revert::InstallTool {
+        manager: Manager::Cargo,
+        tool: Tool::Name(name.into()),
+    };
+    let uninstall = |name: &str| Revert::UninstallTool {
+        manager: Manager::Cargo,
+        name: name.into(),
+    };
+    assert!(changed(&before, install("bat")));
+    assert!(!changed(&before, install("ripgrep")));
+    assert!(changed(&before, uninstall("ripgrep")));
+    assert!(!changed(&before, uninstall("bat")));
+    // Each manager has a list of its own.
+    let uv = Revert::InstallTool {
+        manager: Manager::Uv,
+        tool: Tool::Name("ripgrep".into()),
+    };
+    assert!(changed(&before, uv));
+
+    assert!(changed(&before, Revert::RunInstaller("rustup".into())));
+    assert!(!changed(&before, Revert::RunInstaller("bun".into())));
+}
+
+#[test]
+fn installs_a_missing_tool_again_when_the_fleet_changed_its_source() {
+    let before = record(|r| {
+        r.tools = tools(r#"cargo = [{ name = "x", git = "https://example.com/x", branch = "a" }]"#);
+    });
+    let moved = tools(r#"cargo = [{ name = "x", git = "https://example.com/x", branch = "b" }]"#);
+    let install = |tools: &Tools| Revert::InstallTool {
+        manager: Manager::Cargo,
+        tool: tools.of(Manager::Cargo)[0].clone(),
+    };
+    assert!(!changed(&before, install(&before.tools)));
+    assert!(changed(&before, install(&moved)));
+}

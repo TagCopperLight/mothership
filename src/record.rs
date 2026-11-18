@@ -1,5 +1,5 @@
 use crate::{
-    fleet::Fleet,
+    fleet::{Fleet, Manager, Tool, Tools},
     pacman::{self, Db},
     revert::Revert,
     walk,
@@ -26,6 +26,8 @@ pub struct Record {
     shell: Option<String>,
     services: BTreeSet<String>,
     user_services: BTreeSet<String>,
+    tools: Tools,
+    installers: BTreeSet<String>,
     /// The MD5 of each /etc file as apply last left it.
     etc: BTreeMap<PathBuf, String>,
 }
@@ -52,6 +54,10 @@ impl Record {
         Ok(match revert {
             Revert::Install(name) => !self.packages.contains(name),
             Revert::Uninstall(name) => self.packages.contains(name),
+            Revert::InstallTool { manager, tool } => self.tool(*manager, tool.name()) != Some(tool),
+            Revert::ReinstallTool { .. } => true,
+            Revert::UninstallTool { manager, name } => self.tool(*manager, name).is_some(),
+            Revert::RunInstaller(name) => !self.installers.contains(name),
             Revert::Join(group) => !self.groups.contains(group),
             Revert::Leave(group) => self.groups.contains(group),
             Revert::Shell(shell) => self.shell.as_ref() != Some(shell),
@@ -94,6 +100,10 @@ impl Record {
         Ok(())
     }
 
+    pub fn tool(&self, manager: Manager, name: &str) -> Option<&Tool> {
+        self.tools.find(manager, name)
+    }
+
     fn units(&self, user: bool) -> &BTreeSet<String> {
         if user {
             &self.user_services
@@ -129,6 +139,8 @@ impl Record {
             shell: system.shell.clone(),
             services: system.services.iter().cloned().collect(),
             user_services: system.user_services.iter().cloned().collect(),
+            tools: system.tools.clone(),
+            installers: system.installers.iter().map(|i| i.name.clone()).collect(),
             etc,
         })
     }

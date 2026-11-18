@@ -32,7 +32,7 @@ groups = ["docker"]
 services = ["NetworkManager.service"]
 user_services = []
 
-[[installers]]
+[[installers]]                        # run as you when `creates` is missing
 name = "bun"
 run = "curl -fsSL https://bun.sh/install | bash"
 creates = "~/.bun"
@@ -40,8 +40,8 @@ creates = "~/.bun"
 [etc_modes]                           # default 644, or 755 if executable
 "sudoers.d/wheel" = "440"
 
-[tools]
-cargo = ["cargo-nextest", { name = "mytool", git = "https://github.com/me/mytool" }]
+[tools]                               # cargo, uv and bun, installed as you
+cargo = ["cargo-nextest", { name = "mytool", git = "https://github.com/me/mytool", branch = "dev" }]
 ```
 
 `ignore.txt` holds `<kind> <glob>` lines, such as `home ~/.cache` or `package linux-firmware-*`. `*` stays in one folder, `**` crosses folders.

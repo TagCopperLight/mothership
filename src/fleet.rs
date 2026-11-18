@@ -1,6 +1,6 @@
 use crate::{cmd, ignore::Ignore, user};
 use anyhow::{Context, Result};
-use serde::{Deserialize, Deserializer, de};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -54,30 +54,79 @@ impl<'de> Deserialize<'de> for Mode {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Installer {
     pub name: String,
+    /// A shell command, run as the user.
+    pub run: String,
     pub creates: String,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields, default)]
 pub struct Tools {
-    pub cargo: Vec<Tool>,
-    pub uv: Vec<Tool>,
-    pub bun: Vec<Tool>,
+    cargo: Vec<Tool>,
+    uv: Vec<Tool>,
+    bun: Vec<Tool>,
 }
 
-#[derive(Deserialize)]
+impl Tools {
+    pub fn of(&self, manager: Manager) -> &[Tool] {
+        match manager {
+            Manager::Cargo => &self.cargo,
+            Manager::Uv => &self.uv,
+            Manager::Bun => &self.bun,
+        }
+    }
+
+    pub fn find(&self, manager: Manager, name: &str) -> Option<&Tool> {
+        self.of(manager).iter().find(|tool| tool.name() == name)
+    }
+}
+
+/// What installs tools outside pacman, as the user.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Manager {
+    Cargo,
+    Uv,
+    Bun,
+}
+
+impl Manager {
+    pub const ALL: [Manager; 3] = [Manager::Cargo, Manager::Uv, Manager::Bun];
+
+    /// The key under `[tools]`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Manager::Cargo => "cargo",
+            Manager::Uv => "uv",
+            Manager::Bun => "bun",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 #[serde(untagged)]
 pub enum Tool {
+    /// From the manager's registry.
     Name(String),
-    Source { name: String },
+    Git(GitTool),
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct GitTool {
+    pub name: String,
+    pub git: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 impl Tool {
     pub fn name(&self) -> &str {
         match self {
-            Tool::Name(name) | Tool::Source { name } => name,
+            Tool::Name(name) => name,
+            Tool::Git(tool) => &tool.name,
         }
     }
 }

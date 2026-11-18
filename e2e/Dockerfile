@@ -15,6 +15,13 @@ RUN useradd -m builder && chown -R builder /build \
  && printf '\n[fleettest]\nSigLevel = Never\nServer = file:///repo\n' >> /etc/pacman.conf \
  && pacman -Sy
 
+# A crate cargo installs from git, with a `loud` branch that prints otherwise.
+COPY crates /crates
+RUN cd /crates/hello && git init -q -b main && git add -A \
+ && git -c user.name=Me -c user.email=me@example.com commit -qm hello \
+ && git checkout -qb loud && sed -i 's/"hello"/"HELLO"/' src/main.rs \
+ && git -c user.name=Me -c user.email=me@example.com commit -qam loud && git checkout -q main
+
 # No systemd runs in the container, so systemctl only logs what it was asked.
 COPY bin/systemctl bin/fake-aur /usr/local/bin/
 RUN touch /var/log/systemctl.log && chmod 666 /var/log/systemctl.log

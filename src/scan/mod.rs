@@ -5,7 +5,7 @@ mod home;
 mod packages;
 mod services;
 mod settings;
-mod tools;
+pub mod tools;
 
 use crate::{cmd, edit::Add, fleet::Fleet, pacman::Db, preview::Preview, revert::Revert};
 use anyhow::{Result, bail};

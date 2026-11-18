@@ -10,6 +10,7 @@ mod record;
 mod revert;
 mod review;
 mod scan;
+mod tools;
 mod user;
 mod walk;
 

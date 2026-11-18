@@ -1,7 +1,7 @@
 use crate::{
     cmd,
-    fleet::{Fleet, Mode},
-    pacman, user,
+    fleet::{Fleet, Manager, Mode, Tool},
+    pacman, tools, user,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -17,6 +17,20 @@ use std::{
 pub enum Revert {
     Install(String),
     Uninstall(String),
+    InstallTool {
+        manager: Manager,
+        tool: Tool,
+    },
+    /// The fleet moved it to another source.
+    ReinstallTool {
+        manager: Manager,
+        tool: Tool,
+    },
+    UninstallTool {
+        manager: Manager,
+        name: String,
+    },
+    RunInstaller(String),
     WriteEtc(PathBuf),
     RestoreEtc {
         path: PathBuf,
@@ -44,8 +58,10 @@ pub enum Revert {
 impl Revert {
     pub fn describe(&self) -> String {
         match self {
-            Revert::Install(_) => "install".into(),
-            Revert::Uninstall(_) => "uninstall".into(),
+            Revert::Install(_) | Revert::InstallTool { .. } => "install".into(),
+            Revert::Uninstall(_) | Revert::UninstallTool { .. } => "uninstall".into(),
+            Revert::ReinstallTool { .. } => "reinstall from the fleet's source".into(),
+            Revert::RunInstaller(_) => "run its installer".into(),
             Revert::WriteEtc(_) | Revert::ApplyFile { .. } => "write the fleet's version".into(),
             Revert::RestoreEtc { .. } => "restore the package's version".into(),
             Revert::DeleteEtc(_) => "delete".into(),
@@ -58,16 +74,21 @@ impl Revert {
     }
 }
 
-/// Packages go first, since the files and services after them may come from them. User units go
-/// last, after chezmoi writes theirs.
+/// Packages go first, since the rest may come from them, and installers before tools, since bun
+/// comes from one. User units go last, after chezmoi writes theirs.
 pub fn run(fleet: &Fleet, reverts: &[&Revert]) -> Result<()> {
     let (mut install, mut uninstall, mut files) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut installers, mut tools) = (Vec::new(), Vec::new());
     let (mut etc, mut account, mut system, mut user_units) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for revert in reverts.iter().copied() {
         match revert {
             Revert::Install(name) => install.push(name.as_str()),
             Revert::Uninstall(name) => uninstall.push(name.as_str()),
+            Revert::RunInstaller(name) => installers.push(name),
+            Revert::InstallTool { .. }
+            | Revert::ReinstallTool { .. }
+            | Revert::UninstallTool { .. } => tools.push(revert),
             Revert::WriteEtc(_) | Revert::RestoreEtc { .. } | Revert::DeleteEtc(_) => {
                 etc.push(revert)
             }
@@ -85,6 +106,26 @@ pub fn run(fleet: &Fleet, reverts: &[&Revert]) -> Result<()> {
     }
     if !uninstall.is_empty() {
         uninstall_packages(&uninstall)?;
+    }
+    for name in installers {
+        let installer = fleet
+            .system
+            .installers
+            .iter()
+            .find(|installer| &installer.name == name)
+            .with_context(|| format!("system.toml has no installer {name}"))?;
+        tools::run_installer(installer)?;
+    }
+    for revert in tools {
+        match revert {
+            Revert::InstallTool { manager, tool } => tools::install(*manager, tool)?,
+            Revert::ReinstallTool { manager, tool } => {
+                tools::uninstall(*manager, tool.name())?;
+                tools::install(*manager, tool)?;
+            }
+            Revert::UninstallTool { manager, name } => tools::uninstall(*manager, name)?,
+            _ => unreachable!("sorted above"),
+        }
     }
     for revert in &etc {
         change_etc(fleet, revert)?;
