@@ -3,6 +3,7 @@ use crate::{
     cmd,
     edit::{Add, Key},
     fleet::{self, Fleet, Tool},
+    user,
 };
 use anyhow::Result;
 use std::{collections::BTreeSet, fs};
@@ -81,7 +82,7 @@ fn compare(key: Key, declared: &[Tool], installed: &BTreeSet<String>) -> Vec<Ite
 
 /// bun writes this file on the first `bun add -g`, so no file means no globals.
 fn bun_globals() -> Result<BTreeSet<String>> {
-    let path = fleet::home().join(".bun/install/global/package.json");
+    let path = user::home().join(".bun/install/global/package.json");
     if !path.exists() {
         return Ok(BTreeSet::new());
     }

@@ -240,6 +240,7 @@ fn appends_ignore_lines_the_ignore_list_then_matches() {
         detail: String::new(),
         secret: false,
         add: None,
+        revert: None,
         preview: crate::preview::Preview::None,
     };
     ignore(&checkout.fleet, &crate::scan::ignore_line(&item)).unwrap();
@@ -261,8 +262,19 @@ fn copies_files_and_symlinks_into_etc() {
     unix::fs::symlink("/run/resolv.conf", machine.join("resolv.conf")).unwrap();
     let etc = checkout.fleet.type_dir.join("etc");
 
-    copy_etc(&etc.join("sub/locale.conf"), &machine.join("locale.conf")).unwrap();
-    copy_etc(&etc.join("resolv.conf"), &machine.join("resolv.conf")).unwrap();
+    let fleet = &checkout.fleet;
+    copy_etc(
+        fleet,
+        Path::new("sub/locale.conf"),
+        &machine.join("locale.conf"),
+    )
+    .unwrap();
+    copy_etc(
+        fleet,
+        Path::new("resolv.conf"),
+        &machine.join("resolv.conf"),
+    )
+    .unwrap();
     assert_eq!(
         fs::read_to_string(etc.join("sub/locale.conf")).unwrap(),
         "LANG=en_US.UTF-8\n"
@@ -271,7 +283,39 @@ fn copies_files_and_symlinks_into_etc() {
         fs::read_link(etc.join("resolv.conf")).unwrap(),
         Path::new("/run/resolv.conf")
     );
-    assert!(copy_etc(&etc.join("machine"), &machine).is_err());
+    assert!(copy_etc(fleet, Path::new("machine"), &machine).is_err());
+    assert!(!checkout.system().contains("etc_modes"));
+}
+
+#[test]
+fn copying_keeps_a_mode_git_cannot_in_etc_modes() {
+    let checkout = Checkout::new();
+    let machine = checkout.dir.path().join("wheel");
+    fs::write(&machine, "%wheel ALL=(ALL:ALL) ALL\n").unwrap();
+    fs::set_permissions(&machine, fs::Permissions::from_mode(0o640)).unwrap();
+    let rel = Path::new("sudoers.d/wheel");
+    copy_etc(&checkout.fleet, rel, &machine).unwrap();
+    assert!(
+        checkout
+            .system()
+            .ends_with("\n[etc_modes]\n\"sudoers.d/wheel\" = \"640\"\n")
+    );
+    let copied = checkout.fleet.etc_dir().join(rel);
+    let mode = fs::metadata(&copied).unwrap().permissions().mode() & 0o7777;
+    assert_eq!(mode, 0o644);
+
+    fs::set_permissions(&machine, fs::Permissions::from_mode(0o644)).unwrap();
+    copy_etc(&checkout.fleet, rel, &machine).unwrap();
+    assert!(!checkout.system().contains("sudoers.d/wheel"));
+}
+
+#[test]
+fn modes_parse_as_octal_and_reject_anything_else() {
+    let parse = |text: &str| toml::from_str::<System>(&format!("etc_modes = {{ a = \"{text}\" }}"));
+    assert_eq!(parse("440").unwrap().etc_modes[Path::new("a")], Mode(0o440));
+    assert!(parse("abc").is_err());
+    assert!(parse("99").is_err());
+    assert!(parse("77777").is_err());
 }
 
 #[test]

@@ -3,7 +3,7 @@ use crate::{
     edit::Add,
     fleet::{self, Fleet},
     preview::Preview,
-    walk,
+    user, walk,
 };
 use anyhow::Result;
 use std::{
@@ -13,7 +13,7 @@ use std::{
 
 /// Only dotfiles at the top of ~ count: the visible folders hold data, not config.
 pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
-    let home = fleet::home();
+    let home = user::home();
     let tools = &fleet.system.tools;
     let mut known: HashSet<PathBuf> = managed.iter().cloned().collect();
     known.insert(fleet.dir.clone());

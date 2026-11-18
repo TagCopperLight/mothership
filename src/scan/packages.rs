@@ -1,16 +1,12 @@
 use super::{Item, Kind};
-use crate::{edit::Add, fleet::Fleet, pacman::Db, preview::Preview};
+use crate::{edit::Add, fleet::Fleet, pacman::Db, preview::Preview, revert::Revert};
 use anyhow::Result;
 use std::collections::BTreeSet;
 
 pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
-    let mut listed = BTreeSet::new();
-    for name in fleet
-        .system
-        .packages
-        .iter()
-        .chain(&fleet.system.built_packages)
-    {
+    let installed_here = fleet.packages()?;
+    let mut listed = installed_here.clone();
+    for name in &fleet.system.built_packages {
         listed.extend(fleet.package_list(name)?);
     }
     let installed: BTreeSet<&String> = db.packages.iter().map(|p| &p.name).collect();
@@ -21,6 +17,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         .map(|p| {
             Item::new(Kind::Package, &p.name, "installed, not listed")
                 .with(Add::ListPackage(p.name.clone()))
+                .reverting(Revert::Uninstall(p.name.clone()))
                 .showing(Preview::Text(p.description.clone()))
         })
         .collect();
@@ -29,8 +26,14 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
             .iter()
             .filter(|name| !installed.contains(name))
             .map(|name| {
-                Item::new(Kind::Package, name, "listed, not installed")
-                    .with(Add::UnlistPackage(name.clone()))
+                let item = Item::new(Kind::Package, name, "listed, not installed")
+                    .with(Add::UnlistPackage(name.clone()));
+                // Other repos build these, so there's nothing to install them from.
+                if installed_here.contains(name) {
+                    item.reverting(Revert::Install(name.clone()))
+                } else {
+                    item
+                }
             }),
     );
     Ok(items)

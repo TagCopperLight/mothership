@@ -1,5 +1,5 @@
 use super::{Item, Kind};
-use crate::{cmd, edit::Add, fleet, preview::Preview};
+use crate::{cmd, edit::Add, preview::Preview, revert::Revert, user};
 use anyhow::Result;
 
 pub fn scan() -> Result<Vec<Item>> {
@@ -11,16 +11,21 @@ pub fn scan() -> Result<Vec<Item>> {
         if here == b'R' || target == b'R' {
             continue;
         }
-        let detail = if here != b' ' {
+        let edited = here != b' ';
+        let detail = if edited {
             "edited here"
         } else {
             "changed in the repo, not applied"
         };
-        let path = &line[3..];
+        let path = user::home().join(&line[3..]);
         items.push(
-            Item::new(Kind::File, format!("~/{path}"), detail)
-                .with(Add::Update(fleet::home().join(path)))
-                .showing(Preview::Chezmoi(fleet::home().join(path))),
+            Item::new(Kind::File, format!("~/{}", &line[3..]), detail)
+                .with(Add::Update(path.clone()))
+                .reverting(Revert::ApplyFile {
+                    path: path.clone(),
+                    edited,
+                })
+                .showing(Preview::Chezmoi(path)),
         );
     }
     Ok(items)

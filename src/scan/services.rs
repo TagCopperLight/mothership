@@ -1,8 +1,10 @@
 use super::{Item, Kind};
 use crate::{
     edit::{Add, Key},
-    fleet::{self, Fleet},
+    fleet::Fleet,
     preview::Preview,
+    revert::Revert,
+    user,
 };
 use anyhow::{Context, Result};
 use globset::Glob;
@@ -32,7 +34,7 @@ pub fn scan(fleet: &Fleet) -> Result<Vec<Item>> {
         PathBuf::from("/usr/lib/systemd/system"),
     ];
     let user = [
-        fleet::home().join(".config/systemd/user"),
+        user::home().join(".config/systemd/user"),
         PathBuf::from("/etc/systemd/user"),
         PathBuf::from("/run/systemd/user"),
         PathBuf::from("/usr/lib/systemd/user"),
@@ -75,6 +77,10 @@ fn check(
         .filter(|unit| !presets.enables(unit) && !covered.contains(*unit))
         .map(|unit| {
             Item::new(kind, unit, "enabled, not declared")
+                .reverting(Revert::Disable {
+                    unit: unit.clone(),
+                    user: kind == Kind::UserService,
+                })
                 .with(Add::Declare {
                     key,
                     name: unit.clone(),
@@ -90,10 +96,15 @@ fn check(
             .iter()
             .filter(|unit| !enabled.contains(*unit))
             .map(|unit| {
-                Item::new(kind, unit, "declared, not enabled").with(Add::Undeclare {
-                    key,
-                    name: unit.clone(),
-                })
+                Item::new(kind, unit, "declared, not enabled")
+                    .with(Add::Undeclare {
+                        key,
+                        name: unit.clone(),
+                    })
+                    .reverting(Revert::Enable {
+                        unit: unit.clone(),
+                        user: kind == Kind::UserService,
+                    })
             }),
     );
     Ok(items)

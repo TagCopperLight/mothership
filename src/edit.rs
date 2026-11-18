@@ -1,9 +1,14 @@
-use crate::{cmd, fleet::Fleet, prompt::Prompt, walk};
+use crate::{
+    cmd,
+    fleet::{Fleet, Mode},
+    prompt::Prompt,
+    walk,
+};
 use anyhow::{Context, Result, bail};
 use std::{
     fs,
     io::ErrorKind,
-    os::unix,
+    os::unix::{self, fs::PermissionsExt},
     path::{Path, PathBuf},
 };
 use toml_edit::{Array, DocumentMut, Value, value};
@@ -137,8 +142,8 @@ impl Add {
                 }
                 cmd::run("chezmoi", &["re-add", &path.to_string_lossy()])?;
             }
-            Add::CopyEtc(path) => copy_etc(&etc_source(fleet, path), path)?,
-            Add::RemoveEtc(path) => remove_etc(fleet, &etc_source(fleet, path))?,
+            Add::CopyEtc(path) => copy_etc(fleet, etc_rel(path), path)?,
+            Add::RemoveEtc(path) => remove_etc(fleet, &fleet.etc_dir().join(etc_rel(path)))?,
             Add::Pref {
                 user_js,
                 key,
@@ -254,14 +259,15 @@ fn source_path(target: &Path) -> Result<PathBuf> {
     ))
 }
 
-fn etc_source(fleet: &Fleet, path: &Path) -> PathBuf {
-    let rel = path
-        .strip_prefix("/etc")
-        .expect("the /etc scan reports paths under /etc");
-    fleet.type_dir.join("etc").join(rel)
+fn etc_rel(path: &Path) -> &Path {
+    path.strip_prefix("/etc")
+        .expect("the /etc scan reports paths under /etc")
 }
 
-fn copy_etc(dest: &Path, path: &Path) -> Result<()> {
+/// A mode git can't keep goes into `etc_modes`.
+fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path) -> Result<()> {
+    let dest = fleet.etc_dir().join(rel);
+    let dest = dest.as_path();
     fs::create_dir_all(dest.parent().expect("under etc/"))?;
     let meta = fs::symlink_metadata(path)?;
     if meta.is_symlink() {
@@ -283,6 +289,24 @@ fn copy_etc(dest: &Path, path: &Path) -> Result<()> {
             read => read?,
         };
         fs::write(dest, bytes)?;
+        let mode = meta.permissions().mode() & 0o7777;
+        let default = Mode::default_for(mode & 0o111 != 0);
+        fs::set_permissions(dest, fs::Permissions::from_mode(default.0))?;
+        let rel = rel.to_string_lossy().into_owned();
+        edit_system(fleet, |doc| {
+            if Mode(mode) == default {
+                if let Some(modes) = doc.get_mut("etc_modes").and_then(|m| m.as_table_like_mut()) {
+                    modes.remove(&rel);
+                }
+                return Ok(());
+            }
+            doc.entry("etc_modes")
+                .or_insert(toml_edit::table())
+                .as_table_like_mut()
+                .context("`etc_modes` in system.toml is not a table")?
+                .insert(&rel, value(format!("{mode:o}")));
+            Ok(())
+        })?;
     }
     Ok(())
 }

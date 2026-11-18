@@ -1,8 +1,10 @@
-use crate::{cmd, ignore::Ignore};
+use crate::{cmd, ignore::Ignore, user};
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de};
 use std::{
-    env, fs,
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -18,12 +20,37 @@ pub struct Fleet {
 pub struct System {
     pub packages: Vec<String>,
     pub built_packages: Vec<String>,
+    /// Installs the listed packages that aren't in pacman's repos. It takes pacman's `-S --needed`.
+    pub aur_helper: Option<String>,
     pub shell: Option<String>,
     pub groups: Vec<String>,
     pub services: Vec<String>,
     pub user_services: Vec<String>,
     pub installers: Vec<Installer>,
     pub tools: Tools,
+    /// Files in etc/ that need another mode than 644, or 755 for executables. git keeps only the
+    /// executable bit.
+    pub etc_modes: BTreeMap<PathBuf, Mode>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Mode(pub u32);
+
+impl Mode {
+    pub fn default_for(executable: bool) -> Mode {
+        Mode(if executable { 0o755 } else { 0o644 })
+    }
+}
+
+impl<'de> Deserialize<'de> for Mode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        u32::from_str_radix(&text, 8)
+            .ok()
+            .filter(|mode| *mode <= 0o7777)
+            .map(Mode)
+            .ok_or_else(|| de::Error::custom(format!("{text} is not a mode like \"440\"")))
+    }
 }
 
 #[derive(Deserialize)]
@@ -94,6 +121,29 @@ impl Fleet {
         self.dir.join("packages").join(format!("{list}.txt"))
     }
 
+    pub fn etc_dir(&self) -> PathBuf {
+        self.type_dir.join("etc")
+    }
+
+    /// `rel` is the file's path under etc/.
+    pub fn etc_mode(&self, rel: &Path) -> Result<Mode> {
+        if let Some(mode) = self.system.etc_modes.get(rel) {
+            return Ok(*mode);
+        }
+        let path = self.etc_dir().join(rel);
+        let meta = fs::metadata(&path).with_context(|| format!("reading {}", path.display()))?;
+        Ok(Mode::default_for(meta.permissions().mode() & 0o111 != 0))
+    }
+
+    /// What the type's package lists install, leaving out the built ones.
+    pub fn packages(&self) -> Result<BTreeSet<String>> {
+        let mut names = BTreeSet::new();
+        for list in &self.system.packages {
+            names.extend(self.package_list(list)?);
+        }
+        Ok(names)
+    }
+
     pub fn package_list(&self, name: &str) -> Result<Vec<String>> {
         let path = self.package_path(name);
         let text =
@@ -107,19 +157,15 @@ impl Fleet {
     }
 }
 
-pub fn home() -> PathBuf {
-    PathBuf::from(env::var_os("HOME").expect("HOME is set"))
-}
-
 pub fn expand(path: &str) -> PathBuf {
     match path.strip_prefix("~/") {
-        Some(rest) => home().join(rest),
+        Some(rest) => user::home().join(rest),
         None => PathBuf::from(path),
     }
 }
 
 pub fn tilde(path: &Path) -> String {
-    match path.strip_prefix(home()) {
+    match path.strip_prefix(user::home()) {
         Ok(rest) => format!("~/{}", rest.display()),
         Err(_) => path.display().to_string(),
     }

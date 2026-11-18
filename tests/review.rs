@@ -8,6 +8,7 @@ fn item(subject: &str) -> Item {
         detail: String::new(),
         secret: false,
         add: None,
+        revert: None,
         preview: crate::preview::Preview::None,
     }
 }

@@ -1,4 +1,4 @@
-use crate::{cmd, walk};
+use crate::{cmd, pacman, walk};
 use anyhow::{Context, Result, bail};
 use std::{
     fs,
@@ -135,8 +135,7 @@ fn original(path: &Path, archive: &Path, color: bool) -> Result<Vec<String>> {
         out.extend(contents(path)?);
         return Ok(out);
     }
-    let member = path.strip_prefix("/")?.to_string_lossy().into_owned();
-    let shipped = cmd::bytes("bsdtar", &["-xOf", &archive.to_string_lossy(), &member])?;
+    let shipped = pacman::shipped(archive, path)?;
     let mut file = tempfile::NamedTempFile::new()?;
     file.write_all(&shipped)?;
     diff(file.path(), path, color)

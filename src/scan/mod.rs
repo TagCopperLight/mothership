@@ -1,13 +1,13 @@
 mod account;
 mod etc;
-mod files;
+pub mod files;
 mod home;
 mod packages;
 mod services;
 mod settings;
 mod tools;
 
-use crate::{cmd, edit::Add, fleet::Fleet, pacman::Db, preview::Preview};
+use crate::{cmd, edit::Add, fleet::Fleet, pacman::Db, preview::Preview, revert::Revert};
 use anyhow::{Result, bail};
 use std::{
     fs,
@@ -87,6 +87,7 @@ pub struct Item {
     pub secret: bool,
     /// None when the fleet has no place for it yet.
     pub add: Option<Add>,
+    pub revert: Option<Revert>,
     pub preview: Preview,
 }
 
@@ -98,8 +99,14 @@ impl Item {
             detail: detail.into(),
             secret: false,
             add: None,
+            revert: None,
             preview: Preview::None,
         }
+    }
+
+    fn reverting(mut self, revert: Revert) -> Self {
+        self.revert = Some(revert);
+        self
     }
 
     fn showing(mut self, preview: Preview) -> Self {
@@ -139,12 +146,9 @@ pub fn collect() -> Result<Report> {
         let mut items = thread::scope(|s| {
             let (fleet, db, managed) = (&fleet, &db, &managed);
             let checks = vec![
-                s.spawn(move || packages::scan(fleet, db)),
+                s.spawn(move || system(fleet, db)),
                 s.spawn(move || tools::scan(fleet)),
                 s.spawn(move || home::scan(fleet, managed)),
-                s.spawn(move || etc::scan(fleet, db)),
-                s.spawn(move || services::scan(fleet)),
-                s.spawn(move || account::scan(fleet)),
                 s.spawn(move || settings::scan(managed)),
             ];
             checks.into_iter().map(join).collect::<Result<Vec<_>>>()
@@ -161,6 +165,20 @@ pub fn collect() -> Result<Report> {
         fleet,
         shown,
         ignored: ignored.len(),
+    })
+}
+
+/// The checks apply acts on: what lives outside $HOME, apart from tools.
+pub fn system(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
+    thread::scope(|s| {
+        let checks = vec![
+            s.spawn(|| packages::scan(fleet, db)),
+            s.spawn(|| etc::scan(fleet, db)),
+            s.spawn(|| services::scan(fleet)),
+            s.spawn(|| account::scan(fleet)),
+        ];
+        let items = checks.into_iter().map(join).collect::<Result<Vec<_>>>()?;
+        Ok(items.into_iter().flatten().collect())
     })
 }
 
@@ -186,12 +204,24 @@ fn managed() -> Result<Vec<PathBuf>> {
 
 pub fn run() -> Result<()> {
     let report = collect()?;
+    let shown: Vec<&Item> = report.shown.iter().collect();
+    print(&shown, |item| {
+        let secret = if item.secret { "  [secret]" } else { "" };
+        format!("{}{secret}", item.detail)
+    });
+    println!(
+        "{} differences, {} ignored by {}",
+        report.shown.len(),
+        report.ignored,
+        crate::fleet::tilde(&report.fleet.ignore_path())
+    );
+    Ok(())
+}
+
+/// Grouped by kind, one line per item.
+pub fn print(items: &[&Item], detail: impl Fn(&Item) -> String) {
     for kind in Kind::ALL {
-        let group: Vec<&Item> = report
-            .shown
-            .iter()
-            .filter(|item| item.kind == kind)
-            .collect();
+        let group: Vec<&&Item> = items.iter().filter(|item| item.kind == kind).collect();
         if group.is_empty() {
             continue;
         }
@@ -203,18 +233,10 @@ pub fn run() -> Result<()> {
             .unwrap_or(0)
             .min(56);
         for item in group {
-            let secret = if item.secret { "  [secret]" } else { "" };
-            println!("  {:width$}  {}{secret}", item.subject, item.detail);
+            println!("  {:width$}  {}", item.subject, detail(item));
         }
         println!();
     }
-    println!(
-        "{} differences, {} ignored by {}",
-        report.shown.len(),
-        report.ignored,
-        crate::fleet::tilde(&report.fleet.ignore_path())
-    );
-    Ok(())
 }
 
 /// A guess, so the report can warn before anything gets committed in clear.

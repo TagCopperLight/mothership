@@ -1,8 +1,9 @@
 use crate::{
     edit,
-    fleet::{self, tilde},
+    fleet::tilde,
     prompt::Prompt,
     scan::{self, Item},
+    user,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -123,7 +124,7 @@ struct Later {
 
 impl Later {
     fn load() -> Result<Self> {
-        let path = fleet::home().join(".local/state/mothership/later.json");
+        let path = user::home().join(".local/state/mothership/later.json");
         let items = match fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text)
                 .with_context(|| format!("parsing {}", path.display()))?,

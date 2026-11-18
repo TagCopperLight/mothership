@@ -2,12 +2,12 @@ use super::{Item, Kind, looks_secret, services};
 use crate::{
     edit::Add,
     fleet::Fleet,
-    pacman::{Db, Package},
+    pacman::{self, Db, Package},
     preview::Preview,
+    revert::Revert,
     walk,
 };
 use anyhow::{Context, Result};
-use md5::{Digest, Md5};
 use std::{
     collections::HashSet,
     fs,
@@ -44,6 +44,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
             Compare::Differs => Some(
                 item("differs from the fleet")
                     .with(Add::CopyEtc(path.clone()))
+                    .reverting(Revert::WriteEtc(path.clone()))
                     .showing(Preview::Diff {
                         old: source,
                         new: path.clone(),
@@ -52,6 +53,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
             Compare::Missing => Some(
                 item("missing, the fleet has it")
                     .with(Add::RemoveEtc(path.clone()))
+                    .reverting(Revert::WriteEtc(path.clone()))
                     .showing(Preview::Contents(source)),
             ),
             Compare::Unreadable => Some(item("unreadable without root")),
@@ -95,6 +97,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         looks_secret(
             Item::new(Kind::Etc, path.display().to_string(), "from no package")
                 .with(Add::CopyEtc(path.clone()))
+                .reverting(Revert::DeleteEtc(path.clone()))
                 .showing(Preview::Contents(path.clone())),
             path,
         )
@@ -142,13 +145,13 @@ fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
         }
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    let actual: String = Md5::digest(&bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    Ok((actual != md5).then(|| {
+    Ok((pacman::md5(&bytes) != md5).then(|| {
         item("changed from the package's version")
             .with(Add::CopyEtc(path.to_path_buf()))
+            .reverting(Revert::RestoreEtc {
+                path: path.to_path_buf(),
+                archive: package.archive(),
+            })
             .showing(Preview::Original {
                 path: path.to_path_buf(),
                 archive: package.archive(),

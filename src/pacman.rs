@@ -1,4 +1,6 @@
+use crate::cmd;
 use anyhow::{Context, Result};
+use md5::{Digest, Md5};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -17,7 +19,7 @@ pub struct Db {
 pub struct Package {
     pub name: String,
     pub version: String,
-    arch: String,
+    pub arch: String,
     pub description: String,
     pub explicit: bool,
     /// Absolute paths. Folders end with `/`.
@@ -89,6 +91,20 @@ impl Package {
             self.name, self.version, self.arch
         ))
     }
+}
+
+/// The file as the package shipped it, from the archive in pacman's cache.
+pub fn shipped(archive: &Path, path: &Path) -> Result<Vec<u8>> {
+    let member = path.strip_prefix("/")?.to_string_lossy().into_owned();
+    cmd::bytes("bsdtar", &["-xOf", &archive.to_string_lossy(), &member])
+}
+
+/// pacman records config files by their MD5.
+pub fn md5(bytes: &[u8]) -> String {
+    Md5::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn section<'a>(text: &'a str, name: &str) -> impl Iterator<Item = &'a str> {
