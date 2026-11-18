@@ -54,6 +54,7 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
         .iter()
         .map(|path| {
             looks_secret(
+                fleet,
                 Item::new(Kind::Home, fleet::tilde(path), "not in the fleet")
                     .with(Add::Track {
                         path: path.clone(),

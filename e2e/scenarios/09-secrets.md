@@ -52,13 +52,13 @@ $ printf 's\ny\na\ny\na\n' | sudo mothership review
 [2/3] Untracked config in ~
 ~/.ssh  not in the fleet  [secret]
   add: add it to chezmoi, encrypted
-  (a)dd (i)gnore (l)ater (p)ass (q)uit? a
+  (a)dd (n)ot secret (i)gnore (l)ater (p)ass (q)uit? a
   That adds 1 files. Go on [y/N]? y
 [3/3] /etc
 /etc/wifi.conf  from no package  [secret]
   add: copy it into the type's etc/, encrypted
   revert: delete
-  (a)dd (r)evert (i)gnore (l)ater (p)ass (q)uit? a
+  (a)dd (n)ot secret (r)evert (i)gnore (l)ater (p)ass (q)uit? a
 3 added, 0 reverted, 0 ignored, 0 put off for later, 0 passed
 Check the changes with `git -C ~/.local/share/chezmoi diff`, then commit.
 $ cd ~/.local/share/chezmoi && find dot_ssh dot_config types/workstation/etc/wifi.conf.age | sort
@@ -76,6 +76,30 @@ $ grep -c wifi ~/.local/share/chezmoi/types/workstation/system.toml
 $ cd ~/.local/share/chezmoi && git add -A && git commit -qm "Add the secrets"
 ```
 
+An editor keeps its settings for its owner only, though they hold no secret. Review lets me say
+so, and the scan shows the folder as an ordinary one from then on.
+
+```console
+$ mkdir -p ~/.config/editor && echo "theme = dark" > ~/.config/editor/settings &&
+> chmod 600 ~/.config/editor/settings
+$ printf 'n\n' | sudo mothership review
+[1/1] Untracked config in ~
+~/.config/editor  not in the fleet  [secret]
+  add: add it to chezmoi, encrypted
+  (a)dd (n)ot secret (i)gnore (l)ater (p)ass (q)uit? n
+0 added, 0 reverted, 0 ignored, 0 put off for later, 0 passed
+1 marked not secret, which the next review shows as ordinary files
+Check the changes with `git -C ~/.local/share/chezmoi diff`, then commit.
+$ cat ~/.local/share/chezmoi/types/workstation/not-secret.txt
+~/.config/editor
+$ sudo mothership scan
+Untracked config in ~ (1)
+  ~/.config/editor  not in the fleet
+
+1 differences, \d+ ignored by ~/.local/share/chezmoi/types/workstation/ignore.txt (re)
+$ rm -r ~/.config/editor
+```
+
 A secret the fleet already holds in clear shows up too. Review encrypts it and reminds me to
 change it.
 
@@ -85,7 +109,7 @@ $ printf 'a\n' | sudo mothership review
 [1/1] Files chezmoi tracks
 ~/.netrc  in the fleet in clear  [secret]
   add: copy this machine's version into chezmoi, encrypted
-  (a)dd (i)gnore (l)ater (p)ass (q)uit? a
+  (a)dd (n)ot secret (i)gnore (l)ater (p)ass (q)uit? a
   git history keeps the version in clear, so change it.
 1 added, 0 reverted, 0 ignored, 0 put off for later, 0 passed
 Check the changes with `git -C ~/.local/share/chezmoi diff`, then commit.

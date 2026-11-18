@@ -218,6 +218,16 @@ pub fn ignore(fleet: &Fleet, line: &str) -> Result<()> {
     append_line(&fleet.ignore_path(), line)
 }
 
+/// The scan shows the item as an ordinary one from then on.
+pub fn not_secret(fleet: &Fleet, subject: &str) -> Result<()> {
+    let path = fleet.not_secret_path();
+    if !path.exists() {
+        fs::write(&path, "").with_context(|| format!("writing {}", path.display()))?;
+        user::own(&path)?;
+    }
+    append_line(&path, &globset::escape(subject))
+}
+
 /// Apply installs a package from pacman's repos or the AUR. One found in neither was built
 /// here, and only `built_packages`, which apply never installs, can hold it.
 fn package_key(fleet: &Fleet, name: &str) -> Result<Key> {

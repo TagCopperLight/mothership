@@ -56,7 +56,7 @@ gamma  listed, not installed
 [5/10] Untracked config in ~
 ~/.config/tokens  not in the fleet  [secret]
   add: add it to chezmoi, encrypted
-  (a)dd (i)gnore (l)ater (p)ass (q)uit? i
+  (a)dd (n)ot secret (i)gnore (l)ater (p)ass (q)uit? i
 [6/10] /etc
 /etc/fleet.conf  differs from the fleet
     @@ -1 +1,2 @@

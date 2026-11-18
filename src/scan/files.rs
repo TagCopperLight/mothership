@@ -1,4 +1,4 @@
-use super::{Item, Kind, guess_secret, looks_secret};
+use super::{Item, Kind, Secret, looks_secret};
 use crate::{
     cmd,
     edit::Add,
@@ -47,9 +47,9 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
             })
             .showing(Preview::Chezmoi(path.clone()));
         items.push(if encrypted.contains(&path) {
-            item.secret()
+            item.secret(Secret::Fleet)
         } else {
-            looks_secret(item, &path)
+            looks_secret(fleet, item, &path)
         });
         listed.insert(path);
     }
@@ -63,20 +63,20 @@ pub fn scan(fleet: &Fleet, managed: &[PathBuf]) -> Result<Vec<Item>> {
 
     // A template takes its secrets from encrypted files.
     for path in managed {
-        if !listed.contains(path)
-            && !encrypted.contains(path)
-            && !templates.contains(path)
-            && guess_secret(path)
-        {
-            let add = Add::Update {
-                path: path.clone(),
-                encrypt: false,
-            };
-            items.push(
-                Item::new(Kind::File, tilde(path), "in the fleet in clear")
-                    .with(add)
-                    .secret(),
-            );
+        if listed.contains(path) || encrypted.contains(path) || templates.contains(path) {
+            continue;
+        }
+        let add = Add::Update {
+            path: path.clone(),
+            encrypt: false,
+        };
+        let item = looks_secret(
+            fleet,
+            Item::new(Kind::File, tilde(path), "in the fleet in clear").with(add),
+            path,
+        );
+        if item.secret == Secret::Guessed {
+            items.push(item);
         }
     }
     Ok(items)

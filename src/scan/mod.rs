@@ -83,13 +83,23 @@ impl Kind {
     }
 }
 
+/// Whether an item is a secret, and why.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Secret {
+    No,
+    /// Only its owner can read it, and not-secret.txt doesn't clear it.
+    Guessed,
+    /// The fleet keeps it encrypted.
+    Fleet,
+    /// The fleet keeps it encrypted, and this machine's key can't open it.
+    Locked,
+}
+
 pub struct Item {
     pub kind: Kind,
     pub subject: String,
     pub detail: String,
-    pub secret: bool,
-    /// A secret of the fleet this machine's key can't open.
-    pub locked: bool,
+    pub secret: Secret,
     /// None when the fleet has no place for it yet.
     pub add: Option<Add>,
     /// Why it has no add, when the fleet has a place for its kind but not for this one.
@@ -104,8 +114,7 @@ impl Item {
             kind,
             subject: subject.into(),
             detail: detail.into(),
-            secret: false,
-            locked: false,
+            secret: Secret::No,
             add: None,
             no_add: None,
             revert: None,
@@ -115,15 +124,14 @@ impl Item {
 
     fn locked(kind: Kind, subject: impl Into<String>) -> Self {
         let mut item = Item::new(kind, subject, "this machine's key can't open it");
-        item.secret = true;
-        item.locked = true;
+        item.secret = Secret::Locked;
         item
     }
 
     /// Review never shows a secret's contents, since its screen can end up in logs and
     /// transcripts, and adds it encrypted.
-    fn secret(mut self) -> Self {
-        self.secret = true;
+    fn secret(mut self, secret: Secret) -> Self {
+        self.secret = secret;
         self.preview = Preview::None;
         self.add = self.add.map(|add| add.encrypted().unwrap_or(add));
         self
@@ -285,8 +293,7 @@ pub fn run() -> Result<()> {
     let report = collect()?;
     let shown: Vec<&Item> = report.shown.iter().collect();
     print(&shown, |item| {
-        let secret = if item.secret { "  [secret]" } else { "" };
-        format!("{}{secret}", item.detail)
+        format!("{}{}", item.detail, item.secret.mark())
     });
     println!(
         "{} differences, {} ignored by {}",
@@ -318,11 +325,17 @@ pub fn print(items: &[&Item], detail: impl Fn(&Item) -> String) {
     }
 }
 
+impl Secret {
+    pub fn mark(self) -> &'static str {
+        if self == Secret::No { "" } else { "  [secret]" }
+    }
+}
+
 /// A guess, so a secret is never added in clear by mistake: a file only its owner can read, or
-/// a folder holding one. A folder it can't open counts too.
-fn looks_secret(item: Item, path: &Path) -> Item {
-    if guess_secret(path) {
-        item.secret()
+/// a folder holding one. A folder it can't open counts too. not-secret.txt clears the guess.
+fn looks_secret(fleet: &Fleet, item: Item, path: &Path) -> Item {
+    if !fleet.not_secret.matches(&item.subject) && guess_secret(path) {
+        item.secret(Secret::Guessed)
     } else {
         item
     }

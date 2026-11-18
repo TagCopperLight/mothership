@@ -4,7 +4,8 @@ use crate::{
     prompt::Prompt,
     record::{self, Record},
     revert::{self, Revert},
-    scan, user,
+    scan::{self, Secret},
+    user,
 };
 use anyhow::Result;
 use std::path::Path;
@@ -23,7 +24,7 @@ pub fn run() -> Result<()> {
         match &item.revert {
             Some(revert) if record.fleet_changed(revert, &db)? => todo.push(item),
             _ if fleet.ignore.matches(item) => {}
-            _ if item.locked => locked.push(item),
+            _ if item.secret == Secret::Locked => locked.push(item),
             Some(Revert::WriteEtc(_) | Revert::ApplyFile { .. }) => edited.push(item),
             _ => left += 1,
         }

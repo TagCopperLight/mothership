@@ -1,4 +1,4 @@
-use super::{Item, Kind, looks_secret, services};
+use super::{Item, Kind, Secret, looks_secret, services};
 use crate::{
     edit::Add,
     fleet::{self, Fleet},
@@ -65,7 +65,13 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
             ),
             Compare::Unreadable => Some(item("unreadable without root")),
         };
-        items.extend(item.map(|item| if secret { item.secret() } else { item }));
+        items.extend(item.map(|item| {
+            if secret {
+                item.secret(Secret::Fleet)
+            } else {
+                item
+            }
+        }));
     }
 
     let mut changed = Vec::new();
@@ -75,7 +81,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                 && !declared_paths.contains(path)
                 && !ACCOUNT_FILES.contains(&path.to_string_lossy().as_ref())
             {
-                changed.extend(edited(package, path, md5)?);
+                changed.extend(edited(fleet, package, path, md5)?);
             }
         }
     }
@@ -104,6 +110,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     )?;
     items.extend(walk.unknown.iter().map(|path| {
         looks_secret(
+            fleet,
             Item::new(Kind::Etc, path.display().to_string(), "from no package")
                 .with(Add::CopyEtc {
                     path: path.clone(),
@@ -148,7 +155,7 @@ fn compare(fleet: &Fleet, rel: &Path, path: &Path) -> Result<Compare> {
     })
 }
 
-fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
+fn edited(fleet: &Fleet, package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
     let item = |detail| Item::new(Kind::Etc, path.display().to_string(), detail);
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -173,6 +180,6 @@ fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
                 path: path.to_path_buf(),
                 archive: package.archive(),
             });
-        looks_secret(item, path)
+        looks_secret(fleet, item, path)
     }))
 }

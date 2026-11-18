@@ -20,7 +20,7 @@ recipientsFile = "~/.local/share/chezmoi/types/workstation/recipients.txt"
 - `mothership key` makes the machine's key when it has none, and shows its public half.
 - `mothership trust <name> <key>` adds a machine's key to the type's recipients and encrypts every secret of the type again. `mothership retire <name>` removes one, and lists the secrets to change, since git history keeps what it could open.
 
-A file only its owner can read, or a folder holding one, gets a `[secret]` mark: review never shows it and adds it encrypted. For a secret the mark misses, review's **secret** answer adds the file encrypted. A secret the fleet holds in clear shows up too. A machine whose key isn't among the recipients leaves the secrets alone.
+A file only its owner can read, or a folder holding one, gets a `[secret]` mark: review never shows it and adds it encrypted. For a secret the mark misses, review's **secret** answer adds the file encrypted, and for a file the mark gets wrong, **not secret** writes it into `not-secret.txt`. A secret the fleet holds in clear shows up too. A machine whose key isn't among the recipients leaves the secrets alone.
 
 Review offers to declare a service, group or shell only when the fleet's packages, with their dependencies, or its files provide it, and puts a package found in neither pacman's repos nor the AUR into `built_packages`. It adds a tool only when it comes from the registry or from git, with at most a branch: an editable install, a local folder or a tag waits until the fleet can describe it.
 
@@ -31,6 +31,7 @@ types/<type>/system.toml      what the type has outside $HOME
 types/<type>/etc/             files for /etc, secrets encrypted as <file>.age
 types/<type>/recipients.txt   the age keys that open the type's secrets, each under a `# name`
 types/<type>/ignore.txt       what the scan never reports
+types/<type>/not-secret.txt   paths that look secret but aren't, one glob per line
 ```
 
 The machine names its type and options in `/etc/mothership/machine.toml`:
@@ -72,4 +73,4 @@ etc = ["default/grub"]                # files of etc/ only these machines get
 
 A block takes `packages`, `built_packages`, `services` and `etc`. mothership finds `cpu-intel`, `cpu-amd`, `gpu-intel`, `gpu-amd`, `gpu-nvidia`, `battery` and `gxfp5130` (a fingerprint sensor), and stops when the machine has one its type has no block for, even an empty one.
 
-`ignore.txt` holds `<kind> <glob>` lines, such as `home ~/.cache` or `package linux-firmware-*`. `*` stays in one folder, `**` crosses folders.
+`ignore.txt` holds `<kind> <glob>` lines, such as `home ~/.cache` or `package linux-firmware-*`, and `not-secret.txt` holds globs such as `~/.config/zed/*`. `*` stays in one folder, `**` crosses folders.

@@ -4,7 +4,7 @@ use crate::{
     prompt::Prompt,
     record::{self, Record},
     revert::{self, Revert},
-    scan::{self, Item},
+    scan::{self, Item, Secret},
     user, walk,
 };
 use anyhow::{Context, Result};
@@ -45,13 +45,18 @@ pub fn run() -> Result<()> {
 
     let mut prompt = Prompt::new();
     let (mut added, mut reverted, mut ignored, mut put_off, mut passed) = (0, 0, 0, 0, 0);
+    let mut not_secret = 0;
     'items: for (n, item) in due.iter().enumerate() {
         if terminal {
             print!("\x1b[2J\x1b[3J\x1b[H");
         }
-        let secret = if item.secret { "  [secret]" } else { "" };
         println!("[{}/{}] {}", n + 1, due.len(), item.kind.title());
-        println!("{bold}{}{plain}  {}{secret}", item.subject, item.detail);
+        println!(
+            "{bold}{}{plain}  {}{}",
+            item.subject,
+            item.detail,
+            item.secret.mark()
+        );
         if let Some(waiting) = later.get(item) {
             println!("  waiting for {} days", (now - waiting.first) / DAY);
         }
@@ -60,7 +65,10 @@ pub fn run() -> Result<()> {
         }
         let add = item.add.as_ref();
         // For a secret the scan missed.
-        let encrypted = add.filter(|_| !item.secret).and_then(Add::encrypted);
+        let encrypted = add
+            .filter(|_| item.secret == Secret::No)
+            .and_then(Add::encrypted);
+        let guessed = item.secret == Secret::Guessed;
         let revert = item.revert.as_ref().filter(|_| record.is_some());
         item.preview.show(terminal);
         if let Some(add) = add {
@@ -75,6 +83,9 @@ pub fn run() -> Result<()> {
         }
         if encrypted.is_some() {
             choices.push("(s)ecret");
+        }
+        if guessed {
+            choices.push("(n)ot secret");
         }
         if revert.is_some() {
             choices.push("(r)evert");
@@ -94,6 +105,11 @@ pub fn run() -> Result<()> {
                     }
                     later.remove(item);
                     added += 1;
+                }
+                Some("n") if guessed => {
+                    edit::not_secret(&report.fleet, &item.subject)?;
+                    later.remove(item);
+                    not_secret += 1;
                 }
                 Some("r") if revert.is_some() => {
                     let record = record
@@ -136,7 +152,10 @@ pub fn run() -> Result<()> {
     if waiting > 0 {
         println!("{waiting} put off before and not due yet");
     }
-    if added + ignored > 0 {
+    if not_secret > 0 {
+        println!("{not_secret} marked not secret, which the next review shows as ordinary files");
+    }
+    if added + ignored + not_secret > 0 {
         println!(
             "Check the changes with `git -C {} diff`, then commit.",
             tilde(&report.fleet.dir)

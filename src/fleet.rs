@@ -1,7 +1,7 @@
 use crate::{
     cmd,
     hardware::{self, Hardware},
-    ignore::Ignore,
+    ignore::{Ignore, Paths},
     secrets::{self, Secrets},
     user, walk,
 };
@@ -28,6 +28,8 @@ pub struct Fleet {
     /// The files under etc/ the fleet keeps encrypted, whichever machines get them.
     pub secret_etc: BTreeSet<PathBuf>,
     pub ignore: Ignore,
+    /// What looks secret but isn't.
+    pub not_secret: Paths,
     /// Read from chezmoi's config by `load`.
     secrets: Option<Secrets>,
 }
@@ -177,6 +179,7 @@ impl Tool {
 }
 
 const IGNORE: &str = "ignore.txt";
+const NOT_SECRET: &str = "not-secret.txt";
 
 impl Fleet {
     pub fn load() -> Result<Self> {
@@ -294,6 +297,7 @@ impl Fleet {
             system.services.extend(block.services);
         }
         let ignore = Ignore::load(&type_dir.join(IGNORE))?;
+        let not_secret = Paths::load(&type_dir.join(NOT_SECRET))?;
         Ok(Fleet {
             dir,
             type_dir,
@@ -303,12 +307,17 @@ impl Fleet {
             etc_elsewhere,
             secret_etc,
             ignore,
+            not_secret,
             secrets: None,
         })
     }
 
     pub fn ignore_path(&self) -> PathBuf {
         self.type_dir.join(IGNORE)
+    }
+
+    pub fn not_secret_path(&self) -> PathBuf {
+        self.type_dir.join(NOT_SECRET)
     }
 
     pub fn etc_dir(&self) -> PathBuf {
