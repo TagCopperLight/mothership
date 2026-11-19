@@ -41,9 +41,13 @@ impl Ignore {
     }
 
     pub fn matches(&self, item: &Item) -> bool {
+        self.matches_subject(item.kind, &item.subject)
+    }
+
+    pub fn matches_subject(&self, kind: Kind, subject: &str) -> bool {
         self.sets
-            .get(&item.kind)
-            .is_some_and(|set| set.is_match(&item.subject))
+            .get(&kind)
+            .is_some_and(|set| set.is_match(subject))
     }
 }
 

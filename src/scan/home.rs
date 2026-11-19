@@ -48,7 +48,8 @@ pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<I
                 .is_some_and(|name| name.to_string_lossy().starts_with('.'));
         visible || services::is_enablement(path)
     };
-    let walk = walk::unknown(home, &known, &HashSet::new(), &skip)?;
+    let ignored = |path: &Path| member.ignore.matches_subject(Kind::Home, &user.tilde(path));
+    let walk = walk::unknown(home, &known, &HashSet::new(), &skip, &ignored)?;
     let mut items: Vec<Item> = walk
         .unknown
         .iter()

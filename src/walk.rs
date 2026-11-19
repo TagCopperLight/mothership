@@ -16,6 +16,7 @@ pub fn unknown(
     known: &HashSet<PathBuf>,
     known_dirs: &HashSet<PathBuf>,
     skip: &dyn Fn(&Path) -> bool,
+    ignored: &dyn Fn(&Path) -> bool,
 ) -> Result<Walk> {
     let mut open = known_dirs.clone();
     for path in known.iter().chain(known_dirs) {
@@ -29,18 +30,25 @@ pub fn unknown(
         unknown: Vec::new(),
         unreadable: Vec::new(),
     };
-    visit(root, known, &open, skip, &mut walk)?;
+    let rules = Rules {
+        known,
+        open: &open,
+        skip,
+        ignored,
+    };
+    visit(root, &rules, &mut walk)?;
     walk.unknown.sort();
     Ok(walk)
 }
 
-fn visit(
-    dir: &Path,
-    known: &HashSet<PathBuf>,
-    open: &HashSet<PathBuf>,
-    skip: &dyn Fn(&Path) -> bool,
-    walk: &mut Walk,
-) -> Result<()> {
+struct Rules<'a> {
+    known: &'a HashSet<PathBuf>,
+    open: &'a HashSet<PathBuf>,
+    skip: &'a dyn Fn(&Path) -> bool,
+    ignored: &'a dyn Fn(&Path) -> bool,
+}
+
+fn visit(dir: &Path, rules: &Rules, walk: &mut Walk) -> Result<()> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == ErrorKind::PermissionDenied => {
@@ -52,29 +60,62 @@ fn visit(
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
-        if known.contains(&path) || skip(&path) {
+        if rules.known.contains(&path) || (rules.skip)(&path) {
             continue;
         }
-        let is_dir = entry.file_type()?.is_dir();
-        if open.contains(&path) && is_dir {
-            visit(&path, known, open, skip, walk)?;
-        } else if !is_dir || holds_config(&path, skip) {
+        if !entry.file_type()?.is_dir() {
             walk.unknown.push(path);
+        } else if rules.open.contains(&path) {
+            visit(&path, rules, walk)?;
+        } else {
+            match contents(&path, rules) {
+                Contents::Nothing => {}
+                Contents::New => walk.unknown.push(path),
+                Contents::SomeIgnored => visit(&path, rules, walk)?,
+            }
         }
     }
     Ok(())
 }
 
-fn holds_config(dir: &Path, skip: &dyn Fn(&Path) -> bool) -> bool {
+/// A new folder shows as one line, unless an ignore line names something inside it: the scan
+/// then opens it, so the ignore line applies and the rest still shows.
+enum Contents {
+    Nothing,
+    New,
+    SomeIgnored,
+}
+
+fn contents(dir: &Path, rules: &Rules) -> Contents {
+    if (rules.ignored)(dir) {
+        return Contents::New;
+    }
     let Ok(entries) = fs::read_dir(dir) else {
-        return true;
+        return Contents::New;
     };
-    entries.into_iter().any(|entry| {
-        let Ok(entry) = entry else { return true };
+    let mut found = Contents::Nothing;
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return Contents::New;
+        };
         let path = entry.path();
-        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
-        !skip(&path) && (!is_dir || holds_config(&path, skip))
-    })
+        if (rules.skip)(&path) {
+            continue;
+        }
+        if (rules.ignored)(&path) {
+            return Contents::SomeIgnored;
+        }
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            found = Contents::New;
+            continue;
+        }
+        match contents(&path, rules) {
+            Contents::SomeIgnored => return Contents::SomeIgnored,
+            Contents::New => found = Contents::New,
+            Contents::Nothing => {}
+        }
+    }
+    found
 }
 
 pub fn files(root: &Path) -> Result<Vec<PathBuf>> {

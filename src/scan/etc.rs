@@ -111,6 +111,11 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         &known,
         &known_dirs,
         &services::is_enablement,
+        &|path: &Path| {
+            fleet
+                .ignore
+                .matches_subject(Kind::Etc, &path.display().to_string())
+        },
     )?;
     items.extend(walk.unknown.iter().map(|path| {
         Item::new(Kind::Etc, Change::Added, path.display().to_string(), "new")
