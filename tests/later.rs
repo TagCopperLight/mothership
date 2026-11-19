@@ -1,5 +1,5 @@
 use super::*;
-use crate::scan::{Change, Kind};
+use crate::{kind::Kind, scan::Change};
 use std::fs;
 
 fn item(subject: &str) -> Item {

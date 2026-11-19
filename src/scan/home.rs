@@ -1,4 +1,5 @@
-use super::{Change, Item, Kind};
+use super::{Change, Item};
+use crate::kind::Kind;
 use crate::{
     edit::Add,
     fleet::{Manager, Member},
@@ -47,7 +48,7 @@ pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
                 .is_some_and(|name| name.to_string_lossy().starts_with('.'));
         visible || systemd::is_enablement(path)
     };
-    let ignored = |path: &Path| member.ignore.matches_subject(Kind::Home, &user.tilde(path));
+    let ignored = |path: &Path| member.ignore.matches(Kind::Home, &user.tilde(path));
     let walk =
         user.with_rights(|| walk::unknown(home, &known, &HashSet::new(), &skip, &ignored))?;
     let mut items: Vec<Item> = walk

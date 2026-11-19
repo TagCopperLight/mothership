@@ -1,4 +1,5 @@
-use super::{Change, Item, Kind, Ships};
+use super::{Change, Item, Ships};
+use crate::kind::Kind;
 use crate::{
     edit::{Add, Key},
     fleet::{Fleet, Member},

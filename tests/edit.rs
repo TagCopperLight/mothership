@@ -2,7 +2,8 @@ use super::*;
 use crate::{
     fleet::{Fleet, System, UserConfig},
     hardware::Hardware,
-    ignore::{Ignore, Level},
+    ignore::Ignore,
+    kind::Level,
 };
 use std::{collections::BTreeSet, os::unix};
 use tempfile::TempDir;
@@ -292,7 +293,7 @@ fn tracking_a_folder_stops_unless_confirmed() {
 fn appends_ignore_lines_the_ignore_list_then_matches() {
     let checkout = Checkout::new();
     let mut item = crate::scan::Item::new(
-        crate::scan::Kind::Home,
+        crate::kind::Kind::Home,
         crate::scan::Change::Added,
         "~/.config/odd [name]*",
         "new",
@@ -301,12 +302,12 @@ fn appends_ignore_lines_the_ignore_list_then_matches() {
     let me = &checkout.fleet.members[0];
     ignore(&checkout.fleet, Some(me), &crate::scan::ignore_line(&item)).unwrap();
     let ignore = Ignore::load(&me.ignore_path(), Level::User).unwrap();
-    assert!(ignore.matches(&item));
+    assert!(ignore.matches(item.kind, &item.subject));
     let other = crate::scan::Item {
         subject: "~/.config/odd n".into(),
         ..item
     };
-    assert!(!ignore.matches(&other));
+    assert!(!ignore.matches(other.kind, &other.subject));
 }
 
 #[test]

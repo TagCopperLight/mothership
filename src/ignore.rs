@@ -1,16 +1,10 @@
 use crate::{
-    scan::{Item, Kind},
+    kind::{Kind, Level},
     walk,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use std::{collections::HashMap, path::Path};
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Level {
-    Machine,
-    User,
-}
 
 pub struct Ignore {
     sets: HashMap<Kind, GlobSet>,
@@ -45,11 +39,7 @@ impl Ignore {
         Ok(Ignore { sets })
     }
 
-    pub fn matches(&self, item: &Item) -> bool {
-        self.matches_subject(item.kind, &item.subject)
-    }
-
-    pub fn matches_subject(&self, kind: Kind, subject: &str) -> bool {
+    pub fn matches(&self, kind: Kind, subject: &str) -> bool {
         self.sets
             .get(&kind)
             .is_some_and(|set| in_matching_folder(set, subject))

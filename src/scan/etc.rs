@@ -1,4 +1,5 @@
-use super::{Change, Item, Kind, Secret, services};
+use super::{Change, Item, Secret, services};
+use crate::kind::Kind;
 use crate::{
     edit::Add,
     fleet::{self, Fleet},
@@ -113,11 +114,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         &known,
         &known_dirs,
         &systemd::is_enablement,
-        &|path: &Path| {
-            fleet
-                .ignore
-                .matches_subject(Kind::Etc, &path.display().to_string())
-        },
+        &|path: &Path| fleet.ignore.matches(Kind::Etc, &path.display().to_string()),
     )?;
     for path in &walk.unknown {
         let rel = path.strip_prefix(fleet::ETC)?.to_path_buf();

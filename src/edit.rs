@@ -2,7 +2,7 @@ use crate::{
     chezmoi,
     fleet::{self, Fleet, Manager, Member, Mode, Table, Tool},
     homes,
-    ignore::Level,
+    kind::Level,
     package::Distro,
     pref,
     prompt::Prompt,

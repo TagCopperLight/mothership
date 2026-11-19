@@ -11,7 +11,8 @@ use crate::{
     chezmoi,
     edit::Add,
     fleet::{self, Fleet, Member},
-    ignore::{Level, Paths},
+    ignore::Paths,
+    kind::Kind,
     later::{self, Later},
     package::Db,
     parallel::join,
@@ -30,35 +31,8 @@ use std::{
     path::{Path, PathBuf},
     thread,
 };
-use strum::{EnumString, IntoStaticStr};
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, IntoStaticStr, EnumString)]
-#[strum(serialize_all = "kebab-case")]
-pub enum Kind {
-    Package,
-    Tool,
-    File,
-    Home,
-    Etc,
-    Service,
-    UserService,
-    Account,
-    Dconf,
-    Pref,
-}
 
 impl Kind {
-    pub fn level(self) -> Level {
-        match self {
-            Kind::Package | Kind::Etc | Kind::Service => Level::Machine,
-            _ => Level::User,
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        self.into()
-    }
-
     fn area(self) -> Area {
         match self {
             Kind::Package => Area::Packages,
@@ -293,8 +267,8 @@ fn owner(fleet: &Fleet, item: &Item) -> Option<usize> {
 pub fn ignored(fleet: &Fleet, item: &Item) -> bool {
     item.section != Section::Fleet
         && match item.member {
-            None => fleet.ignore.matches(item),
-            Some(i) => fleet.members[i].ignore.matches(item),
+            None => fleet.ignore.matches(item.kind, &item.subject),
+            Some(i) => fleet.members[i].ignore.matches(item.kind, &item.subject),
         }
 }
 

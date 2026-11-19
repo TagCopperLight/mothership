@@ -1,4 +1,5 @@
-use super::{Change, Item, Kind};
+use super::{Change, Item};
+use crate::kind::Kind;
 use crate::{
     cmd::{self, As},
     edit::Add,
