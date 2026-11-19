@@ -181,8 +181,8 @@ fn shipped<'a>(db: &'a Db, path: &Path) -> Option<&'a String> {
     db.packages
         .iter()
         .flat_map(|package| &package.backups)
-        .find(|(backup, _)| backup == path)
-        .map(|(_, md5)| md5)
+        .find(|backup| backup.path == path)
+        .map(|backup| &backup.md5)
 }
 
 #[cfg(test)]

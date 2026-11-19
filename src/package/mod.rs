@@ -94,11 +94,25 @@ pub struct Package {
     pub explicit: bool,
     /// Folders end with a `/`.
     pub files: Vec<String>,
-    /// The config files the package ships, with the md5 of the version it shipped.
-    pub backups: Vec<(PathBuf, String)>,
+    pub backups: Vec<Backup>,
     pub depends: Vec<String>,
     pub provides: Vec<String>,
     pub archive: Archive,
+}
+
+/// A config file of the package, with the md5 of the version the package put there.
+pub struct Backup {
+    pub path: PathBuf,
+    pub md5: String,
+    pub origin: Origin,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Origin {
+    /// The archive holds the original, so it can be restored.
+    Archive,
+    /// The package's install script wrote it, and nothing keeps the original.
+    Script,
 }
 
 /// Where the package manager keeps the package it installed, which holds the original config.

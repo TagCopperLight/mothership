@@ -4,8 +4,6 @@
 etc /etc/{hosts,hostname,resolv.conf,mtab,fstab,motd,environment,profile,nsswitch.conf}
 etc /etc/{.pwd.lock,ld.so.cache,localtime,ca-certificates.conf}
 etc /etc/{passwd,group,shadow,gshadow,subuid,subgid}-
-etc /etc/alternatives/*
-etc /etc/rc?.d/*
 etc /etc/ssl/certs/**
 etc /etc/pam.d/common-*
 etc /etc/security/opasswd

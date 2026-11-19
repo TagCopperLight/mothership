@@ -31,3 +31,23 @@ fn reads_which_packages_apt_installed_as_dependencies() {
     assert!(!is_auto(&auto, "a", "i386"));
     assert!(!is_auto(&auto, "b", "amd64"));
 }
+
+#[test]
+fn reads_the_config_files_ucf_keeps() {
+    let registry = "openssh-server \t /etc/ssh/sshd_config\ngone \t /etc/gone.conf\n";
+    let hashes = "0123abcd  /etc/ssh/sshd_config\n";
+    let found = ucf(registry, hashes);
+    assert_eq!(found.len(), 1);
+    let (name, backup) = &found[0];
+    assert_eq!(name, "openssh-server");
+    assert_eq!(backup.path, PathBuf::from("/etc/ssh/sshd_config"));
+    assert_eq!(backup.md5, "0123abcd");
+    assert_eq!(backup.origin, Origin::Script);
+}
+
+#[test]
+fn reads_the_secondary_links_of_an_alternative_dpkg_picks() {
+    let auto = "auto\n/usr/bin/awk\nawk.1.gz\n/usr/share/man/man1/awk.1.gz\nnawk\n/usr/bin/nawk\n\n/usr/bin/mawk\n5\n";
+    assert_eq!(picked_by_dpkg(auto), Some(vec!["awk.1.gz", "nawk"]));
+    assert_eq!(picked_by_dpkg(&auto.replacen("auto", "manual", 1)), None);
+}

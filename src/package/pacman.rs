@@ -1,4 +1,4 @@
-use super::{Archive, Distro, Package, in_parallel};
+use super::{Archive, Backup, Distro, Origin, Package, in_parallel};
 use crate::{
     cmd::{self, As},
     fleet::Fleet,
@@ -41,7 +41,11 @@ fn package(dir: &Path) -> Result<Package> {
         provides: names(&desc, "PROVIDES"),
         backups: section(&files, "BACKUP")
             .filter_map(|line| line.split_once('\t'))
-            .map(|(path, md5)| (Path::new("/").join(path), md5.to_owned()))
+            .map(|(path, md5)| Backup {
+                path: Path::new("/").join(path),
+                md5: md5.to_owned(),
+                origin: Origin::Archive,
+            })
             .collect(),
         archive: Archive {
             path: Path::new(CACHE).join(archive),

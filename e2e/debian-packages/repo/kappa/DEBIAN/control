@@ -1,0 +1,6 @@
+Package: kappa
+Version: 1
+Architecture: all
+Maintainer: Me <me@example.com>
+Depends: ucf
+Description: An app whose install script writes to /etc

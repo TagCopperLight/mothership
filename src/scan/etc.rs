@@ -2,7 +2,7 @@ use super::{Change, Item, Kind, Secret, services};
 use crate::{
     edit::Add,
     fleet::{self, Fleet},
-    package::{self, Db, Package},
+    package::{self, Backup, Db, Origin, Package},
     preview::Preview,
     revert::Revert,
     secrets, walk,
@@ -77,12 +77,13 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
 
     let mut changed = Vec::new();
     for package in &db.packages {
-        for (path, md5) in &package.backups {
+        for backup in &package.backups {
+            let path = &backup.path;
             if path.starts_with("/etc")
                 && !declared_paths.contains(path)
                 && !ACCOUNT_FILES.contains(&path.to_string_lossy().as_ref())
             {
-                changed.extend(edited(package, path, md5)?);
+                changed.extend(edited(package, backup)?);
             }
         }
     }
@@ -156,7 +157,8 @@ fn compare(fleet: &Fleet, rel: &Path, path: &Path) -> Result<Compare> {
     })
 }
 
-fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
+fn edited(package: &Package, backup: &Backup) -> Result<Option<Item>> {
+    let path = &backup.path;
     let item = |change, detail| Item::new(Kind::Etc, change, path.display().to_string(), detail);
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -167,21 +169,27 @@ fn edited(package: &Package, path: &Path, md5: &str) -> Result<Option<Item>> {
         }
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    Ok((package::md5(&bytes) != md5).then(|| {
-        let item = item(Change::Edited, "edited")
+    if package::md5(&bytes) == backup.md5 {
+        return Ok(None);
+    }
+    let item = item(Change::Edited, "edited").with(Add::CopyEtc {
+        path: path.clone(),
+        encrypt: false,
+    });
+    let item = match backup.origin {
+        Origin::Archive => item
             .noting(format!("owned by {}", package.name))
-            .with(Add::CopyEtc {
-                path: path.to_path_buf(),
-                encrypt: false,
-            })
             .reverting(Revert::RestoreEtc {
-                path: path.to_path_buf(),
+                path: path.clone(),
                 archive: package.archive.clone(),
             })
             .showing(Preview::Original {
-                path: path.to_path_buf(),
+                path: path.clone(),
                 archive: package.archive.clone(),
-            });
-        item.guessing(path)
-    }))
+            }),
+        Origin::Script => item
+            .noting(format!("written by {}'s install script", package.name))
+            .showing(Preview::Contents(path.clone())),
+    };
+    Ok(Some(item.guessing(path)))
 }

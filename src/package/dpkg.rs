@@ -1,8 +1,8 @@
-use super::{Archive, Distro, Package, in_parallel};
+use super::{Archive, Backup, Distro, Origin, Package, in_parallel};
 use crate::cmd::{self, As};
 use anyhow::{Context, Result, bail};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
@@ -13,19 +13,131 @@ const STATUS: &str = "/var/lib/dpkg/status";
 const INFO: &str = "/var/lib/dpkg/info";
 const EXTENDED_STATES: &str = "/var/lib/apt/extended_states";
 const CACHE: &str = "/var/cache/apt/archives";
+const UCF_REGISTRY: &str = "/var/lib/ucf/registry";
+const UCF_HASHES: &str = "/var/lib/ucf/hashfile";
+const ALTERNATIVES: &str = "/var/lib/dpkg/alternatives";
 
 pub fn load() -> Result<Vec<Package>> {
     let status = fs::read_to_string(STATUS).with_context(|| format!("reading {STATUS}"))?;
-    let auto = match fs::read_to_string(EXTENDED_STATES) {
-        Ok(text) => auto_installed(&text),
-        Err(e) if e.kind() == ErrorKind::NotFound => BTreeSet::new(),
-        Err(e) => return Err(e).with_context(|| format!("reading {EXTENDED_STATES}")),
-    };
+    let auto =
+        read_if_any(EXTENDED_STATES)?.map_or_else(BTreeSet::new, |text| auto_installed(&text));
     let mut installed: Vec<Stanza> = stanzas(&status)
         .filter(|s| s.field("Status").split_whitespace().nth(2) == Some("installed"))
         .collect();
     installed.sort_by(|a, b| a.field("Package").cmp(b.field("Package")));
-    in_parallel(&installed, |stanza| package(stanza, &auto))
+    let mut packages = in_parallel(&installed, |stanza| package(stanza, &auto))?;
+    claim_written(&mut packages)?;
+    Ok(packages)
+}
+
+/// Files in /etc that install scripts and dpkg's tools write, which no package lists: config
+/// files ucf keeps, the alternatives dpkg picks itself, and the links that start init scripts.
+fn claim_written(packages: &mut [Package]) -> Result<()> {
+    if let (Some(registry), Some(hashes)) = (read_if_any(UCF_REGISTRY)?, read_if_any(UCF_HASHES)?) {
+        for (name, backup) in ucf(&registry, &hashes) {
+            if let Some(package) = packages.iter_mut().find(|p| p.name == name) {
+                package
+                    .files
+                    .push(backup.path.to_string_lossy().into_owned());
+                package.backups.push(backup);
+            }
+        }
+    }
+    let mut claims = Vec::new();
+    for entry in fs::read_dir(ALTERNATIVES).with_context(|| format!("reading {ALTERNATIVES}"))? {
+        let path = entry?.path();
+        let text =
+            fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let Some(names) = picked_by_dpkg(&text) else {
+            continue;
+        };
+        let master = Path::new("/etc/alternatives").join(path.file_name().expect("read_dir"));
+        let Ok(target) = fs::read_link(&master) else {
+            continue;
+        };
+        let links = std::iter::once(master)
+            .chain(names.iter().map(|n| Path::new("/etc/alternatives").join(n)));
+        claims.extend(links.map(|link| (listed(&target), link)));
+    }
+    for dir in fs::read_dir("/etc")? {
+        let dir = dir?.path();
+        let is_rc = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("rc") && n.ends_with(".d"));
+        if !is_rc {
+            continue;
+        }
+        for link in fs::read_dir(&dir)? {
+            let link = link?.path();
+            if let Ok(target) = fs::read_link(&link) {
+                claims.push((listed(&dir.join(target)), link));
+            }
+        }
+    }
+    let owner: HashMap<String, usize> = packages
+        .iter()
+        .enumerate()
+        .flat_map(|(i, p)| p.files.iter().map(move |f| (f.clone(), i)))
+        .collect();
+    for (target, link) in claims {
+        if let Some(&i) = owner.get(&target) {
+            packages[i].files.push(link.to_string_lossy().into_owned());
+        }
+    }
+    Ok(())
+}
+
+/// Each config file ucf keeps, with the package that registered it and the md5 of what ucf
+/// last wrote.
+fn ucf(registry: &str, hashes: &str) -> Vec<(String, Backup)> {
+    let md5s: HashMap<&str, &str> = hashes
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let md5 = words.next()?;
+            Some((words.next()?, md5))
+        })
+        .collect();
+    registry
+        .lines()
+        .filter_map(|line| {
+            let (name, path) = line.split_once('\t')?;
+            let path = path.trim();
+            Some((
+                name.trim().to_owned(),
+                Backup {
+                    path: PathBuf::from(path),
+                    md5: (*md5s.get(path)?).to_owned(),
+                    origin: Origin::Script,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// The names of an alternative's secondary links, when dpkg picks it by priority. One set by
+/// hand reads `manual`, and the scan reports it.
+fn picked_by_dpkg(state: &str) -> Option<Vec<&str>> {
+    let mut lines = state.lines();
+    if lines.next()? != "auto" {
+        return None;
+    }
+    lines.next()?;
+    Some(
+        lines
+            .take_while(|line| !line.is_empty())
+            .step_by(2)
+            .collect(),
+    )
+}
+
+fn read_if_any(path: &str) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {path}")),
+    }
 }
 
 fn package(stanza: &Stanza, auto: &BTreeSet<(String, String)>) -> Result<Package> {
@@ -44,7 +156,11 @@ fn package(stanza: &Stanza, auto: &BTreeSet<(String, String)>) -> Result<Package
         .filter_map(|line| {
             let mut words = line.split_whitespace();
             let (path, md5) = (words.next()?, words.next()?);
-            (md5 != "newconffile").then(|| (PathBuf::from(path), md5.to_owned()))
+            (md5 != "newconffile").then(|| Backup {
+                path: PathBuf::from(path),
+                md5: md5.to_owned(),
+                origin: Origin::Archive,
+            })
         })
         .collect();
     // A version's epoch keeps its colon in the name of the archive apt downloaded.

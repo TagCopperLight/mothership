@@ -6,6 +6,7 @@ packages = [
   "dpkg-dev",
   "git",
   "sudo",
+  "ucf",
   # Apps
   "alpha",
   "gamma",

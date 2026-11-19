@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     fleet::{Manager, Tool},
-    package::{self, Archive, Distro, Package},
+    package::{self, Archive, Backup, Distro, Origin, Package},
 };
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -53,7 +53,11 @@ fn shipping(path: &Path, text: &str) -> Db {
             description: String::new(),
             explicit: true,
             files: Vec::new(),
-            backups: vec![(path.to_path_buf(), md5(text))],
+            backups: vec![Backup {
+                path: path.to_path_buf(),
+                md5: md5(text),
+                origin: Origin::Archive,
+            }],
             depends: Vec::new(),
             provides: Vec::new(),
             archive: no_archive(),

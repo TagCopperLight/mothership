@@ -56,6 +56,8 @@ mothership treats a file as a secret when only its owner can read it. Review the
 
 mothership runs on Arch Linux, Debian and Ubuntu. It needs `chezmoi`, plus `cargo`, `uv` and `dconf` when a user's part uses them. Build it from this repository with `cargo build --release`, on Debian for a Debian machine, since a binary built on Arch needs a newer C library.
 
+On Debian and Ubuntu, the installer leaves the whole base system marked as installed by hand, so the first scan would list hundreds of packages. Mark them all as dependencies once with `apt-mark auto`, then mark the type's packages and built packages with `apt-mark manual`, and remove the rest with `apt-get autoremove --purge`.
+
 The fleet lives in `/var/lib/mothership/fleet`. Whoever owns that folder is the machine's admin: they commit and push from it, and every file mothership writes there goes to them. The file `/etc/mothership/machine.toml` tells mothership the machine's type:
 
 ```toml

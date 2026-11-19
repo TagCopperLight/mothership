@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+ucf /usr/share/kappa/kappa.conf /etc/kappa.conf
+ucfr kappa /etc/kappa.conf
+update-alternatives --install /usr/bin/kappa kappa /usr/bin/kappa-one 20 \
+  --slave /usr/share/man/man1/kappa.1.gz kappa.1.gz /usr/share/kappa/one.1.gz
+update-alternatives --install /usr/bin/kappa kappa /usr/bin/kappa-two 10 \
+  --slave /usr/share/man/man1/kappa.1.gz kappa.1.gz /usr/share/kappa/two.1.gz
+update-rc.d kappa defaults
