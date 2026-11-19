@@ -100,7 +100,7 @@ impl Root {
     pub fn output<S: AsRef<OsStr>>(&self, snapshot: &Snapshot, args: &[S]) -> Result<Vec<u8>> {
         let (command, run) = self.command(None, snapshot, args)?;
         let out = cmd::output(command, "chezmoi", args)?;
-        run.finish(&self.user)?;
+        run.finish()?;
         Ok(out)
     }
 
@@ -112,7 +112,7 @@ impl Root {
     ) -> Result<()> {
         let (command, run) = self.command(Some(recipients), snapshot, args)?;
         cmd::status(command, "chezmoi", args)?;
-        run.finish(&self.user)
+        run.finish()
     }
 
     fn command<S: AsRef<OsStr>>(
@@ -136,10 +136,6 @@ impl Root {
         }
         let config_path = dir.path().join("chezmoi.toml");
         fs::write(&config_path, config_text(&config)?)?;
-        let state = dir.path().join("state.boltdb");
-        if let Some(bytes) = self.user.read(&self.user.home.join(STATE))? {
-            fs::write(&state, bytes)?;
-        }
         let home = self.user.home.to_string_lossy().into_owned();
         let mut command = Cmd::from(Command::new("unshare"));
         command
@@ -150,7 +146,7 @@ impl Root {
             .args([&home, "chezmoi", "--config"])
             .arg(&config_path)
             .arg("--persistent-state")
-            .arg(&state)
+            .arg(dir.path().join("state.boltdb"))
             .arg("--cache")
             .arg(dir.path().join("cache"))
             .args(["--destination", &home])
@@ -166,20 +162,16 @@ impl Root {
             .env("XDG_CACHE_HOME", dir.path().join("cache"))
             .env("XDG_DATA_HOME", dir.path().join("data"))
             .env("XDG_STATE_HOME", dir.path().join("state"));
-        Ok((command, Run { dir, state }))
+        Ok((command, Run { dir }))
     }
 }
 
 struct Run {
     dir: TempDir,
-    state: PathBuf,
 }
 
 impl Run {
-    fn finish(self, user: &User) -> Result<()> {
-        if self.state.exists() {
-            user.write(&user.home.join(STATE), &fs::read(&self.state)?)?;
-        }
+    fn finish(self) -> Result<()> {
         self.dir
             .close()
             .context("removing chezmoi's temporary folder")
@@ -211,7 +203,6 @@ pub fn config_text(config: &ChezmoiConfig) -> Result<String> {
 }
 
 pub const CONFIG: &str = ".config/chezmoi/chezmoi.toml";
-const STATE: &str = ".config/chezmoi/chezmoistate.boltdb";
 
 #[cfg(test)]
 #[path = "../tests/chezmoi.rs"]

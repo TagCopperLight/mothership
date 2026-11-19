@@ -75,3 +75,59 @@ fn the_digest_tells_apart_names_that_print_the_same() {
     assert_ne!(digest(b"caf\xe9"), digest(b"caf\xe8"));
     assert_ne!(digest(b"a"), digest(b"a\nf 644 b"));
 }
+
+#[test]
+fn a_stream_cannot_make_root_write_through_a_link_it_created() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let home = dir.path().join("home");
+    let outside = dir.path().join("outside");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let write_all = |entries: Vec<Entry>| {
+        let mut dirs = HashSet::new();
+        let mut fields = Fields::new();
+        entries
+            .into_iter()
+            .try_for_each(|entry| write(&home, entry, &mut dirs, &mut fields))
+    };
+    let link = || Entry::Link {
+        rel: "a".into(),
+        target: outside.clone(),
+    };
+    let file = || Entry::File {
+        rel: "a/passwd".into(),
+        mode: 0o644,
+        file: File::open("/dev/null").unwrap(),
+    };
+    assert!(write_all(vec![link(), file()]).is_err());
+    assert!(!outside.join("passwd").exists());
+    let dir_entry = || Entry::Dir {
+        rel: "a".into(),
+        mode: 0o755,
+    };
+    assert!(write_all(vec![dir_entry()]).is_err());
+}
+
+#[test]
+fn copied_modes_drop_setuid_and_a_path_written_twice_fails() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let home = dir.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("f"), "x").unwrap();
+    fs::set_permissions(home.join("f"), fs::Permissions::from_mode(0o4755)).unwrap();
+    let user = me(&home);
+    let snapshot = Snapshot::take(&user, &[&home.join("f")]).unwrap();
+    let mode = fs::metadata(snapshot.path(&user, &home.join("f")).unwrap())
+        .unwrap()
+        .mode();
+    assert_eq!(mode & 0o7777, 0o755);
+
+    let mut dirs = HashSet::new();
+    let mut fields = Fields::new();
+    let entry = || Entry::Link {
+        rel: "l".into(),
+        target: "x".into(),
+    };
+    write(dir.path(), entry(), &mut dirs, &mut fields).unwrap();
+    assert!(write(dir.path(), entry(), &mut dirs, &mut fields).is_err());
+}
