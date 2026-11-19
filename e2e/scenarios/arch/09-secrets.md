@@ -77,6 +77,8 @@ $ printf 'a\ns\ny\na\ny\n' | sudo mothership review
   That adds 1 file. Go on [y/N]? y
 3 added
 Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+$ stat -c '%a' ~/.config/app/token
+600
 $ cd /var/lib/mothership/fleet && find homes/me/dot_ssh homes/me/dot_config types/workstation/etc/wifi.conf.age | sort
 homes/me/dot_config
 homes/me/dot_config/app
@@ -142,7 +144,7 @@ $ ls /var/lib/mothership/fleet/homes/me | grep netrc
 encrypted_private_dot_netrc.age
 ```
 
-Apply and revert write secrets decrypted, for their owner only. Review never shows them.
+Apply and revert write secrets decrypted, for their owner only. Review shows them decrypted.
 
 ```console
 $ sudo rm /etc/wifi.conf && echo "MINE" > ~/.ssh/id_test
@@ -163,6 +165,9 @@ psk=WIFI-SECRET
 $ printf 'r\n' | sudo mothership review
 [1/1] Files
     ~ ~/.ssh/id_test  edited  secret
+      @@ -1 +1 @@
+      -SSH-SECRET
+      +MINE
   a  add         copy this machine's version into chezmoi, encrypted
   r  revert      write the fleet's version
   i ignore · l later · p pass · q quit
@@ -181,6 +186,9 @@ $ echo "psk=OTHER" | sudo install -m 600 /dev/stdin /etc/wifi.conf
 $ printf 'r\n' | sudo mothership review
 [1/1] Files
     ~ /etc/wifi.conf  edited  secret
+      @@ -1 +1 @@
+      -psk=WIFI-SECRET
+      +psk=OTHER
   a  add         copy it into the type's etc/, encrypted
   r  revert      write the fleet's version
   i ignore · l later · p pass · q quit

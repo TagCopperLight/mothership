@@ -50,7 +50,7 @@
 - Without `encryption` set, chezmoi keeps `.age` in target names.
 - In `status`, the first column says what changed on the machine since chezmoi last wrote the file, the second what its apply would do.
 - Root's chezmoi works on a copy of the user's `chezmoistate.boltdb` and writes it back: after an add, the state records the file, so a later edit shows as made on the machine and apply leaves it alone.
-- chezmoi adds `private_` only when neither group nor others can read the file, and asks before an add would drop it, so an encrypted add chmods the snapshot's files to owner-only first.
+- chezmoi adds `private_` only when neither group nor others can read the file, and asks before an add would drop it, so an encrypted add chmods the files to owner-only first, on the machine (with the user's rights) and in the snapshot, so chezmoi's state matches the machine.
 - chezmoi follows a link to a file in its source folder, but not a link to a folder. `re-add` replaces a linked file with a copy.
 
 ## Other tools

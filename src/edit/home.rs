@@ -234,7 +234,10 @@ fn chezmoi_add(
             member.recipients().display()
         );
     }
-    keep_owner_only(&snapshot.path(member.user(), path)?)?;
+    let user = member.user();
+    let shown = snapshot.path(user, path)?;
+    user.with_rights(|| keep_owner_only(path))?;
+    keep_owner_only(&shown)?;
     let args = [OsStr::new("add"), OsStr::new("--encrypt"), path.as_os_str()];
     root.run(&own_list(fleet, member)?, snapshot, &args)
 }
