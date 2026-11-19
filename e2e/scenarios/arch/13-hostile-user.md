@@ -8,7 +8,7 @@ $ echo y | sudo mothership apply &>/dev/null
 $ cd /var/lib/mothership/fleet && mkdir -p types/workstation/users/dev homes/dev/dot_config/devapp &&
 > echo "theme = light" > homes/dev/dot_config/devapp/conf &&
 > printf 'home ~/.cargo\nhome ~/.bash{rc,_profile,_logout}\n' > types/workstation/users/dev/ignore.txt &&
-> touch types/workstation/users/dev/user.toml && git add -A && git commit -qm "Add dev"
+> touch types/workstation/users/dev/user.toml && git add -A && git commit -qm "Add dev" && git push -q
 $ printf 'y\ny\ny\n' | sudo mothership apply &>/dev/null
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type

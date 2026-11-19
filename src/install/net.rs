@@ -4,10 +4,9 @@ use std::{
     net::{TcpStream, ToSocketAddrs},
     path::Path,
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-const PATIENCE: Duration = Duration::from_secs(15 * 60);
 const PAUSE: Duration = Duration::from_secs(10);
 const MIRRORLIST: &str = "/etc/pacman.d/mirrorlist";
 const APT_SOURCES: &str = "/etc/apt/sources.list";
@@ -179,12 +178,7 @@ pub fn retry<T>(what: &str, needs: &Needs, mut step: impl FnMut() -> Result<T>) 
         };
         println!("{what} failed, and {address} doesn't answer: {error:#}");
         println!("Waiting for the network…");
-        let since = Instant::now();
         while !reachable(address) {
-            if since.elapsed() > PATIENCE {
-                let minutes = PATIENCE.as_secs() / 60;
-                return Err(error.context(format!("{address} didn't answer for {minutes} minutes")));
-            }
             thread::sleep(PAUSE);
         }
     }
