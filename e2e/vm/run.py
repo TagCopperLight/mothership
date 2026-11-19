@@ -73,7 +73,7 @@ def site(dir: Path) -> Path:
     subprocess.run([*git, "add", "-A"], cwd=work, check=True)
     subprocess.run([*git, "commit", "-qm", "The fleet"], cwd=work, check=True)
     subprocess.run(["git", "clone", "-q", "--bare", str(work), str(dir / "fleet.git")], check=True)
-    subprocess.run(["git", "update-server-info"], cwd=dir / "fleet.git", check=True)
+    subprocess.run(["tar", "--owner=0", "--group=0", "-cf", str(dir / "fleet.tar"), "-C", str(dir), "fleet.git"], check=True)
     shutil.copy(ROOT / "target/release/mothership", dir / "mothership")
     PACKAGES.mkdir(exist_ok=True)
     for repo in ["core", "extra"]:
@@ -213,7 +213,8 @@ def install(args: list[str], port: int, log) -> None:
         site = f"http://{HOST}:{port}"
         shell(vm, f"echo 'Server = {site}/$repo/os/$arch' > /etc/pacman.d/mirrorlist")
         shell(vm, f"curl -fsS -o /root/mothership {site}/mothership && chmod +x /root/mothership")
-        vm.sendline(f"/root/mothership install --fleet {site}/fleet.git --type vm --option encrypted"
+        shell(vm, f"curl -fsS {site}/fleet.tar | tar -xf - -C /root")
+        vm.sendline("/root/mothership install --fleet /root/fleet.git --type vm --option encrypted"
                     " --hostname vmtest --timezone Europe/Paris --disk /dev/vda --layout wipe")
         wait(vm, "Type vda to go on:")
         vm.sendline("vda")
