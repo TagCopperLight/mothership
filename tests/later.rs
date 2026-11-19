@@ -17,7 +17,7 @@ fn fleet(dir: &Path) -> Fleet {
 fn put_off_items_come_back_after_a_week_and_keep_their_first_date() {
     let dir = tempfile::TempDir::new().unwrap();
     let fleet = fleet(dir.path());
-    let mut later = Later::at(&dir.path().join("later.json")).unwrap();
+    let mut later = Later::default();
     let htop = item("htop");
     later.put_off(&fleet, &htop, 0);
     assert!(!later.due(&fleet, &htop, LATER - 1));
@@ -32,7 +32,7 @@ fn put_off_items_come_back_after_a_week_and_keep_their_first_date() {
 fn days_left_round_up() {
     let dir = tempfile::TempDir::new().unwrap();
     let fleet = fleet(dir.path());
-    let mut later = Later::at(&dir.path().join("later.json")).unwrap();
+    let mut later = Later::default();
     let htop = item("htop");
     later.put_off(&fleet, &htop, 0);
     assert_eq!(later.days_left(&fleet, &htop, 0), Some(7));
@@ -43,13 +43,10 @@ fn days_left_round_up() {
 #[test]
 fn saving_drops_items_the_scan_no_longer_finds() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("state/later.json");
     let fleet = fleet(dir.path());
-    let mut later = Later::at(&path).unwrap();
+    let mut later = Later::default();
     later.put_off(&fleet, &item("htop"), 0);
     later.put_off(&fleet, &item("gone"), 0);
-    later.save(&fleet, &[&item("htop")]).unwrap();
-    let saved: BTreeMap<String, Waiting> =
-        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
-    assert_eq!(saved.keys().collect::<Vec<_>>(), ["package htop"]);
+    later.keep_only(&fleet, &[&item("htop")]);
+    assert_eq!(later.items.keys().collect::<Vec<_>>(), ["package htop"]);
 }

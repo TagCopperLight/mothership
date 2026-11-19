@@ -16,7 +16,7 @@ use crate::{
     package::Db,
     parallel::join,
     preview::Preview,
-    record::{self, Record},
+    record::Record,
     revert::{self, Revert},
     style::{self, Paint, Style},
     walk,
@@ -336,7 +336,7 @@ pub fn collect() -> Result<Report> {
         let db = s.spawn(Db::load);
         Ok::<_, anyhow::Error>((join(fleet)?, join(db)?))
     })?;
-    let record = Record::load(Path::new(record::PATH))?;
+    let record = Record::load()?;
     let items = checks(&fleet, &db, &record, Checks::All)?;
     let (ignored, shown): (Vec<Item>, Vec<Item>) =
         items.into_iter().partition(|item| ignored(&fleet, item));

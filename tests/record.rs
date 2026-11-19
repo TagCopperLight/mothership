@@ -379,21 +379,6 @@ fn what_apply_skipped_keeps_its_old_entry_so_the_next_apply_brings_it() {
 }
 
 #[test]
-fn the_record_survives_a_save_and_starts_empty() {
-    let dir = TempDir::new().unwrap();
-    let path = dir.path().join("state/applied.json");
-    assert!(Record::load(&path).unwrap().packages.is_empty());
-    let saved = record(|r| {
-        r.packages.insert("vim".into());
-        r.etc.insert(PathBuf::from("/etc/a"), md5("a"));
-    });
-    saved.save(&path).unwrap();
-    let loaded = Record::load(&path).unwrap();
-    assert_eq!(loaded.packages, saved.packages);
-    assert_eq!(loaded.etc, saved.etc);
-}
-
-#[test]
 fn a_revert_in_review_leaves_the_file_as_apply_wrote_it() {
     let machine = Machine::new();
     let path = machine.write("a.conf", "fleet");

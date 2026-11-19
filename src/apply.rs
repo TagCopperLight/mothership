@@ -2,7 +2,7 @@ use crate::{
     fleet::{self, Fleet},
     package::Db,
     prompt::Prompt,
-    record::{self, Record},
+    record::Record,
     revert::{self, Revert, Service, User},
     scan::{self, Change, Checks, Secret, Section},
     style::Style,
@@ -33,8 +33,7 @@ fn round(
 ) -> Result<bool> {
     let fleet = Fleet::load()?;
     let db = Db::load()?;
-    let record_path = Path::new(record::PATH);
-    let record = Record::load(record_path)?;
+    let record = Record::load()?;
     let mut items = scan::checks(&fleet, &db, &record, Checks::Apply)?;
     scan::sort(&fleet, &mut items);
 
@@ -98,7 +97,7 @@ fn round(
     } else {
         return Ok(false);
     }
-    Record::after(&fleet, &record, Path::new(fleet::ETC), &skipped)?.save(record_path)?;
+    Record::after(&fleet, &record, Path::new(fleet::ETC), &skipped)?.save()?;
     Ok(todo.iter().any(|item| {
         matches!(
             item.revert,

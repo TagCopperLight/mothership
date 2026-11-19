@@ -3,14 +3,14 @@ use crate::{
     fleet::Fleet,
     later::{self, DAY, Later},
     prompt::{self, Prompt},
-    record::{self, Record},
+    record::Record,
     revert::{self, Etc, Machine, Revert},
     scan::{self, Adding, Columns, Item, Secret, Section},
     style::{self, Paint, Style},
     walk,
 };
 use anyhow::Result;
-use std::{path::Path, sync::LazyLock};
+use std::sync::LazyLock;
 
 static BACK_LATER: LazyLock<String> = LazyLock::new(|| {
     format!(
@@ -97,7 +97,7 @@ fn ask(report: &scan::Report) -> Result<()> {
     let fleet = &report.fleet;
     let style = Style::stdout();
     let mut later = Later::load()?;
-    let mut record = Record::load(Path::new(record::PATH))?;
+    let mut record = Record::load()?;
     let now = later::now()?;
     let mine: Vec<&Item> = report
         .shown
@@ -317,6 +317,6 @@ fn revert_one(
     }
     revert::run(fleet, &[(member, revert)])?;
     record.reverted(revert)?;
-    record.save(Path::new(record::PATH))?;
+    record.save()?;
     Ok(true)
 }

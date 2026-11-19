@@ -7,7 +7,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -21,8 +21,8 @@ pub struct Waiting {
     last: u64,
 }
 
+#[derive(Default)]
 pub struct Later {
-    path: PathBuf,
     items: BTreeMap<String, Waiting>,
 }
 
@@ -32,13 +32,8 @@ pub fn now() -> Result<u64> {
 
 impl Later {
     pub fn load() -> Result<Self> {
-        Later::at(Path::new(PATH))
-    }
-
-    pub fn at(path: &Path) -> Result<Self> {
         Ok(Later {
-            path: path.to_path_buf(),
-            items: walk::read_json(path)?,
+            items: walk::read_json(Path::new(PATH))?,
         })
     }
 
@@ -69,9 +64,13 @@ impl Later {
     }
 
     pub fn save(mut self, fleet: &Fleet, current: &[&Item]) -> Result<()> {
+        self.keep_only(fleet, current);
+        walk::write_json(Path::new(PATH), &self.items)
+    }
+
+    fn keep_only(&mut self, fleet: &Fleet, current: &[&Item]) {
         let keys: BTreeSet<String> = current.iter().map(|i| scan::key(fleet, i)).collect();
         self.items.retain(|key, _| keys.contains(key));
-        walk::write_json(&self.path, &self.items)
     }
 }
 

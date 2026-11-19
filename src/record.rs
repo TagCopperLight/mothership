@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const PATH: &str = "/var/lib/mothership/applied.json";
+const PATH: &str = "/var/lib/mothership/applied.json";
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
@@ -35,12 +35,12 @@ struct UserRecord {
 }
 
 impl Record {
-    pub fn load(path: &Path) -> Result<Self> {
-        walk::read_json(path)
+    pub fn load() -> Result<Self> {
+        walk::read_json(Path::new(PATH))
     }
 
-    pub fn save(&self, path: &Path) -> Result<()> {
-        walk::write_json(path, self)
+    pub fn save(&self) -> Result<()> {
+        walk::write_json(Path::new(PATH), self)
     }
 
     pub fn fleet_changed(&self, revert: &Revert, user: Option<&str>, db: &Db) -> Result<bool> {

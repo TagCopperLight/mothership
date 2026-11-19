@@ -112,3 +112,19 @@ fn links_over_a_file_and_leaves_no_temporary_link() {
     assert_eq!(fs::read_link(&path).unwrap(), Path::new("/run/other"));
     assert_eq!(names(dir.path()), ["resolv.conf"]);
 }
+
+#[test]
+fn json_state_starts_empty_and_survives_a_save_for_root_only() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("state/applied.json");
+    let empty: std::collections::BTreeMap<String, u64> = read_json(&path).unwrap();
+    assert!(empty.is_empty());
+    let saved = std::collections::BTreeMap::from([("vim".to_owned(), 1u64)]);
+    write_json(&path, &saved).unwrap();
+    let loaded: std::collections::BTreeMap<String, u64> = read_json(&path).unwrap();
+    assert_eq!(loaded, saved);
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}
