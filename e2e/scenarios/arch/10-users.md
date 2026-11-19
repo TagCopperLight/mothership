@@ -1,14 +1,17 @@
-# Each user of the type gets their own part
+# Each user of the type gets their own home folder
 
 The machine follows its fleet. Then the fleet adds a second user, `dev`, who keeps their
 services running without a login, gets a tool from an installer, and has an ignore list of
-their own.
+their own. `.gitconfig` moves to `shared/`, and both home folders link it.
 
 ```console
 $ echo y | sudo mothership apply &>/dev/null
-$ cd /var/lib/mothership/fleet && mkdir -p types/workstation/users/dev &&
+$ cd /var/lib/mothership/fleet && mkdir -p types/workstation/users/dev homes/dev shared &&
+> git mv homes/me/dot_gitconfig shared/dot_gitconfig &&
+> ln -s ../../shared/dot_gitconfig homes/me/dot_gitconfig &&
+> ln -s ../../shared/dot_gitconfig homes/dev/dot_gitconfig &&
 > printf 'linger = true\n\n[[installers]]\nname = "greeter"\nrun = "mkdir ~/.greeter && echo hi > ~/.greeter/hi"\ncreates = "~/.greeter"\n' > types/workstation/users/dev/user.toml &&
-> printf 'home ~/.cargo\nhome ~/.bash_logout\n' > types/workstation/users/dev/ignore.txt &&
+> printf 'home ~/.cargo\nhome ~/.bash{rc,_profile,_logout}\n' > types/workstation/users/dev/ignore.txt &&
 > git add -A && git commit -qm "Add dev"
 $ sudo mothership scan
 Coming from the fleet · 1
@@ -19,8 +22,8 @@ Coming from the fleet · 1
 \d+ ignored (re)
 ```
 
-Apply creates `dev`, then goes round again for what the new account brings: dev's chezmoi set
-up from the fleet's config template, linger and the installer, then dev's files.
+Apply creates `dev`, then goes round again for what the new account brings: dev's chezmoi
+config, linger and the installer, then dev's files.
 
 ```console
 $ printf 'y\ny\ny\n' | sudo mothership apply
@@ -31,18 +34,16 @@ Coming from the fleet · 1
 Apply [y/N]? y
 Coming from the fleet · 3
   Tools · dev
-    + greeter  run its installer                           ~/.greeter is missing
+    + greeter  run its installer   ~/.greeter is missing
   Files · dev
-    + chezmoi  set it up from the fleet's config template  its config doesn't read the fleet
+    + chezmoi  write its config    its config isn't the one mothership writes
   Account · dev
-    + linger   turn it on                                  user services run without a login
+    + linger   turn it on          user services run without a login
 
 Apply [y/N]? y
-Coming from the fleet · 3
+Coming from the fleet · 1
   Files · dev
-    ~ ~/.bash_profile  update
-    ~ ~/.bashrc        update
-    + ~/.gitconfig     create
+    + ~/.gitconfig  create
 
 Apply [y/N]? y
 $ ls /var/lib/systemd/linger
@@ -51,14 +52,14 @@ $ sudo stat -c '%U %n' /home/dev/.greeter/hi /home/dev/.gitconfig
 dev /home/dev/.greeter/hi
 dev /home/dev/.gitconfig
 $ sudo grep sourceDir /home/dev/.config/chezmoi/chezmoi.toml
-sourceDir = "/var/lib/mothership/fleet"
+sourceDir = "/var/lib/mothership/fleet/homes/dev"
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
 \d+ ignored (re)
 ```
 
-`dev` can't write the fleet, which I own. Review adds dev's new config all the same: the files
-it writes into the fleet are mine, and dev's chezmoi state stays dev's.
+`dev` can't write the fleet, which I own. Review adds dev's new config to dev's own folder: the
+files it writes into the fleet are mine, and dev's chezmoi state stays dev's.
 
 ```console
 $ sudo -u dev bash -c 'mkdir -p ~/.config/devapp && echo "theme = light" > ~/.config/devapp/conf'
@@ -73,30 +74,49 @@ $ printf 'a\ny\n' | sudo mothership review
   That adds 1 file. Go on [y/N]? y
 1 added
 Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+$ cd /var/lib/mothership/fleet && git add -A && git commit -qm "Add devapp" && find homes -name conf
+homes/dev/dot_config/devapp/conf
 $ find /var/lib/mothership/fleet -not -user me | wc -l
 0
 $ sudo stat -c %U /home/dev/.config/chezmoi/chezmoistate.boltdb
 dev
-```
-
-The fleet's chezmoi rules know each user's name, so the config stays dev's. When dev edits it,
-apply leaves the edit for review.
-
-```console
-$ cd /var/lib/mothership/fleet &&
-> printf '{{ if ne .user "dev" }}\n.config/devapp\n{{ end }}\n' >> .chezmoiignore &&
-> git add -A && git commit -qm "Keep devapp for dev"
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
 \d+ ignored (re)
-$ sudo -u dev bash -c 'echo "theme = dark" > ~/.config/devapp/conf'
-$ echo y | sudo mothership apply
-Left alone, since they were edited on this machine:
-  Files · dev
-    ~ ~/.config/devapp/conf  edited
+```
 
-1 changed on this machine, for sudo mothership review
-Nothing to apply.
+When dev changes the shared `.gitconfig`, review writes the change into `shared/`, and the link
+stays. Apply then brings it to me.
+
+```console
+$ sudo -u dev bash -c 'echo "[user]" >> ~/.gitconfig'
+$ printf 'a\n' | sudo mothership review
+[1/1] Files · dev
+    ~ ~/.gitconfig  edited
+      @@ -1,3 +1,4 @@
+       [user]
+           name = Me
+           email = me@example.com
+      +[user]
+  a  add         copy this machine's version into chezmoi
+  s  secret      copy this machine's version into chezmoi, encrypted
+  r  revert      write the fleet's version
+  i ignore · l later · p pass · q quit
+  › a
+1 added
+Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+$ cd /var/lib/mothership/fleet && git status --short && test -L homes/dev/dot_gitconfig && tail -1 shared/dot_gitconfig
+ M shared/dot_gitconfig
+[user]
+$ cd /var/lib/mothership/fleet && git add -A && git commit -qm "Share the change"
+$ echo y | sudo mothership apply
+Coming from the fleet · 1
+  Files · me
+    ~ ~/.gitconfig  update
+
+Apply [y/N]? y
+$ tail -1 ~/.gitconfig
+[user]
 ```
 
 `dev` has a key of their own, next to root's and mine. From this machine I can trust a key for a

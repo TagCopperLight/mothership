@@ -426,7 +426,7 @@ fn tracked(fleet: &Fleet, member: &Member, which: Checks) -> Result<Vec<Item>> {
     if !member.chezmoi {
         return Ok(vec![
             Item::new(Kind::File, Change::Removed, "chezmoi", "not set up")
-                .noting("its config doesn't read the fleet")
+                .noting("its config isn't the one mothership writes")
                 .reverting(Revert::InitChezmoi),
         ]);
     }

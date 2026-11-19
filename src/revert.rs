@@ -1,6 +1,7 @@
 use crate::{
+    chezmoi,
     cmd::{self, As},
-    fleet::{self, Fleet, Manager, Member, Mode, Tool},
+    fleet::{Fleet, Manager, Member, Mode, Tool},
     package::{Archive, Distro},
     tools, user,
 };
@@ -44,7 +45,7 @@ impl Revert {
             Revert::RestoreEtc { .. } => "restore the package's version".into(),
             Revert::DeleteEtc(_) => "delete".into(),
             Revert::CreateUser => "create it".into(),
-            Revert::InitChezmoi => "set it up from the fleet's config template".into(),
+            Revert::InitChezmoi => "write its config".into(),
             Revert::Linger(true) => "turn it on".into(),
             Revert::Linger(false) => "turn it off".into(),
             Revert::Shell(shell) => format!("make {shell} the login shell"),
@@ -83,7 +84,7 @@ pub fn run(fleet: &Fleet, reverts: &[Owned]) -> Result<()> {
             .map(|(_, revert)| *revert)
             .collect();
         if !mine.is_empty() {
-            run_member(member, &mine)?;
+            run_member(fleet, member, &mine)?;
         }
     }
     Ok(())
@@ -128,7 +129,7 @@ fn run_machine(fleet: &Fleet, reverts: &[&Revert]) -> Result<()> {
     Ok(())
 }
 
-fn run_member(member: &Member, reverts: &[&Revert]) -> Result<()> {
+fn run_member(fleet: &Fleet, member: &Member, reverts: &[&Revert]) -> Result<()> {
     if reverts.iter().any(|r| matches!(r, Revert::CreateUser)) {
         return user::create(member);
     }
@@ -152,7 +153,7 @@ fn run_member(member: &Member, reverts: &[&Revert]) -> Result<()> {
         }
     }
     if init {
-        cmd::run(As::User(user), "chezmoi", &["init", "--source", fleet::DIR])?;
+        chezmoi::init(fleet, member)?;
     }
     for revert in account {
         match revert {

@@ -19,6 +19,7 @@ RUN touch /var/log/systemctl.log && chmod 666 /var/log/systemctl.log
 
 FROM machine
 COPY fleet /var/lib/mothership/fleet
+COPY chezmoi/server.toml /tmp/chezmoi.toml
 RUN useradd -m -G sudo -s /bin/bash me \
  && install -m 440 /var/lib/mothership/fleet/types/server/etc/sudoers.d/sudo /etc/sudoers.d/sudo \
  && printf 'type = "server"\n' | install -D -m 644 /dev/stdin /etc/mothership/machine.toml \
@@ -27,7 +28,8 @@ RUN useradd -m -G sudo -s /bin/bash me \
  && runuser -u me -- git init -q -b main \
  && runuser -u me -- git add -A \
  && runuser -u me -- git -c user.name=Me -c user.email=me@example.com commit -q -m "The fleet" \
- && cd / && runuser -u me -- env HOME=/home/me chezmoi init --apply --source /var/lib/mothership/fleet
+ && runuser -u me -- install -D -m 644 /tmp/chezmoi.toml /home/me/.config/chezmoi/chezmoi.toml \
+ && cd / && runuser -u me -- env HOME=/home/me chezmoi apply
 USER me
 WORKDIR /home/me
 ENV HOME=/home/me USER=me

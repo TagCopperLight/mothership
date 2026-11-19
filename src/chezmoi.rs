@@ -1,6 +1,7 @@
 use crate::{
     cmd::{self, As},
-    fleet::Fleet,
+    fleet::{ChezmoiConfig, Fleet, Member},
+    homes,
     user::User,
 };
 use anyhow::{Context, Result, bail};
@@ -26,20 +27,65 @@ pub fn source_path(user: &User, target: &std::path::Path) -> Result<PathBuf> {
     Ok(PathBuf::from(out.trim()))
 }
 
-pub fn write_for(user: &User, args: &[&str]) -> Result<()> {
-    let cache = tempfile::TempDir::new()?;
-    let config_dir = user.home.join(".config/chezmoi");
+pub fn write_for(fleet: &Fleet, member: &Member, recipients: &str, args: &[&str]) -> Result<()> {
+    let user = member.user();
+    let dir = tempfile::TempDir::new()?;
+    let list = dir.path().join("recipients.txt");
+    fs::write(&list, recipients)?;
+    let config = dir.path().join("chezmoi.toml");
+    let wanted = ChezmoiConfig {
+        recipients: list,
+        ..member.chezmoi_config(fleet)
+    };
+    fs::write(&config, config_text(&wanted)?)?;
+    let home_state = user.home.join(STATE);
+    let state = dir.path().join("state.boltdb");
+    if let Some(bytes) = user.read(&home_state)? {
+        fs::write(&state, bytes)?;
+    }
     let mut command = Command::new("chezmoi");
     command
         .env("HOME", &user.home)
         .arg("--config")
-        .arg(config_dir.join("chezmoi.toml"))
+        .arg(&config)
+        .arg("--persistent-state")
+        .arg(&state)
         .arg("--cache")
-        .arg(cache.path())
+        .arg(dir.path().join("cache"))
+        .arg("--destination")
+        .arg(&user.home)
         .args(args);
-    let result = cmd::status(command, "chezmoi", args);
-    user.own(&config_dir.join("chezmoistate.boltdb"))?;
-    result
+    cmd::status(command, "chezmoi", args)?;
+    match state.exists() {
+        true => user.write(&home_state, &fs::read(&state)?),
+        false => Ok(()),
+    }
+}
+
+pub fn init(fleet: &Fleet, member: &Member) -> Result<()> {
+    let user = member.user();
+    let text = config_text(&member.chezmoi_config(fleet))?;
+    user.write(&user.home.join(CONFIG), text.as_bytes())
+}
+
+pub fn config_text(config: &ChezmoiConfig) -> Result<String> {
+    Ok(toml::to_string(&serde_json::json!({
+        "sourceDir": config.source,
+        "encryption": "age",
+        "age": {
+            "useBuiltin": true,
+            "identity": config.identity,
+            "recipientsFile": config.recipients,
+        },
+        "data": data(&config.profile, &config.user, &config.fleet),
+    }))?)
+}
+
+pub const CONFIG: &str = ".config/chezmoi/chezmoi.toml";
+const STATE: &str = ".config/chezmoi/chezmoistate.boltdb";
+
+fn data(profile: &str, user: &str, fleet: &Path) -> serde_json::Value {
+    serde_json::json!({ "profile": profile, "user": user, "fleet": fleet })
 }
 
 #[derive(Deserialize)]
@@ -52,13 +98,14 @@ pub fn encrypted(fleet: &Fleet, type_name: &str, user: &str) -> Result<Vec<(Path
     let dir = tempfile::TempDir::new()?;
     let config = dir.path().join("chezmoi.toml");
     fs::write(&config, "encryption = \"age\"\n[age]\nuseBuiltin = true\n")?;
-    let data = serde_json::json!({ "profile": type_name, "user": user }).to_string();
+    let data = data(type_name, user, &fleet.dir).to_string();
     let (config, state, home) = (
         config.to_string_lossy().into_owned(),
         dir.path().join("state").to_string_lossy().into_owned(),
         dir.path().join("home").to_string_lossy().into_owned(),
     );
-    let source = fleet.dir.to_string_lossy();
+    let source = homes::source(&fleet.dir, user);
+    let source = source.to_string_lossy();
     let args = [
         "--config",
         &config,

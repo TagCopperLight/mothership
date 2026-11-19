@@ -35,6 +35,26 @@ impl User {
         missing.into_iter().try_for_each(|d| self.own(d))
     }
 
+    pub fn read(&self, path: &Path) -> Result<Option<Vec<u8>>> {
+        let path = path.to_string_lossy();
+        let who = cmd::As::User(self);
+        if cmd::bytes(who, "test", &["-e", &path]).is_err() {
+            return Ok(None);
+        }
+        cmd::bytes(who, "cat", &[&path]).map(Some)
+    }
+
+    pub fn write(&self, path: &Path, bytes: &[u8]) -> Result<()> {
+        let script = "mkdir -p \"$(dirname \"$1\")\" && cat > \"$1\"";
+        let path = path.to_string_lossy();
+        cmd::with_input(
+            cmd::As::User(self),
+            "sh",
+            &["-c", script, "sh", &path],
+            bytes,
+        )
+    }
+
     pub fn expand(&self, path: &str) -> PathBuf {
         match path.strip_prefix("~/") {
             Some(rest) => self.home.join(rest),

@@ -102,7 +102,7 @@ checkout, and my chezmoi state stays mine. The tokens go into my own ignore list
 $ cd /var/lib/mothership/fleet && git status --short | sort
  M types/workstation/system.toml
  M types/workstation/users/me/ignore.txt
-?? dot_config/
+?? homes/me/dot_config/
 $ find /var/lib/mothership/fleet ~/.config/chezmoi -not -user me | wc -l
 0
 $ grep -A3 '"alpha"' /var/lib/mothership/fleet/types/workstation/system.toml

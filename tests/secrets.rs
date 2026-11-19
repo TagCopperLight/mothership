@@ -62,3 +62,48 @@ fn a_key_file_is_for_its_owner_only() {
     );
     assert!(make_key(&key, None).is_err());
 }
+
+#[test]
+fn a_shared_home_file_is_for_every_list_of_every_user_linking_it() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let fleet = dir.path();
+    for (type_name, user, text) in [
+        (
+            "workstation",
+            "tag",
+            "# laptop\nage1tag\n\n# recovery\nage1rec\n",
+        ),
+        (
+            "server",
+            "dev",
+            "# minipc\nage1dev\n\n# recovery\nage1rec\n",
+        ),
+    ] {
+        let users = fleet.join("types").join(type_name).join("users").join(user);
+        fs::create_dir_all(&users).unwrap();
+        fs::write(users.join(RECIPIENTS), text).unwrap();
+        fs::create_dir_all(fleet.join("homes").join(user)).unwrap();
+        std::os::unix::fs::symlink(
+            "../../shared/dot_token",
+            fleet.join("homes").join(user).join("dot_token"),
+        )
+        .unwrap();
+    }
+    fs::create_dir_all(fleet.join("shared")).unwrap();
+    fs::write(fleet.join("shared/dot_token"), "").unwrap();
+    let keys = |list: Vec<Recipient>| list.into_iter().map(|r| r.key).collect::<Vec<_>>();
+    let link = fleet.join("homes/dev/dot_token");
+    assert_eq!(
+        keys(home_recipients(fleet, &link, None).unwrap()),
+        ["age1dev", "age1rec", "age1tag"]
+    );
+    let dev_list = fleet.join("types/server/users/dev").join(RECIPIENTS);
+    let new = [Recipient {
+        name: "minipc".into(),
+        key: "age1new".into(),
+    }];
+    assert_eq!(
+        keys(home_recipients(fleet, &link, Some((&dev_list, &new))).unwrap()),
+        ["age1new", "age1tag", "age1rec"]
+    );
+}

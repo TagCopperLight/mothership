@@ -1,4 +1,10 @@
-use crate::{chezmoi, fleet::Fleet, user::User, walk};
+use crate::{
+    chezmoi,
+    fleet::{self, Fleet},
+    homes,
+    user::User,
+    walk,
+};
 use age::{
     armor::{ArmoredReader, ArmoredWriter, Format},
     secrecy::ExposeSecret,
@@ -103,7 +109,7 @@ fn encrypt_for(list: &[Recipient], bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(sealed)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct Recipient {
     name: String,
     key: String,
@@ -316,21 +322,78 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn home_list(fleet_dir: &Path, source: &Path) -> Result<String> {
+    Ok(format(&home_recipients(fleet_dir, source, None)?))
+}
+
+fn home_recipients(
+    fleet_dir: &Path,
+    source: &Path,
+    replacing: Option<(&Path, &[Recipient])>,
+) -> Result<Vec<Recipient>> {
+    let mut all: Vec<Recipient> = Vec::new();
+    for user in homes::users(fleet_dir, source)? {
+        for type_name in fleet::types(fleet_dir)? {
+            let dir = fleet_dir
+                .join("types")
+                .join(type_name)
+                .join(fleet::USERS)
+                .join(&user);
+            if !dir.is_dir() {
+                continue;
+            }
+            let path = dir.join(RECIPIENTS);
+            let list = match replacing {
+                Some((replaced, list)) if replaced == path => list.to_vec(),
+                _ => read(&path)?,
+            };
+            for recipient in list {
+                if !all.iter().any(|known| known.key == recipient.key) {
+                    all.push(recipient);
+                }
+            }
+        }
+    }
+    Ok(all)
+}
+
 fn rewrite(fleet: &Fleet, keys: &Keys, target: &Target, list: &[Recipient]) -> Result<Vec<String>> {
     let all = secrets_of(fleet, target)?;
     let sealed = all
         .values()
-        .map(|source| encrypt_for(list, &keys.decrypt(source)?))
+        .map(|source| {
+            let recipients = match source {
+                Source::Home(path) => {
+                    home_recipients(&fleet.dir, path, Some((&target.list, list)))?
+                }
+                Source::List(_) => list.to_vec(),
+            };
+            encrypt_for(&recipients, &keys.decrypt(source.path())?)
+        })
         .collect::<Result<Vec<_>>>()?;
     fs::write(&target.list, format(list))
         .with_context(|| format!("writing {}", target.list.display()))?;
     for (source, bytes) in all.values().zip(&sealed) {
-        fs::write(source, bytes).with_context(|| format!("writing {}", source.display()))?;
+        let path = source.path();
+        fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))?;
     }
     Ok(all.into_keys().collect())
 }
 
-fn secrets_of(fleet: &Fleet, target: &Target) -> Result<BTreeMap<String, PathBuf>> {
+enum Source {
+    Home(PathBuf),
+    List(PathBuf),
+}
+
+impl Source {
+    fn path(&self) -> &Path {
+        match self {
+            Source::Home(path) | Source::List(path) => path,
+        }
+    }
+}
+
+fn secrets_of(fleet: &Fleet, target: &Target) -> Result<BTreeMap<String, Source>> {
     let type_dir = fleet.dir.join("types").join(&target.type_name);
     let mut all = BTreeMap::new();
     match &target.scope {
@@ -338,20 +401,20 @@ fn secrets_of(fleet: &Fleet, target: &Target) -> Result<BTreeMap<String, PathBuf
             let etc = type_dir.join("etc");
             for rel in walk::files(&etc)? {
                 if let Some(clear) = rel.to_str().and_then(|r| r.strip_suffix(AGE)) {
-                    all.insert(format!("/etc/{clear}"), etc.join(&rel));
+                    all.insert(format!("/etc/{clear}"), Source::List(etc.join(&rel)));
                 }
             }
         }
         Scope::User(user) => {
             for (target_path, source) in chezmoi::encrypted(fleet, &target.type_name, user)? {
-                all.insert(format!("~/{}", target_path.display()), source);
+                all.insert(format!("~/{}", target_path.display()), Source::Home(source));
             }
             let dir = type_dir.join("users").join(user).join(SECRETS);
             if dir.exists() {
                 for rel in walk::files(&dir)? {
                     let source = dir.join(&rel);
                     let shown = source.strip_prefix(&fleet.dir)?.display().to_string();
-                    all.insert(shown, source);
+                    all.insert(shown, Source::List(source));
                 }
             }
         }

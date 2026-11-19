@@ -4,6 +4,7 @@ mod cmd;
 mod edit;
 mod fleet;
 mod hardware;
+mod homes;
 mod ignore;
 mod install;
 mod later;

@@ -73,12 +73,12 @@ $ printf 'a\ns\ny\na\ny\n' | sudo mothership review
   That adds 1 file. Go on [y/N]? y
 3 added
 Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
-$ cd /var/lib/mothership/fleet && find dot_ssh dot_config types/workstation/etc/wifi.conf.age | sort
-dot_config
-dot_config/app
-dot_config/app/encrypted_token.age
-dot_ssh
-dot_ssh/encrypted_private_id_test.age
+$ cd /var/lib/mothership/fleet && find homes/me/dot_ssh homes/me/dot_config types/workstation/etc/wifi.conf.age | sort
+homes/me/dot_config
+homes/me/dot_config/app
+homes/me/dot_config/app/encrypted_token.age
+homes/me/dot_ssh
+homes/me/dot_ssh/encrypted_private_id_test.age
 types/workstation/etc/wifi.conf.age
 $ grep -r SECRET /var/lib/mothership/fleet
 [exit 1]
@@ -131,7 +131,7 @@ $ printf 'a\n' | sudo mothership review
   git history keeps the version in clear, so change it.
 1 added
 Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
-$ ls /var/lib/mothership/fleet | grep netrc
+$ ls /var/lib/mothership/fleet/homes/me | grep netrc
 encrypted_private_dot_netrc.age
 ```
 
@@ -204,7 +204,7 @@ $ sudo mv /etc/mothership/key.txt /root/desktop.txt && sudo mv /root/laptop.txt 
 $ mv ~/.config/mothership/key.txt ~/desktop.txt && mv ~/laptop.txt ~/.config/mothership/key.txt
 $ cd /var/lib/mothership/fleet && mkdir -p types/workstation/users/me/secrets &&
 > echo "PROXY-SECRET" | chezmoi encrypt > types/workstation/users/me/secrets/proxy-key.age &&
-> echo '{{ include "types/workstation/users/me/secrets/proxy-key.age" | decrypt | trim }}' > dot_proxy.tmpl
+> echo '{{ include (joinPath .fleet "types/workstation/users/me/secrets/proxy-key.age") | decrypt | trim }}' > homes/me/dot_proxy.tmpl
 $ chezmoi apply --force ~/.proxy && cat ~/.proxy
 PROXY-SECRET
 $ sudo mothership trust workstation/root desktop "$(sudo grep -o 'age1.*' /root/desktop.txt)"
@@ -237,7 +237,7 @@ Error: desktop is the last key of workstation/root: trust another one first
 $ sed 's/age1[a-z0-9]*/<key>/' /var/lib/mothership/fleet/types/workstation/users/me/recipients.txt
 # desktop
 <key>
-$ chezmoi execute-template < /var/lib/mothership/fleet/dot_proxy.tmpl
+$ chezmoi execute-template < /var/lib/mothership/fleet/homes/me/dot_proxy.tmpl
 PROXY-SECRET
 $ find /var/lib/mothership/fleet -not -user me | wc -l
 0

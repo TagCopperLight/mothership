@@ -1,6 +1,7 @@
 use crate::{
     chezmoi,
     fleet::{Fleet, Manager, Member, Mode, Tool},
+    homes,
     ignore::Level,
     package::Distro,
     prompt::Prompt,
@@ -196,7 +197,7 @@ impl Add {
                         return Ok(false);
                     }
                 }
-                chezmoi_add(member()?, path, *encrypt)?;
+                chezmoi_add(fleet, member()?, path, *encrypt)?;
             }
             Add::Update { path, encrypt } => {
                 let member = member()?;
@@ -207,19 +208,32 @@ impl Add {
                 let clear = !source
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().starts_with("encrypted_"));
-                if !encrypt {
-                    chezmoi::write_for(member.user(), &["re-add", &path.to_string_lossy()])?;
+                let link = fs::symlink_metadata(&source)?.is_symlink();
+                if link && *encrypt && clear {
+                    bail!(
+                        "{} is shared: encrypt it in {} by hand",
+                        source.display(),
+                        homes::target(&fleet.dir, &source)?.display()
+                    );
+                }
+                if link {
+                    update_shared(fleet, member, &source, path)?;
+                } else if !encrypt {
+                    let recipients = own_list(fleet, member)?;
+                    let args = ["re-add", &path.to_string_lossy()];
+                    chezmoi::write_for(fleet, member, &recipients, &args)?;
                 } else {
-                    chezmoi_add(member, path, true)?;
+                    chezmoi_add(fleet, member, path, true)?;
                     if clear {
                         println!("  git history keeps the version in clear, so change it.");
                     }
                 }
             }
-            Add::Forget(path) => chezmoi::write_for(
-                member()?.user(),
-                &["forget", "--force", &path.to_string_lossy()],
-            )?,
+            Add::Forget(path) => {
+                let member = member()?;
+                let args = ["forget", "--force", &path.to_string_lossy()];
+                chezmoi::write_for(fleet, member, &own_list(fleet, member)?, &args)?
+            }
             Add::CopyEtc { path, encrypt } => copy_etc(fleet, etc_rel(path), path, *encrypt)?,
             Add::RemoveEtc(path) => remove_etc(fleet, etc_rel(path))?,
             Add::Pref {
@@ -240,10 +254,26 @@ fn encrypted_suffix(encrypt: bool) -> &'static str {
     if encrypt { ", encrypted" } else { "" }
 }
 
-fn chezmoi_add(member: &Member, path: &Path, encrypt: bool) -> Result<()> {
+fn own_list(fleet: &Fleet, member: &Member) -> Result<String> {
+    secrets::home_list(&fleet.dir, &homes::source(&fleet.dir, &member.name))
+}
+
+fn update_shared(fleet: &Fleet, member: &Member, source: &Path, path: &Path) -> Result<()> {
+    let shared = homes::target(&fleet.dir, source)?;
+    let link = fs::read_link(source)?;
+    let recipients = secrets::home_list(&fleet.dir, source)?;
+    let args = ["re-add", &path.to_string_lossy()];
+    chezmoi::write_for(fleet, member, &recipients, &args)?;
+    fs::rename(source, &shared)?;
+    unix::fs::symlink(link, source)?;
+    Ok(())
+}
+
+fn chezmoi_add(fleet: &Fleet, member: &Member, path: &Path, encrypt: bool) -> Result<()> {
     let path = path.to_string_lossy();
+    let recipients = own_list(fleet, member)?;
     if !encrypt {
-        return chezmoi::write_for(member.user(), &["add", &path]);
+        return chezmoi::write_for(fleet, member, &recipients, &["add", &path]);
     }
     if !member.open {
         bail!(
@@ -252,7 +282,7 @@ fn chezmoi_add(member: &Member, path: &Path, encrypt: bool) -> Result<()> {
             member.recipients().display()
         );
     }
-    chezmoi::write_for(member.user(), &["add", "--encrypt", &path])
+    chezmoi::write_for(fleet, member, &recipients, &["add", "--encrypt", &path])
 }
 
 fn append_line(path: &Path, line: &str) -> Result<()> {

@@ -1,6 +1,8 @@
 use crate::{
+    chezmoi,
     cmd::{self, As},
     hardware::{self, Hardware},
+    homes,
     ignore::{Ignore, Level, Paths},
     secrets::{self, Keys},
     style,
@@ -205,7 +207,7 @@ impl Tool {
 
 const IGNORE: &str = "ignore.txt";
 const NOT_SECRET: &str = "not-secret.txt";
-const USERS: &str = "users";
+pub const USERS: &str = "users";
 
 impl Fleet {
     pub fn load() -> Result<Self> {
@@ -228,10 +230,12 @@ impl Fleet {
             ),
         )?;
         let etc_open = secrets::opens(&fleet.recipients(), Path::new(secrets::ROOT_KEY))?;
-        for member in &mut fleet.members {
+        for i in 0..fleet.members.len() {
+            let member = &fleet.members[i];
             let Some(user) = &member.user else { continue };
-            member.open = secrets::opens(&member.recipients(), &secrets::key_path(user))?;
-            member.chezmoi = reads_fleet(member, user, &fleet.dir)?;
+            let open = secrets::opens(&member.recipients(), &secrets::key_path(user))?;
+            let chezmoi = reads_fleet(&fleet, member)?;
+            (fleet.members[i].open, fleet.members[i].chezmoi) = (open, chezmoi);
         }
         fleet.local = Some(Local {
             admin,
@@ -263,6 +267,7 @@ impl Fleet {
         options: &[String],
         hardware: &BTreeSet<Hardware>,
     ) -> Result<Self> {
+        homes::check(&dir)?;
         let type_dir = dir.join("types").join(device_type);
         let system_path = type_dir.join("system.toml");
         let mut system: System = read_toml(&system_path)?;
@@ -534,18 +539,34 @@ fn read_toml<T: de::DeserializeOwned>(path: &Path) -> Result<T> {
     .with_context(|| format!("parsing {}", path.display()))
 }
 
-fn reads_fleet(member: &Member, user: &User, fleet_dir: &Path) -> Result<bool> {
-    let dump = cmd::stdout(
-        cmd::As::User(user),
-        "chezmoi",
-        &["dump-config", "--format", "json"],
-    )?;
-    let config: serde_json::Value = serde_json::from_str(&dump)?;
-    let path = |value: &serde_json::Value| value.as_str().map(PathBuf::from);
-    Ok(path(&config["sourceDir"]).as_deref() == Some(fleet_dir)
-        && config["encryption"] == "age"
-        && path(&config["age"]["identity"]) == Some(secrets::key_path(user))
-        && path(&config["age"]["recipientsFile"]) == Some(member.recipients()))
+pub struct ChezmoiConfig {
+    pub source: PathBuf,
+    pub identity: PathBuf,
+    pub recipients: PathBuf,
+    pub profile: String,
+    pub user: String,
+    pub fleet: PathBuf,
+}
+
+impl Member {
+    pub fn chezmoi_config(&self, fleet: &Fleet) -> ChezmoiConfig {
+        ChezmoiConfig {
+            source: homes::source(&fleet.dir, &self.name),
+            identity: secrets::key_path(self.user()),
+            recipients: self.recipients(),
+            profile: fleet.type_name.clone(),
+            user: self.name.clone(),
+            fleet: fleet.dir.clone(),
+        }
+    }
+}
+
+fn reads_fleet(fleet: &Fleet, member: &Member) -> Result<bool> {
+    let user = member.user();
+    let Some(text) = user.read(&user.home.join(chezmoi::CONFIG))? else {
+        return Ok(false);
+    };
+    Ok(String::from_utf8_lossy(&text) == chezmoi::config_text(&member.chezmoi_config(fleet))?)
 }
 
 #[cfg(test)]
