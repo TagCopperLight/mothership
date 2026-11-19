@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 
 fn git(name: &str, url: &str, branch: Option<&str>) -> Source {
     Source::Declarable(Tool::Git(GitTool {
@@ -64,6 +65,24 @@ fn reads_uv_receipts() {
     ] {
         assert!(matches!(receipt(other), Source::Other(_)), "{other}");
     }
+}
+
+#[test]
+fn reads_uv_tool_folders_next_to_uvs_own_files() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join(".gitignore"), "*").unwrap();
+    fs::write(dir.path().join(".lock"), "").unwrap();
+    fs::create_dir(dir.path().join("ruff")).unwrap();
+    fs::write(
+        dir.path().join("ruff/uv-receipt.toml"),
+        "[tool]\nrequirements = [{ name = \"ruff\" }]\n",
+    )
+    .unwrap();
+    let tools = uv_tools(dir.path()).unwrap();
+    assert_eq!(
+        tools.into_iter().collect::<Vec<_>>(),
+        [("ruff".to_owned(), registry("ruff"))]
+    );
 }
 
 #[test]

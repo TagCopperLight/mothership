@@ -204,6 +204,9 @@ fn git_source(name: &str, url: &str, query: &str) -> Source {
 fn uv_tools(dir: &Path) -> Result<BTreeMap<String, Source>> {
     let mut tools = BTreeMap::new();
     for tool in walk::children(dir)? {
+        if !tool.is_dir() {
+            continue;
+        }
         let receipt = tool.join("uv-receipt.toml");
         let Some(bytes) = file::read(&receipt)? else {
             continue;
