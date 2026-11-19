@@ -5,7 +5,7 @@ use crate::{
     package::Db,
     prompt::Prompt,
     record::Record,
-    revert::{self, Revert, Service, User},
+    revert::{self, Machine, Revert, Service, User},
     scan::{self, Checks},
     style::Style,
 };
@@ -103,7 +103,7 @@ fn round(
     Ok(todo.iter().any(|item| {
         matches!(
             item.revert,
-            Some(Revert::User(User::Create | User::InitChezmoi))
+            Some(Revert::Machine(Machine::CreateUser { .. }) | Revert::User(User::InitChezmoi))
         )
     }))
 }

@@ -239,12 +239,15 @@ fn append_line(path: &Path, line: &str) -> Result<()> {
 }
 
 pub fn ignore(fleet: &Fleet, member: Option<&Member>, line: &str) -> Result<()> {
-    let path = member.map_or_else(|| fleet.ignore_path(), Member::ignore_path);
+    let path = member.map_or_else(|| fleet.ignore_path(), |member| member.ignore_path());
     append_line(&path, one_line(line)?)
 }
 
 pub fn not_secret(fleet: &Fleet, member: Option<&Member>, subject: &str) -> Result<()> {
-    let path = member.map_or_else(|| fleet.not_secret_path(), Member::not_secret_path);
+    let path = member.map_or_else(
+        || fleet.not_secret_path(),
+        |member| member.not_secret_path(),
+    );
     append_line(&path, one_line(&globset::escape(subject))?)
 }
 

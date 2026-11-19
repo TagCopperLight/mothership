@@ -1,6 +1,6 @@
 use super::disk::Layout;
 use crate::{
-    fleet::{self, Fleet, Machine},
+    fleet::{self, Machine, Repo},
     prompt::{Choice, Prompt},
 };
 use anyhow::{Result, bail};
@@ -102,7 +102,7 @@ pub fn machine(flags: &Flags, prompt: &mut Prompt, dir: &Path) -> Result<Machine
         device_type,
         options: Vec::new(),
     };
-    let offered = Fleet::for_machine(dir.into(), &machine)?.options();
+    let offered = Repo::for_machine(dir.into(), &machine)?.options();
     let device_type = &machine.device_type;
     machine.options = match &flags.device_type {
         Some(_) => {

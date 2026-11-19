@@ -6,6 +6,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use std::{collections::HashMap, path::Path};
 
+#[derive(Clone)]
 pub struct Ignore {
     sets: HashMap<Kind, GlobSet>,
 }
@@ -46,6 +47,7 @@ impl Ignore {
     }
 }
 
+#[derive(Clone)]
 pub struct Paths(GlobSet);
 
 impl Paths {

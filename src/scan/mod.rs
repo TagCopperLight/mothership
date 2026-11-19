@@ -96,6 +96,15 @@ pub fn checks(fleet: &Fleet, db: &Db, record: &Record, which: Checks) -> Result<
         let items = handles.into_iter().map(join).collect::<Result<Vec<_>>>()?;
         Ok::<_, anyhow::Error>(items.into_iter().flatten().collect::<Vec<_>>())
     })?;
+    items.extend(fleet.missing().map(|profile| {
+        let user = format!("user {}", profile.name);
+        Item::new(Kind::Account, Change::Removed, user, "missing").reverting(
+            revert::Machine::CreateUser {
+                name: profile.name.clone(),
+                shell: profile.config.shell.clone(),
+            },
+        )
+    }));
     for item in &mut items {
         let user = item.member.map(|i| fleet.members[i].name.as_str());
         if item.section == Section::Machine
@@ -111,37 +120,26 @@ pub fn checks(fleet: &Fleet, db: &Db, record: &Record, which: Checks) -> Result<
 fn member(fleet: &Fleet, ships: &Ships, i: usize, which: Checks) -> Result<Vec<Item>> {
     let member = &fleet.members[i];
     let mut items = Vec::new();
-    match &member.user {
-        None => items.push(
-            Item::new(
-                Kind::Account,
-                Change::Removed,
-                format!("user {}", member.name),
-                "missing",
-            )
-            .reverting(revert::User::Create),
-        ),
-        Some(_) => thread::scope(|s| {
-            let parts = [
-                (Kind::Account, s.spawn(|| account::scan(member, ships))),
-                (
-                    Kind::UserService,
-                    s.spawn(|| services::scan_user(member, ships)),
+    thread::scope(|s| {
+        let parts = [
+            (Kind::Account, s.spawn(|| account::scan(member, ships))),
+            (
+                Kind::UserService,
+                s.spawn(|| services::scan_user(member, ships)),
+            ),
+            (Kind::Tool, s.spawn(|| tools::scan(member))),
+            (Kind::File, s.spawn(|| tracked(fleet, member, which))),
+        ];
+        for (kind, part) in parts {
+            match join(part) {
+                Ok(found) => items.extend(found),
+                Err(e) => items.push(
+                    Item::new(kind, Change::Unreadable, kind.area().title(), "not scanned")
+                        .noting(format!("{e:#}")),
                 ),
-                (Kind::Tool, s.spawn(|| tools::scan(member))),
-                (Kind::File, s.spawn(|| tracked(fleet, member, which))),
-            ];
-            for (kind, part) in parts {
-                match join(part) {
-                    Ok(found) => items.extend(found),
-                    Err(e) => items.push(
-                        Item::new(kind, Change::Unreadable, kind.area().title(), "not scanned")
-                            .noting(format!("{e:#}")),
-                    ),
-                }
             }
-        }),
-    }
+        }
+    });
     for item in &mut items {
         item.member = Some(i);
     }
@@ -202,10 +200,10 @@ impl<'a> Ships<'a> {
         {
             return Ok(true);
         }
-        if let Some(user) = member.and_then(|m| m.user.as_ref())
-            && resolved.starts_with(&user.home)
+        if let Some(member) = member
+            && resolved.starts_with(&member.user().home)
         {
-            return chezmoi::manages(user, &resolved);
+            return chezmoi::manages(member.user(), &resolved);
         }
         Ok(self.files.contains(resolved.to_string_lossy().as_ref()))
     }

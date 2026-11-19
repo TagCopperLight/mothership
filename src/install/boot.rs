@@ -2,7 +2,7 @@ use super::disk;
 use crate::{
     cmd::{self, As},
     file,
-    fleet::Fleet,
+    fleet::Repo,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -73,7 +73,7 @@ pub fn check_firmware() -> Result<()> {
     Ok(())
 }
 
-fn etc_text(fleet: &Fleet, rel: &str) -> Result<Option<String>> {
+fn etc_text(fleet: &Repo, rel: &str) -> Result<Option<String>> {
     if !fleet.etc.contains(Path::new(rel)) {
         return Ok(None);
     }
@@ -83,7 +83,7 @@ fn etc_text(fleet: &Fleet, rel: &str) -> Result<Option<String>> {
         .map(Some)
 }
 
-fn etc_texts(fleet: &Fleet, under: &str, suffix: &str) -> Result<Vec<String>> {
+fn etc_texts(fleet: &Repo, under: &str, suffix: &str) -> Result<Vec<String>> {
     let mut texts = Vec::new();
     for rel in &fleet.etc {
         let rel = rel.to_string_lossy();
@@ -99,7 +99,7 @@ fn value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     Some(value.trim().trim_matches(['"', '\'']))
 }
 
-pub fn keymap(fleet: &Fleet) -> Result<Option<String>> {
+pub fn keymap(fleet: &Repo) -> Result<Option<String>> {
     Ok(etc_text(fleet, VCONSOLE)?.and_then(|text| {
         text.lines()
             .find_map(|line| value(line, "KEYMAP"))
@@ -107,7 +107,7 @@ pub fn keymap(fleet: &Fleet) -> Result<Option<String>> {
     }))
 }
 
-fn hooks(fleet: &Fleet) -> Result<Vec<String>> {
+fn hooks(fleet: &Repo) -> Result<Vec<String>> {
     let configs = etc_texts(fleet, "mkinitcpio.conf", ".conf")?;
     Ok(configs
         .iter()
@@ -124,7 +124,7 @@ fn hooks(fleet: &Fleet) -> Result<Vec<String>> {
         .unwrap_or_default())
 }
 
-fn builds_uki(fleet: &Fleet) -> Result<bool> {
+fn builds_uki(fleet: &Repo) -> Result<bool> {
     let presets = etc_texts(fleet, "mkinitcpio.d/", ".preset")?;
     Ok(presets.iter().flat_map(|text| text.lines()).any(|line| {
         line.split_once('=').is_some_and(|(key, path)| {
@@ -137,7 +137,7 @@ fn builds_uki(fleet: &Fleet) -> Result<bool> {
     }))
 }
 
-pub fn check_type(fleet: &Fleet) -> Result<()> {
+pub fn check_type(fleet: &Repo) -> Result<()> {
     let mut missing = Vec::new();
     let packages = fleet.packages();
     for package in PACKAGES {

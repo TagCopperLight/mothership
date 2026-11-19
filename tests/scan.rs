@@ -12,7 +12,12 @@ fn items_sort_by_section_area_change_then_subject() {
     let type_dir = dir.path().join("types/workstation");
     fs::create_dir_all(&type_dir).unwrap();
     fs::write(type_dir.join(crate::fleet::SYSTEM_TOML), "").unwrap();
-    let fleet = Fleet::new(dir.path().into(), "workstation", &[], &Default::default()).unwrap();
+    let repo = crate::fleet::Repo::new(dir.path().into(), "workstation", &[], &Default::default())
+        .unwrap();
+    let fleet = Fleet::of(
+        repo,
+        &crate::user::by_uid(unsafe { libc::geteuid() }).unwrap(),
+    );
     let item = |kind, change, subject: &str| Item::new(kind, change, subject, "");
     let mut items = vec![
         in_section(item(Kind::Package, Change::Added, "b"), Section::Fleet),

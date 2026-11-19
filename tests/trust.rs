@@ -70,7 +70,12 @@ fn fleet_with(dir: &Path, list: &str, secrets: &[(&str, &[u8], &Path)]) -> Fleet
         let sealed = encrypt(sealed_for, text).unwrap();
         fs::write(type_dir.join("etc").join(name), sealed).unwrap();
     }
-    Fleet::new(dir.to_path_buf(), "workstation", &[], &Default::default()).unwrap()
+    let repo = crate::fleet::Repo::new(dir.to_path_buf(), "workstation", &[], &Default::default())
+        .unwrap();
+    Fleet::of(
+        repo,
+        &crate::user::by_uid(unsafe { libc::geteuid() }).unwrap(),
+    )
 }
 
 #[test]

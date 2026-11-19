@@ -16,6 +16,7 @@ use serde::de;
 use std::{
     collections::BTreeSet,
     fs,
+    ops::Deref,
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
 };
@@ -29,7 +30,7 @@ pub use config::{
 
 pub const DIR: &str = "/var/lib/mothership/fleet";
 
-pub struct Fleet {
+pub struct Repo {
     pub dir: PathBuf,
     pub type_name: String,
     pub type_dir: PathBuf,
@@ -40,14 +41,23 @@ pub struct Fleet {
     pub secret_etc: BTreeSet<PathBuf>,
     pub ignore: Ignore,
     pub not_secret: Paths,
-    pub members: Vec<Member>,
-    local: Option<Local>,
+    pub profiles: Vec<Profile>,
 }
 
-struct Local {
+pub struct Fleet {
+    pub repo: Repo,
+    pub members: Vec<Member>,
     admin: User,
     keys: Keys,
     etc_open: bool,
+}
+
+impl Deref for Fleet {
+    type Target = Repo;
+
+    fn deref(&self) -> &Repo {
+        &self.repo
+    }
 }
 
 #[derive(Clone)]
@@ -67,15 +77,28 @@ impl Table {
     }
 }
 
-pub struct Member {
+#[derive(Clone)]
+pub struct Profile {
     pub name: String,
     pub dir: PathBuf,
     pub config: UserConfig,
     pub ignore: Ignore,
     pub not_secret: Paths,
-    pub user: Option<User>,
+}
+
+pub struct Member {
+    pub profile: Profile,
     pub chezmoi: bool,
     pub open: bool,
+    user: User,
+}
+
+impl Deref for Member {
+    type Target = Profile;
+
+    fn deref(&self) -> &Profile {
+        &self.profile
+    }
 }
 
 pub const TYPES: &str = "types";
@@ -93,25 +116,24 @@ impl Fleet {
         let meta = fs::metadata(&dir)
             .with_context(|| format!("reading {DIR}: clone the fleet there as its admin"))?;
         let admin = user::by_uid(meta.uid())?;
-        let mut fleet = Fleet::for_machine(dir, &machine)?;
-        for member in &mut fleet.members {
-            member.user = user::by_name(&member.name)?;
-        }
+        let repo = Repo::for_machine(dir, &machine)?;
         let mut keys = Keys::default();
         let etc_open = match secrets::root_key()? {
             Some(key) => {
-                let open = secrets::holds(&fleet.recipients(), &secrets::public(&key))?;
+                let open = secrets::holds(&repo.recipients(), &secrets::public(&key))?;
                 keys.push(key);
                 open
             }
             None => false,
         };
-        for i in 0..fleet.members.len() {
-            let member = &fleet.members[i];
-            let Some(user) = &member.user else { continue };
-            let open = match secrets::user_key(user) {
+        let mut members = Vec::new();
+        for profile in &repo.profiles {
+            let Some(user) = user::by_name(&profile.name)? else {
+                continue;
+            };
+            let open = match secrets::user_key(&user) {
                 Ok(Some(key)) => {
-                    let open = secrets::holds(&member.recipients(), &secrets::public(&key))?;
+                    let open = secrets::holds(&profile.recipients(), &secrets::public(&key))?;
                     keys.push(key);
                     open
                 }
@@ -119,42 +141,113 @@ impl Fleet {
                 Err(e) => {
                     eprintln!(
                         "{}'s secrets stay locked: {}",
-                        member.name,
+                        profile.name,
                         style::clean(&format!("{e:#}"))
                     );
                     false
                 }
             };
-            let chezmoi = chezmoi::configured(member.user(), &member.chezmoi_config(&fleet))?;
-            (fleet.members[i].open, fleet.members[i].chezmoi) = (open, chezmoi);
+            let chezmoi = chezmoi::configured(&user, &chezmoi_config(&repo, profile, &user))?;
+            members.push(Member {
+                profile: profile.clone(),
+                user,
+                chezmoi,
+                open,
+            });
         }
-        fleet.local = Some(Local {
+        Ok(Fleet {
+            repo,
             admin,
             keys,
             etc_open,
-        });
-        Ok(fleet)
-    }
-
-    fn local(&self) -> &Local {
-        self.local.as_ref().expect("Fleet::load reads the machine")
+            members,
+        })
     }
 
     pub fn admin(&self) -> &User {
-        &self.local().admin
+        &self.admin
     }
 
     pub fn keys(&self) -> &Keys {
-        &self.local().keys
+        &self.keys
     }
 
     pub fn etc_open(&self) -> bool {
-        self.local().etc_open
+        self.etc_open
     }
 
+    pub fn missing(&self) -> impl Iterator<Item = &Profile> {
+        self.profiles
+            .iter()
+            .filter(|profile| !self.members.iter().any(|m| m.name == profile.name))
+    }
+
+    pub fn etc_contents(&self, rel: &Path) -> Result<Vec<u8>> {
+        let source = self.etc_source(rel);
+        if self.secret_etc.contains(rel) {
+            return self.keys.decrypt(&source);
+        }
+        fs::read(&source).with_context(|| format!("reading {}", source.display()))
+    }
+
+    pub fn aur(&self) -> package::Aur<'_> {
+        package::Aur {
+            helper: self.system.aur_helper,
+            admin: &self.admin,
+        }
+    }
+
+    pub fn unsaved(&self) -> Result<Vec<String>> {
+        let dir = self.dir.to_string_lossy();
+        let args = ["-C", &dir, "status", "--porcelain=v2", "--branch"];
+        let status = cmd::stdout(As::User(&self.admin), "git", &args)?;
+        let changed = status.lines().filter(|l| !l.starts_with('#')).count();
+        let ahead: usize = status
+            .lines()
+            .find_map(|l| l.strip_prefix("# branch.ab +"))
+            .and_then(|ab| ab.split_whitespace().next())
+            .map(str::parse)
+            .transpose()?
+            .unwrap_or(0);
+        let mut unsaved = Vec::new();
+        if !status.lines().any(|l| l.starts_with("# branch.upstream ")) {
+            unsaved.push("no upstream branch to push to".to_owned());
+        }
+        if changed > 0 {
+            unsaved.push(format!("{} not committed", style::count(changed, "change")));
+        }
+        if ahead > 0 {
+            unsaved.push(format!("{} not pushed", style::count(ahead, "commit")));
+        }
+        Ok(unsaved)
+    }
+
+    pub fn hand_back(&self) -> Result<()> {
+        let admin = &self.admin;
+        let mut todo = vec![self.dir.clone()];
+        while let Some(dir) = todo.pop() {
+            for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
+                let path = entry?.path();
+                if path == self.dir.join(".git") {
+                    continue;
+                }
+                let meta = fs::symlink_metadata(&path)?;
+                if meta.uid() != admin.uid {
+                    admin.own(&path)?;
+                }
+                if meta.is_dir() {
+                    todo.push(path);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Repo {
     pub fn for_machine(dir: PathBuf, machine: &Machine) -> Result<Self> {
         let hardware = hardware::detect(Path::new("/"))?;
-        Fleet::new(dir, &machine.device_type, &machine.options, &hardware)
+        Repo::new(dir, &machine.device_type, &machine.options, &hardware)
     }
 
     pub fn new(
@@ -240,8 +333,8 @@ impl Fleet {
         }
         let ignore = Ignore::load(&type_dir.join(IGNORE), Level::Machine)?;
         let not_secret = Paths::load(&type_dir.join(NOT_SECRET))?;
-        let members = members(&type_dir.join(USERS))?;
-        Ok(Fleet {
+        let profiles = profiles(&type_dir.join(USERS))?;
+        Ok(Repo {
             dir,
             type_name: device_type.to_owned(),
             type_dir,
@@ -252,8 +345,7 @@ impl Fleet {
             secret_etc,
             ignore,
             not_secret,
-            members,
-            local: None,
+            profiles,
         })
     }
 
@@ -291,14 +383,6 @@ impl Fleet {
         PathBuf::from(name)
     }
 
-    pub fn etc_contents(&self, rel: &Path) -> Result<Vec<u8>> {
-        let source = self.etc_source(rel);
-        if self.secret_etc.contains(rel) {
-            return self.keys().decrypt(&source);
-        }
-        fs::read(&source).with_context(|| format!("reading {}", source.display()))
-    }
-
     pub fn etc_mode(&self, rel: &Path) -> Result<Mode> {
         if let Some(mode) = self.system.etc_modes.get(rel) {
             return Ok(*mode);
@@ -319,13 +403,6 @@ impl Fleet {
         self.system.packages.iter().cloned().collect()
     }
 
-    pub fn aur(&self) -> package::Aur<'_> {
-        package::Aur {
-            helper: self.system.aur_helper,
-            admin: self.admin(),
-        }
-    }
-
     pub fn listed_packages(&self) -> BTreeSet<String> {
         self.system
             .packages
@@ -333,52 +410,6 @@ impl Fleet {
             .chain(&self.system.built_packages)
             .cloned()
             .collect()
-    }
-
-    pub fn unsaved(&self) -> Result<Vec<String>> {
-        let dir = self.dir.to_string_lossy();
-        let args = ["-C", &dir, "status", "--porcelain=v2", "--branch"];
-        let status = cmd::stdout(As::User(self.admin()), "git", &args)?;
-        let changed = status.lines().filter(|l| !l.starts_with('#')).count();
-        let ahead: usize = status
-            .lines()
-            .find_map(|l| l.strip_prefix("# branch.ab +"))
-            .and_then(|ab| ab.split_whitespace().next())
-            .map(str::parse)
-            .transpose()?
-            .unwrap_or(0);
-        let mut unsaved = Vec::new();
-        if !status.lines().any(|l| l.starts_with("# branch.upstream ")) {
-            unsaved.push("no upstream branch to push to".to_owned());
-        }
-        if changed > 0 {
-            unsaved.push(format!("{} not committed", style::count(changed, "change")));
-        }
-        if ahead > 0 {
-            unsaved.push(format!("{} not pushed", style::count(ahead, "commit")));
-        }
-        Ok(unsaved)
-    }
-
-    pub fn hand_back(&self) -> Result<()> {
-        let admin = self.admin();
-        let mut todo = vec![self.dir.clone()];
-        while let Some(dir) = todo.pop() {
-            for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
-                let path = entry?.path();
-                if path == self.dir.join(".git") {
-                    continue;
-                }
-                let meta = fs::symlink_metadata(&path)?;
-                if meta.uid() != admin.uid {
-                    admin.own(&path)?;
-                }
-                if meta.is_dir() {
-                    todo.push(path);
-                }
-            }
-        }
-        Ok(())
     }
 }
 
@@ -430,7 +461,7 @@ pub fn types(dir: &Path) -> Result<Vec<String>> {
     Ok(names)
 }
 
-impl Member {
+impl Profile {
     pub fn path(&self) -> PathBuf {
         self.dir.join(USER_TOML)
     }
@@ -446,33 +477,26 @@ impl Member {
     pub fn recipients(&self) -> PathBuf {
         self.dir.join(secrets::RECIPIENTS)
     }
-
-    pub fn user(&self) -> &User {
-        self.user.as_ref().expect("checked by the caller")
-    }
 }
 
-fn members(dir: &Path) -> Result<Vec<Member>> {
-    let mut members = Vec::new();
+fn profiles(dir: &Path) -> Result<Vec<Profile>> {
+    let mut profiles = Vec::new();
     for dir in walk::children(dir)? {
         let name = dir
             .file_name()
             .and_then(|n| n.to_str())
             .with_context(|| format!("{} is not a user name", dir.display()))?
             .to_owned();
-        members.push(Member {
+        profiles.push(Profile {
             config: read_toml(&dir.join(USER_TOML))?,
             ignore: Ignore::load(&dir.join(IGNORE), Level::User)?,
             not_secret: Paths::load(&dir.join(NOT_SECRET))?,
             name,
             dir,
-            user: None,
-            chezmoi: false,
-            open: false,
         });
     }
-    members.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(members)
+    profiles.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(profiles)
 }
 
 fn read_toml<T: de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -483,19 +507,50 @@ fn read_toml<T: de::DeserializeOwned>(path: &Path) -> Result<T> {
 }
 
 impl Member {
+    pub fn user(&self) -> &User {
+        &self.user
+    }
+
     pub fn chezmoi_config(&self, fleet: &Fleet) -> chezmoi::ChezmoiConfig {
-        chezmoi::ChezmoiConfig {
-            source: homes::source(&fleet.dir, &self.name),
-            identity: secrets::key_path(self.user()),
-            recipients: self.recipients(),
-            profile: fleet.type_name.clone(),
-            user: self.name.clone(),
-            fleet: fleet.dir.clone(),
-        }
+        chezmoi_config(fleet, &self.profile, &self.user)
     }
 
     pub fn chezmoi_root(&self, fleet: &Fleet) -> chezmoi::Root {
-        chezmoi::Root::new(self.user(), self.chezmoi_config(fleet))
+        chezmoi::Root::new(&self.user, self.chezmoi_config(fleet))
+    }
+}
+
+fn chezmoi_config(repo: &Repo, profile: &Profile, user: &User) -> chezmoi::ChezmoiConfig {
+    chezmoi::ChezmoiConfig {
+        source: homes::source(&repo.dir, &profile.name),
+        identity: secrets::key_path(user),
+        recipients: profile.recipients(),
+        profile: repo.type_name.clone(),
+        user: profile.name.clone(),
+        fleet: repo.dir.clone(),
+    }
+}
+
+#[cfg(test)]
+impl Fleet {
+    pub fn of(repo: Repo, user: &User) -> Fleet {
+        let members = repo
+            .profiles
+            .iter()
+            .map(|profile| Member {
+                profile: profile.clone(),
+                user: user.clone(),
+                chezmoi: false,
+                open: false,
+            })
+            .collect();
+        Fleet {
+            repo,
+            admin: user.clone(),
+            keys: Keys::default(),
+            etc_open: false,
+            members,
+        }
     }
 }
 

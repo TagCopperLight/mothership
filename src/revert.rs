@@ -24,6 +24,7 @@ pub enum Machine {
     Uninstall(String),
     Etc(Etc),
     Unit(Unit),
+    CreateUser { name: String, shell: Option<String> },
 }
 
 pub enum Etc {
@@ -38,7 +39,6 @@ pub enum Unit {
 }
 
 pub enum User {
-    Create,
     InitChezmoi,
     Account(Account),
     Service(Service),
@@ -111,7 +111,7 @@ impl Revert {
             Revert::Machine(Machine::Etc(Etc::Delete(_))) => "delete".into(),
             Revert::Machine(Machine::Unit(unit))
             | Revert::User(User::Service(Service::Unit(unit))) => unit.describe().into(),
-            Revert::User(User::Create) => "create it".into(),
+            Revert::Machine(Machine::CreateUser { .. }) => "create it".into(),
             Revert::User(User::InitChezmoi) => "write its config".into(),
             Revert::User(User::Service(Service::Linger(true))) => "turn it on".into(),
             Revert::User(User::Service(Service::Linger(false))) => "turn it off".into(),
@@ -179,14 +179,15 @@ pub fn run(fleet: &Fleet, reverts: &[Owned]) -> Result<()> {
 }
 
 fn run_machine(fleet: &Fleet, changes: &[&Machine]) -> Result<()> {
-    let (mut install, mut uninstall, mut etc, mut units) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut install, mut uninstall, mut etc, mut units, mut users) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for change in changes.iter().copied() {
         match change {
             Machine::Install(name) => install.push(name.as_str()),
             Machine::Uninstall(name) => uninstall.push(name.as_str()),
             Machine::Etc(change) => etc.push(change),
             Machine::Unit(unit) => units.push(unit),
+            Machine::CreateUser { name, shell } => users.push((name, shell)),
         }
     }
     let distro = Distro::here()?;
@@ -211,6 +212,9 @@ fn run_machine(fleet: &Fleet, changes: &[&Machine]) -> Result<()> {
     for unit in units {
         systemctl(&[], unit)?;
     }
+    for (name, shell) in users {
+        create_user(name, shell.as_deref())?;
+    }
     Ok(())
 }
 
@@ -220,7 +224,6 @@ fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
     let (mut files, mut units, mut init) = (Vec::new(), Vec::new(), false);
     for change in changes.iter().copied() {
         match change {
-            User::Create => return create_user(member),
             User::InitChezmoi => init = true,
             User::Account(change) => account.push(change),
             User::Service(Service::Linger(on)) => linger = Some(*on),
@@ -285,12 +288,12 @@ fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
     Ok(())
 }
 
-pub fn create_user(member: &Member) -> Result<()> {
+pub fn create_user(name: &str, shell: Option<&str>) -> Result<()> {
     let mut args = vec!["--create-home"];
-    if let Some(shell) = &member.config.shell {
+    if let Some(shell) = shell {
         args.extend(["--shell", shell]);
     }
-    args.extend(["--", &member.name]);
+    args.extend(["--", name]);
     cmd::root("useradd", &args)
 }
 

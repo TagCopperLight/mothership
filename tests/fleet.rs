@@ -28,10 +28,10 @@ fn checkout(system: &str) -> TempDir {
     dir
 }
 
-fn load(dir: &TempDir, options: &[&str], hardware: &[Hardware]) -> Result<Fleet> {
+fn load(dir: &TempDir, options: &[&str], hardware: &[Hardware]) -> Result<Repo> {
     let options: Vec<String> = options.iter().map(|o| o.to_string()).collect();
     let hardware = hardware.iter().copied().collect();
-    Fleet::new(dir.path().to_path_buf(), "workstation", &options, &hardware)
+    Repo::new(dir.path().to_path_buf(), "workstation", &options, &hardware)
 }
 
 fn refused(dir: &TempDir, options: &[&str], hardware: &[Hardware], why: &str) {
@@ -111,11 +111,11 @@ fn each_folder_under_users_is_a_user_of_the_type() {
     }
     fs::write(users.join("dev/ignore.txt"), "home ~/.cache\n").unwrap();
     let fleet = load(&dir, &[], &[Hardware::CpuIntel]).unwrap();
-    let names: Vec<&str> = fleet.members.iter().map(|m| m.name.as_str()).collect();
+    let names: Vec<&str> = fleet.profiles.iter().map(|m| m.name.as_str()).collect();
     assert_eq!(names, ["dev", "tag"]);
-    assert!(fleet.members[1].config.linger);
+    assert!(fleet.profiles[1].config.linger);
     assert_eq!(
-        fleet.members[1].recipients(),
+        fleet.profiles[1].recipients(),
         users.join("tag/recipients.txt")
     );
 

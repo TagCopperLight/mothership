@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    fleet::{Fleet, Mode, System, UserConfig},
+    fleet::{Fleet, Mode, Repo, System, UserConfig},
     hardware::Hardware,
     ignore::Ignore,
     kind::Level,
@@ -74,7 +74,10 @@ impl Checkout {
         fs::create_dir_all(type_dir.join("users/me")).unwrap();
         fs::write(type_dir.join("users/me/user.toml"), USER).unwrap();
         let hardware = BTreeSet::from([Hardware::Battery]);
-        let fleet = Fleet::new(dir.path().to_path_buf(), "workstation", &[], &hardware).unwrap();
+        let repo = Repo::new(dir.path().to_path_buf(), "workstation", &[], &hardware).unwrap();
+        let mut me = crate::user::by_uid(unsafe { libc::geteuid() }).unwrap();
+        me.home = dir.path().to_path_buf();
+        let fleet = Fleet::of(repo, &me);
         Checkout { dir, fleet }
     }
 
@@ -276,10 +279,7 @@ fn sets_and_drops_linger() {
 
 #[test]
 fn tracking_a_folder_stops_unless_confirmed() {
-    let mut checkout = Checkout::new();
-    let mut me = crate::user::by_uid(unsafe { libc::geteuid() }).unwrap();
-    me.home = checkout.dir.path().to_path_buf();
-    checkout.fleet.members[0].user = Some(me);
+    let checkout = Checkout::new();
     let folder = checkout.dir.path().join("app");
     fs::create_dir(&folder).unwrap();
     fs::write(folder.join("config"), "").unwrap();

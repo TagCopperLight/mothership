@@ -15,7 +15,7 @@ $ cd /var/lib/mothership/fleet && mkdir -p types/workstation/users/dev homes/dev
 > git add -A && git commit -qm "Add dev"
 $ sudo mothership scan
 Coming from the fleet · 1
-  Account · dev
+  Account
     + user dev  create it
 
 1 to apply      sudo mothership apply
@@ -29,7 +29,7 @@ config, linger and the installer, then dev's files.
 ```console
 $ printf 'y\ny\ny\n' | sudo mothership apply
 Coming from the fleet · 1
-  Account · dev
+  Account
     + user dev  create it
 
 Apply [y/N]? y

@@ -30,9 +30,11 @@ pub struct MachineKey {
 pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
     let mut owners = vec![("root".to_owned(), None, fleet.recipients())];
     for member in &fleet.members {
-        if let Some(user) = &member.user {
-            owners.push((member.name.clone(), Some(user), member.recipients()));
-        }
+        owners.push((
+            member.name.clone(),
+            Some(member.user()),
+            member.recipients(),
+        ));
     }
     owners
         .into_iter()

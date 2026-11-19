@@ -11,7 +11,7 @@ mod trust;
 use crate::{
     apply::{self, ServiceManager},
     cmd::{self, As},
-    fleet::{self, Fleet, Machine},
+    fleet::{self, Fleet, Machine, Repo},
     package::{self, Distro, aur},
     prompt::Prompt,
     revert, scan, user,
@@ -51,10 +51,10 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     }
     let machine = Machine::load()?;
     let dir = Path::new(fleet::DIR);
-    let members = Fleet::for_machine(dir.into(), &machine)?.members;
+    let members = Repo::for_machine(dir.into(), &machine)?.profiles;
     for member in &members {
         if user::by_name(&member.name)?.is_none() {
-            revert::create_user(member)?;
+            revert::create_user(&member.name, member.config.shell.as_deref())?;
         }
     }
     if fs::metadata(dir)?.uid() == 0 {

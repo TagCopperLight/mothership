@@ -53,7 +53,7 @@ impl Record {
         let empty = UserRecord::default();
         let mine = user.and_then(|u| self.users.get(u)).unwrap_or(&empty);
         Ok(match change {
-            User::Create | User::InitChezmoi => true,
+            User::InitChezmoi => true,
             User::Service(Service::Linger(linger)) => mine.linger != *linger,
             User::Service(Service::Unit(Unit::Enable(unit))) => !mine.user_services.contains(unit),
             User::Service(Service::Unit(Unit::Disable(unit))) => mine.user_services.contains(unit),
@@ -75,6 +75,7 @@ impl Record {
         Ok(match change {
             Machine::Install(name) => !self.packages.contains(name),
             Machine::Uninstall(name) => self.packages.contains(name),
+            Machine::CreateUser { .. } => true,
             Machine::Unit(Unit::Enable(unit)) => !self.services.contains(unit),
             Machine::Unit(Unit::Disable(unit)) => self.services.contains(unit),
             Machine::Etc(Etc::Write(path)) => match hash(path)? {
@@ -137,15 +138,15 @@ impl Record {
             }
         }
         let empty = UserRecord::default();
+        let missing = fleet.missing().filter_map(|profile| {
+            let old = before.users.get(&profile.name)?;
+            Some((profile.name.clone(), old.clone()))
+        });
         let users = fleet
             .members
             .iter()
             .enumerate()
-            .filter_map(|(i, member)| {
-                if member.user.is_none() {
-                    let old = before.users.get(&member.name)?;
-                    return Some((member.name.clone(), old.clone()));
-                }
+            .map(|(i, member)| {
                 let config = &member.config;
                 let mut record = UserRecord {
                     groups: config.groups.iter().cloned().collect(),
@@ -168,8 +169,9 @@ impl Record {
                         }
                     }
                 }
-                Some((member.name.clone(), record))
+                (member.name.clone(), record)
             })
+            .chain(missing)
             .collect();
         Ok(Record {
             packages: fleet.packages(),

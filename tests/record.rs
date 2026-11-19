@@ -154,7 +154,11 @@ fn each_user_has_a_record_of_their_own() {
     assert!(!other(Account::Leave("docker".into()).into()));
     assert!(changed(&before, Service::Linger(false)));
     assert!(other(Service::Linger(true).into()));
-    assert!(changed(&before, User::Create));
+    let create = revert::Machine::CreateUser {
+        name: "dev".into(),
+        shell: None,
+    };
+    assert!(changed(&before, create));
     assert!(changed(&before, User::InitChezmoi));
 }
 
@@ -288,13 +292,15 @@ fn fleet(dir: &Path, system: &str, user: &str, etc: &[&str]) -> Fleet {
     }
     fs::write(type_dir.join(crate::fleet::SYSTEM_TOML), system).unwrap();
     fs::write(type_dir.join("users/me/user.toml"), user).unwrap();
-    Fleet::new(dir.to_path_buf(), "workstation", &[], &BTreeSet::new()).unwrap()
+    let repo =
+        crate::fleet::Repo::new(dir.to_path_buf(), "workstation", &[], &BTreeSet::new()).unwrap();
+    Fleet::of(repo, &crate::user::by_uid(0).unwrap())
 }
 
 #[test]
 fn the_new_record_holds_what_the_fleet_declares_and_keeps_edits_as_edits() {
     let checkout = TempDir::new().unwrap();
-    let mut fleet = fleet(
+    let fleet = fleet(
         checkout.path(),
         r#"
 packages = ["vim", "zip"]
@@ -309,7 +315,6 @@ linger = true
 "#,
         &["same.conf", "edited.conf", "new.conf"],
     );
-    fleet.members[0].user = Some(crate::user::by_uid(0).unwrap());
 
     let machine = Machine::new();
     machine.write("same.conf", "fleet");
@@ -341,8 +346,8 @@ linger = true
 #[test]
 fn a_user_the_machine_lacked_keeps_their_old_entry() {
     let checkout = TempDir::new().unwrap();
-    let fleet = fleet(checkout.path(), "", "linger = true\n", &[]);
-    assert!(fleet.members[0].user.is_none());
+    let mut fleet = fleet(checkout.path(), "", "linger = true\n", &[]);
+    fleet.members.clear();
     let machine = Machine::new();
     let after = Record::after(&fleet, &Record::default(), machine.dir.path(), &[]).unwrap();
     assert!(after.users.is_empty());
@@ -351,13 +356,12 @@ fn a_user_the_machine_lacked_keeps_their_old_entry() {
 #[test]
 fn what_apply_skipped_keeps_its_old_entry_so_the_next_apply_brings_it() {
     let checkout = TempDir::new().unwrap();
-    let mut fleet = fleet(
+    let fleet = fleet(
         checkout.path(),
         "",
         "user_services = [\"app.service\", \"kept.service\"]\nlinger = true\n",
         &[],
     );
-    fleet.members[0].user = Some(crate::user::by_uid(0).unwrap());
     let before = record(|r| {
         r.users
             .entry("me".into())

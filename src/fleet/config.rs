@@ -20,7 +20,7 @@ pub struct System {
     pub(super) options: BTreeMap<String, Block>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields, default)]
 pub struct UserConfig {
     pub shell: Option<String>,
@@ -88,7 +88,7 @@ impl<'de> Deserialize<'de> for Mode {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Installer {
     pub name: String,

@@ -9,7 +9,7 @@ use super::{
 use crate::{
     cmd::{self, As, Cmd},
     file,
-    fleet::{self, Fleet},
+    fleet::{self, Repo},
     package::Distro,
     prompt::Prompt,
 };
@@ -44,9 +44,9 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     fs::create_dir_all(dir)?;
     let private = repo::clone(&url, dir, As::Root, Distro::Arch)?;
     let machine = answers::machine(flags, prompt, dir)?;
-    let fleet = Fleet::for_machine(dir.into(), &machine)?;
+    let fleet = Repo::for_machine(dir.into(), &machine)?;
     boot::check_type(&fleet)?;
-    let members: Vec<String> = fleet.members.iter().map(|m| m.name.clone()).collect();
+    let members: Vec<String> = fleet.profiles.iter().map(|m| m.name.clone()).collect();
     answers::admin_given(flags, &members)?;
     let hostname = answers::hostname(flags, prompt)?;
     let timezone = answers::timezone(flags, prompt)?;
