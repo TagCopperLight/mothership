@@ -435,7 +435,7 @@ fn tracked(fleet: &Fleet, member: &Member, which: Checks) -> Result<Vec<Item>> {
     if which == Checks::All {
         let managed = &chezmoi.managed;
         thread::scope(|s| {
-            let home = s.spawn(|| home::scan(fleet, member, managed));
+            let home = s.spawn(|| home::scan(member, managed));
             items.extend(settings::scan(member, managed)?);
             items.extend(join(home)?);
             Ok::<_, anyhow::Error>(())
@@ -480,7 +480,7 @@ impl<'a> Ships<'a> {
         if let Some(user) = member.and_then(|m| m.user.as_ref())
             && resolved.starts_with(&user.home)
         {
-            return Ok(chezmoi::managed(user, "files,symlinks")?.contains(&resolved));
+            return chezmoi::manages(user, &resolved);
         }
         Ok(self.files.contains(resolved.to_string_lossy().as_ref()))
     }
@@ -654,66 +654,81 @@ fn finish(fleet: &Fleet, mut item: Item) -> Item {
     let Some(path) = item.guess.take() else {
         return item;
     };
+    let found = Found::at(&path);
     if item.change == Change::Added && item.note.is_empty() {
-        item.note = size(&path);
+        item.note = found.describe();
     }
     let not_secret = match item.member {
         None => &fleet.not_secret,
         Some(i) => &fleet.members[i].not_secret,
     };
-    looks_secret(not_secret, item, &path)
+    judge_secret(not_secret, item, &found)
 }
 
-fn size(path: &Path) -> String {
-    let described = match fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_symlink() => fs::read_link(path)
-            .map(|target| format!("→ {}", target.display()))
-            .map_err(anyhow::Error::from),
-        Ok(meta) if meta.is_dir() => {
-            walk::files(path).map(|files| style::count(files.len(), "file"))
+enum Found {
+    Missing,
+    Link(PathBuf),
+    Folder(Vec<fs::Metadata>),
+    File(fs::Metadata),
+    Unreadable(anyhow::Error),
+}
+
+impl Found {
+    fn at(path: &Path) -> Found {
+        let found = match fs::symlink_metadata(path) {
+            Err(e) if e.kind() == ErrorKind::NotFound => return Found::Missing,
+            found => found,
+        };
+        let found = found.map_err(anyhow::Error::from).and_then(|meta| {
+            Ok(if meta.is_symlink() {
+                Found::Link(fs::read_link(path)?)
+            } else if meta.is_dir() {
+                Found::Folder(
+                    walk::files_with_metadata(path)?
+                        .into_iter()
+                        .map(|(_, meta)| meta)
+                        .collect(),
+                )
+            } else {
+                Found::File(meta)
+            })
+        });
+        found.unwrap_or_else(Found::Unreadable)
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            Found::Link(target) => format!("→ {}", target.display()),
+            Found::Folder(files) => style::count(files.len(), "file"),
+            Found::Missing | Found::File(_) => String::new(),
+            Found::Unreadable(e) => format!("can't read it: {e:#}"),
         }
-        Ok(_) => return String::new(),
-        Err(e) => Err(e.into()),
-    };
-    described.unwrap_or_else(|e| format!("can't read it: {e:#}"))
+    }
+
+    fn private(&self) -> bool {
+        match self {
+            Found::Missing | Found::Link(_) => false,
+            Found::Folder(files) => files.iter().any(private),
+            Found::File(meta) => private(meta),
+            Found::Unreadable(_) => true,
+        }
+    }
 }
 
 fn looks_secret(not_secret: &Paths, item: Item, path: &Path) -> Item {
-    if !not_secret.matches(&item.subject) && guess_secret(path) {
+    judge_secret(not_secret, item, &Found::at(path))
+}
+
+fn judge_secret(not_secret: &Paths, item: Item, found: &Found) -> Item {
+    if !not_secret.matches(&item.subject) && found.private() {
         item.secret(Secret::Guessed)
     } else {
         item
     }
 }
 
-fn guess_secret(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|meta| {
-        if meta.is_dir() {
-            holds_private(path)
-        } else {
-            private(&meta)
-        }
-    })
-}
-
 fn private(meta: &fs::Metadata) -> bool {
     meta.is_file() && meta.permissions().mode() & 0o004 == 0
-}
-
-fn holds_private(dir: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return true;
-    };
-    entries.into_iter().any(|entry| {
-        let Ok((path, Ok(meta))) = entry.map(|e| (e.path(), e.metadata())) else {
-            return true;
-        };
-        if meta.is_dir() {
-            holds_private(&path)
-        } else {
-            private(&meta)
-        }
-    })
 }
 
 #[cfg(test)]

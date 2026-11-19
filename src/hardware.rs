@@ -1,3 +1,4 @@
+use crate::walk;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Deserializer, de};
 use std::{collections::BTreeSet, fs, io::ErrorKind, path::Path};
@@ -53,9 +54,10 @@ pub fn detect(root: &Path) -> Result<BTreeSet<Hardware>> {
     if battery(root)? {
         found.insert(Hardware::Battery);
     }
-    if entries(&root.join("sys/bus/acpi/devices"))?
+    if walk::children(&root.join("sys/bus/acpi/devices"))?
         .iter()
-        .any(|name| name.starts_with("GXFP5130:"))
+        .filter_map(|path| path.file_name())
+        .any(|name| name.to_string_lossy().starts_with("GXFP5130:"))
     {
         found.insert(Hardware::Gxfp5130);
     }
@@ -78,10 +80,8 @@ fn cpu(root: &Path) -> Result<Option<Hardware>> {
 }
 
 fn gpus(root: &Path) -> Result<BTreeSet<Hardware>> {
-    let dir = root.join("sys/bus/pci/devices");
     let mut found = BTreeSet::new();
-    for name in entries(&dir)? {
-        let device = dir.join(name);
+    for device in walk::children(&root.join("sys/bus/pci/devices"))? {
         if !read(&device.join("class"))?.starts_with("0x03") {
             continue;
         }
@@ -96,9 +96,7 @@ fn gpus(root: &Path) -> Result<BTreeSet<Hardware>> {
 }
 
 fn battery(root: &Path) -> Result<bool> {
-    let dir = root.join("sys/class/power_supply");
-    for name in entries(&dir)? {
-        let supply = dir.join(name);
+    for supply in walk::children(&root.join("sys/class/power_supply"))? {
         if read(&supply.join("type"))? != "Battery" {
             continue;
         }
@@ -109,16 +107,6 @@ fn battery(root: &Path) -> Result<bool> {
         }
     }
     Ok(false)
-}
-
-fn entries(dir: &Path) -> Result<Vec<String>> {
-    match fs::read_dir(dir) {
-        Ok(entries) => entries
-            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
-            .collect(),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(Vec::new()),
-        Err(e) => Err(e).with_context(|| format!("reading {}", dir.display())),
-    }
 }
 
 fn read(path: &Path) -> Result<String> {

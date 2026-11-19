@@ -14,7 +14,6 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::ErrorKind,
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
 };
@@ -465,6 +464,9 @@ impl Fleet {
             .transpose()?
             .unwrap_or(0);
         let mut unsaved = Vec::new();
+        if !status.lines().any(|l| l.starts_with("# branch.upstream ")) {
+            unsaved.push("no upstream branch to push to".to_owned());
+        }
         if changed > 0 {
             unsaved.push(format!("{} not committed", style::count(changed, "change")));
         }
@@ -535,12 +537,7 @@ const USER_TOML: &str = "user.toml";
 
 fn members(dir: &Path) -> Result<Vec<Member>> {
     let mut members = Vec::new();
-    let entries = match fs::read_dir(dir) {
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(members),
-        entries => entries.with_context(|| format!("reading {}", dir.display()))?,
-    };
-    for entry in entries {
-        let dir = entry?.path();
+    for dir in walk::children(dir)? {
         let name = dir
             .file_name()
             .and_then(|n| n.to_str())

@@ -33,6 +33,10 @@ RUN useradd -m -G wheel -s /bin/bash me \
  && runuser -u me -- git init -q -b main \
  && runuser -u me -- git add -A \
  && runuser -u me -- git -c user.name=Me -c user.email=me@example.com commit -q -m "The fleet" \
+ && install -d -o me -g me /srv/fleet.git \
+ && runuser -u me -- git init -q --bare /srv/fleet.git \
+ && runuser -u me -- git remote add origin /srv/fleet.git \
+ && runuser -u me -- git push -q -u origin main \
  && runuser -u me -- install -D -m 644 /tmp/chezmoi.toml /home/me/.config/chezmoi/chezmoi.toml \
  && cd / && runuser -u me -- env HOME=/home/me chezmoi apply
 USER me

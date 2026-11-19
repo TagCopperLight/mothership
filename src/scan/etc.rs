@@ -128,13 +128,14 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
             .showing(Preview::Contents(path.clone()))
             .guessing(path)
     }));
-    items.extend(walk.unreadable.iter().map(|path| {
+    items.extend(walk.unreadable.into_iter().map(|place| {
         Item::new(
             Kind::Etc,
             Change::Unreadable,
-            path.display().to_string(),
+            place.path.display().to_string(),
             "unreadable",
         )
+        .noting(place.why)
     }));
     Ok(items)
 }

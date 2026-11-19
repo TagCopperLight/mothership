@@ -1,7 +1,7 @@
 use super::{Change, Item, Kind};
 use crate::{
     edit::Add,
-    fleet::{Fleet, Manager, Member},
+    fleet::{Manager, Member},
     preview::{Preview, Seen},
     secrets, systemd, walk,
 };
@@ -11,12 +11,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
+pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
     let user = member.user();
     let home = &user.home;
     let tools = &member.config.tools;
     let mut known: HashSet<PathBuf> = managed.iter().cloned().collect();
-    known.insert(fleet.dir.clone());
     known.insert(home.join(".config/chezmoi"));
     known.insert(secrets::key_path(user));
     known.insert(home.join(".config/dconf"));
@@ -67,13 +66,14 @@ pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<I
                 .guessing(path)
         })
         .collect();
-    items.extend(walk.unreadable.iter().map(|path| {
+    items.extend(walk.unreadable.into_iter().map(|place| {
         Item::new(
             Kind::Home,
             Change::Unreadable,
-            user.tilde(path),
+            user.tilde(&place.path),
             "unreadable",
         )
+        .noting(place.why)
     }));
     Ok(items)
 }

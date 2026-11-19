@@ -1,7 +1,10 @@
-use crate::scan::{Item, Kind};
+use crate::{
+    scan::{Item, Kind},
+    walk,
+};
 use anyhow::{Context, Result, anyhow, bail};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
-use std::{collections::HashMap, fs, io::ErrorKind, path::Path};
+use std::{collections::HashMap, path::Path};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Level {
@@ -47,7 +50,7 @@ impl Ignore {
     pub fn matches_subject(&self, kind: Kind, subject: &str) -> bool {
         self.sets
             .get(&kind)
-            .is_some_and(|set| set.is_match(subject))
+            .is_some_and(|set| in_matching_folder(set, subject))
     }
 }
 
@@ -63,16 +66,19 @@ impl Paths {
     }
 
     pub fn matches(&self, subject: &str) -> bool {
-        self.0.is_match(subject)
+        in_matching_folder(&self.0, subject)
     }
 }
 
+fn in_matching_folder(set: &GlobSet, subject: &str) -> bool {
+    Path::new(subject)
+        .ancestors()
+        .filter(|path| !path.as_os_str().is_empty())
+        .any(|path| set.is_match(path))
+}
+
 fn lines(path: &Path) -> Result<Vec<(String, String)>> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-    };
+    let text = walk::read_if_any(path)?.unwrap_or_default();
     Ok(text
         .lines()
         .enumerate()
@@ -88,3 +94,7 @@ fn glob(pattern: &str, at: &str) -> Result<Glob> {
         .build()
         .with_context(|| at.to_owned())
 }
+
+#[cfg(test)]
+#[path = "../tests/ignore.rs"]
+mod tests;

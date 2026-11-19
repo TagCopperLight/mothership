@@ -40,9 +40,9 @@ fn a_folder_is_secret_when_one_of_its_files_is() {
     fs::create_dir_all(app.join("deep")).unwrap();
     fs::write(app.join("settings"), "").unwrap();
     fs::write(app.join("deep/token"), "").unwrap();
-    assert!(!guess_secret(&app));
+    assert!(!Found::at(&app).private());
     owner_only(&app.join("deep/token"));
-    assert!(guess_secret(&app));
+    assert!(Found::at(&app).private());
 }
 
 #[test]

@@ -10,8 +10,6 @@ use crate::{
 use anyhow::{Context, Result};
 use std::{
     collections::BTreeMap,
-    fs,
-    io::ErrorKind,
     path::{Path, PathBuf},
     thread,
 };
@@ -202,12 +200,8 @@ fn git_source(name: &str, url: &str, query: &str) -> Source {
 
 fn uv_tools(dir: &Path) -> Result<BTreeMap<String, Source>> {
     let mut tools = BTreeMap::new();
-    let entries = match fs::read_dir(dir) {
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(tools),
-        entries => entries.with_context(|| format!("reading {}", dir.display()))?,
-    };
-    for entry in entries {
-        let receipt = entry?.path().join("uv-receipt.toml");
+    for tool in walk::children(dir)? {
+        let receipt = tool.join("uv-receipt.toml");
         let Some(bytes) = walk::read(&receipt)? else {
             continue;
         };

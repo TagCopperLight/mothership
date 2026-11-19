@@ -3,15 +3,10 @@ use crate::{
     edit::{Add, Key},
     fleet::Member,
     revert::Revert,
-    user,
+    user, walk,
 };
 use anyhow::{Context, Result};
-use std::{
-    collections::BTreeSet,
-    fs,
-    io::ErrorKind,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeSet, fs, path::Path};
 
 const SYSUSERS: [&str; 2] = ["/etc/sysusers.d", "/usr/lib/sysusers.d"];
 const LINGER: &str = "/var/lib/systemd/linger";
@@ -90,16 +85,11 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
 fn shipped_groups(ships: &Ships) -> Result<BTreeSet<String>> {
     let mut groups = BTreeSet::new();
     for dir in SYSUSERS {
-        let entries = match fs::read_dir(dir) {
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            entries => entries.with_context(|| format!("reading {dir}"))?,
-        };
-        let files: Vec<PathBuf> = entries
-            .map(|entry| Ok(entry?.path()))
-            .collect::<Result<_>>()?;
-        for file in files {
+        for file in walk::children(Path::new(dir))? {
             if ships.path(&file, None)? {
-                groups.extend(sysusers_groups(&fs::read_to_string(&file)?));
+                let text = fs::read_to_string(&file)
+                    .with_context(|| format!("reading {}", file.display()))?;
+                groups.extend(sysusers_groups(&text));
             }
         }
     }
@@ -111,7 +101,8 @@ fn sysusers_groups(text: &str) -> Vec<String> {
         .filter_map(|line| {
             let fields: Vec<&str> = line.split_whitespace().collect();
             match fields[..] {
-                ["g" | "u", name, ..] => Some(name.to_owned()),
+                ["u" | "u!", _, id, ..] if id.contains(':') => None,
+                ["g" | "u" | "u!", name, ..] => Some(name.to_owned()),
                 ["m", _, group, ..] => Some(group.to_owned()),
                 _ => None,
             }

@@ -23,5 +23,6 @@ $ dpkg-query -W -f '${Package} ${db:Status-Abbrev}\n' delta
 delta ii
 $ sudo mothership scan
 ✓ Nothing differs from the server type
+The fleet has 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 ```

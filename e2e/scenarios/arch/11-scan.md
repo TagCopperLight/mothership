@@ -59,6 +59,7 @@ Coming from the fleet · 5
 
 7 to review     sudo mothership review
 5 to apply      sudo mothership apply
+The fleet has 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 ```
 
@@ -99,6 +100,6 @@ $ sudo mothership scan | tail -5
 5 to review     sudo mothership review
 5 to apply      sudo mothership apply
 1 put off for later
-The fleet has 1 change not committed  git -C /var/lib/mothership/fleet status
+The fleet has 1 change not committed and 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 ```

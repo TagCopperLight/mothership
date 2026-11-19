@@ -39,6 +39,25 @@ fn a_new_folder_opens_when_an_ignore_line_names_something_inside() {
 }
 
 #[test]
+fn sockets_are_never_reported_and_an_unreadable_folder_is_reported_with_its_reason() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    let _socket = std::os::unix::net::UnixListener::bind(root.join("agent.sock")).unwrap();
+    fs::create_dir_all(root.join("app/locked")).unwrap();
+    fs::write(root.join("app/settings"), "").unwrap();
+    fs::set_permissions(root.join("app/locked"), fs::Permissions::from_mode(0o000)).unwrap();
+    let walk = unknown(root, &HashSet::new(), &HashSet::new(), &|_| false, &|_| {
+        false
+    })
+    .unwrap();
+    fs::set_permissions(root.join("app/locked"), fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(walk.unknown, [root.join("app/settings")]);
+    let unreadable: Vec<&Path> = walk.unreadable.iter().map(|u| u.path.as_path()).collect();
+    assert_eq!(unreadable, [root.join("app/locked")]);
+    assert!(walk.unreadable[0].why.contains("ermission denied"));
+}
+
+#[test]
 fn writes_with_the_mode_into_new_folders_and_leaves_no_temporary_file() {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("sudoers.d/wheel");

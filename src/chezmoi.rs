@@ -21,6 +21,13 @@ pub fn managed(user: &User, include: &str) -> Result<Vec<PathBuf>> {
         .collect()
 }
 
+pub fn manages(user: &User, target: &Path) -> Result<bool> {
+    let target = target.to_string_lossy();
+    let args = ["managed", "--path-style", "absolute", &target];
+    let out = cmd::stdout(As::User(user), "chezmoi", &args)?;
+    Ok(out.lines().any(|line| line == target))
+}
+
 pub fn in_home(user: &User, path: &Path) -> Result<PathBuf> {
     let plain = path
         .strip_prefix(&user.home)

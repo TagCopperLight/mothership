@@ -111,7 +111,7 @@ Changed on this machine · 1
     + ~/.config/editor  new  1 file
 
 1 to review     sudo mothership review
-The fleet has 1 change not committed  git -C /var/lib/mothership/fleet status
+The fleet has 1 change not committed and 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 $ rm -r ~/.config/editor
 ```
@@ -181,7 +181,7 @@ Needs attention · 4
     ? ~/.ssh/id_test       locked  this machine's key isn't on its list
 
 4 to review     sudo mothership review
-The fleet has 2 changes not committed  git -C /var/lib/mothership/fleet status
+The fleet has 2 changes not committed and 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 $ echo y | sudo mothership apply
 Left alone, since this machine's key can't open them:
@@ -218,7 +218,7 @@ $ sudo mv /etc/mothership/key.txt /root/laptop.txt && sudo mv /root/desktop.txt 
 $ mv ~/.config/mothership/key.txt ~/laptop.txt && mv ~/desktop.txt ~/.config/mothership/key.txt
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
-The fleet has 9 changes not committed  git -C /var/lib/mothership/fleet status
+The fleet has 9 changes not committed and 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 $ sudo mothership retire workstation/me laptop
 laptop is gone from workstation/me. Commit and push the fleet.

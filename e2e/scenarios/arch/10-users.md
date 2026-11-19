@@ -19,6 +19,7 @@ Coming from the fleet · 1
     + user dev  create it
 
 1 to apply      sudo mothership apply
+The fleet has 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 ```
 
@@ -55,6 +56,7 @@ $ sudo grep sourceDir /home/dev/.config/chezmoi/chezmoi.toml
 sourceDir = "/var/lib/mothership/fleet/homes/dev"
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
+The fleet has 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 ```
 
@@ -82,6 +84,7 @@ $ sudo stat -c %U /home/dev/.config/chezmoi/chezmoistate.boltdb
 dev
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
+The fleet has 2 commits not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 ```
 
