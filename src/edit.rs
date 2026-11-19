@@ -12,6 +12,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use std::{
+    ffi::OsStr,
     fs,
     io::ErrorKind,
     os::unix::fs::PermissionsExt,
@@ -238,7 +239,7 @@ impl Add {
                 if link {
                     update_shared(fleet, &root, &snapshot, &source, path)?;
                 } else if *storage == Storage::Clear {
-                    let args = ["re-add", &path.to_string_lossy()];
+                    let args = [OsStr::new("re-add"), path.as_os_str()];
                     root.run(&own_list(fleet, member)?, &snapshot, &args)?;
                 } else {
                     chezmoi_add(fleet, member, &root, &snapshot, path, Storage::Encrypted)?;
@@ -251,7 +252,11 @@ impl Add {
                 let member = member()?;
                 let root = chezmoi::Root::new(fleet, member);
                 let empty = Snapshot::take(member.user(), &[])?;
-                let args = ["forget", "--force", &path.to_string_lossy()];
+                let args = [
+                    OsStr::new("forget"),
+                    OsStr::new("--force"),
+                    path.as_os_str(),
+                ];
                 root.run(&own_list(fleet, member)?, &empty, &args)?
             }
             Add::CopyEtc { rel, storage } => {
@@ -330,7 +335,11 @@ fn update_shared(
     let shared = homes::target(&fleet.dir, source)?;
     let link = fs::read_link(source)?;
     let recipients = secrets::home_list(&fleet.dir, source)?;
-    root.run(&recipients, snapshot, &["re-add", &path.to_string_lossy()])?;
+    root.run(
+        &recipients,
+        snapshot,
+        &[OsStr::new("re-add"), path.as_os_str()],
+    )?;
     fs::rename(source, &shared)?;
     walk::link(source, &link)
 }
@@ -343,10 +352,10 @@ fn chezmoi_add(
     path: &Path,
     storage: Storage,
 ) -> Result<()> {
-    let path = path.to_string_lossy();
+    let path = path.as_os_str();
     let recipients = own_list(fleet, member)?;
     if storage == Storage::Clear {
-        return root.run(&recipients, snapshot, &["add", &path]);
+        return root.run(&recipients, snapshot, &[OsStr::new("add"), path]);
     }
     if !member.open {
         bail!(
@@ -355,7 +364,11 @@ fn chezmoi_add(
             member.recipients().display()
         );
     }
-    root.run(&recipients, snapshot, &["add", "--encrypt", &path])
+    root.run(
+        &recipients,
+        snapshot,
+        &[OsStr::new("add"), OsStr::new("--encrypt"), path],
+    )
 }
 
 fn append_line(path: &Path, line: &str) -> Result<()> {

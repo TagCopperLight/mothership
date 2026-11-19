@@ -69,7 +69,7 @@ fn download_chezmoi_deb(dir: &Path) -> Result<PathBuf> {
     net::retry("Downloading chezmoi", &Needs::url(&url)?, || {
         cmd::root("curl", &["-fsSL", "-o", &path, &url])
     })?;
-    let actual = cmd::stdout(As::Root, "sha256sum", &[&path])?;
+    let actual = cmd::stdout(As::Root, "sha256sum", &[&*path])?;
     if actual.split_whitespace().next() != Some(*wanted) {
         bail!("{name} isn't the chezmoi {CHEZMOI_VERSION} install knows");
     }

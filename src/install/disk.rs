@@ -328,7 +328,7 @@ pub fn prepare(disk: &Disk, prompt: &mut Prompt) -> Result<()> {
     for (device, at) in mounts {
         let dir = walk::under(Path::new(ROOT), at);
         fs::create_dir_all(&dir)?;
-        cmd::root("mount", &[&device, &dir.to_string_lossy()])?;
+        cmd::root("mount", &[device.as_ref(), dir.as_os_str()])?;
     }
     Ok(())
 }
@@ -424,7 +424,7 @@ fn free_space(disk: &Device) -> Result<Space> {
         .trim()
         .parse()?;
     let bound = |flag| -> Result<u64> {
-        Ok(cmd::stdout(As::Root, "sgdisk", &[flag, path])?
+        Ok(cmd::stdout(As::Root, "sgdisk", &[flag, path.as_str()])?
             .lines()
             .last()
             .context("sgdisk printed nothing")?

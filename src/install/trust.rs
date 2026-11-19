@@ -40,7 +40,7 @@ pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
         };
         match prompt.ask(question, answers)? {
             Some(Next::Pull) => repo::pull(Path::new(fleet::DIR), None, || {
-                As::User(fleet.admin()).command("git", &[])
+                As::User(fleet.admin()).command::<&str>("git", &[])
             })?,
             Some(Next::Recovery) => {
                 let mut keys = fleet.keys().clone();

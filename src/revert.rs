@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use std::{
+    ffi::OsStr,
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -225,7 +226,7 @@ fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
             User::Service(Service::Unit(unit)) => units.push(unit),
             User::RunInstaller(name) => installers.push(name),
             User::Tool(change) => tools.push(change),
-            User::ApplyFile { path, .. } => files.push(path.to_string_lossy()),
+            User::ApplyFile { path, .. } => files.push(path.as_os_str()),
         }
     }
     let user = member.user();
@@ -265,12 +266,8 @@ fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
         }
     }
     if !files.is_empty() {
-        let files: Vec<&str> = files.iter().map(|f| f.as_ref()).collect();
-        cmd::run(
-            As::User(user),
-            "chezmoi",
-            &[&["apply", "--force"], &files[..]].concat(),
-        )?;
+        let args = [&[OsStr::new("apply"), OsStr::new("--force")], &files[..]].concat();
+        cmd::run(As::User(user), "chezmoi", &args)?;
     }
     if !units.is_empty() {
         cmd::root(

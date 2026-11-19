@@ -7,7 +7,9 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use std::{
+    ffi::OsStr,
     fs,
+    os::unix::ffi::OsStrExt,
     path::{Component, Path, PathBuf},
     process::Command,
 };
@@ -15,17 +17,26 @@ use tempfile::TempDir;
 
 pub fn managed(user: &User, include: &str) -> Result<Vec<PathBuf>> {
     let args = ["managed", "--include", include, "--path-style", "absolute"];
-    cmd::stdout(As::User(user), "chezmoi", &args)?
-        .lines()
-        .map(|line| in_home(user, Path::new(line)))
+    lines(&cmd::bytes(As::User(user), "chezmoi", &args)?)
+        .map(|line| in_home(user, line))
         .collect()
 }
 
 pub fn manages(user: &User, target: &Path) -> Result<bool> {
-    let target = target.to_string_lossy();
-    let args = ["managed", "--path-style", "absolute", &target];
-    let out = cmd::stdout(As::User(user), "chezmoi", &args)?;
-    Ok(out.lines().any(|line| line == target))
+    let args = [
+        OsStr::new("managed"),
+        OsStr::new("--path-style"),
+        OsStr::new("absolute"),
+        target.as_os_str(),
+    ];
+    let out = cmd::bytes(As::User(user), "chezmoi", &args)?;
+    Ok(lines(&out).any(|line| line == target))
+}
+
+fn lines(out: &[u8]) -> impl Iterator<Item = &Path> {
+    out.split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| Path::new(OsStr::from_bytes(line)))
 }
 
 pub fn in_home(user: &User, path: &Path) -> Result<PathBuf> {
@@ -62,39 +73,44 @@ impl Root {
 
     pub fn source_path(&self, target: &Path) -> Result<PathBuf> {
         let empty = Snapshot::take(&self.user, &[])?;
-        let target = target.to_string_lossy();
-        let out = self.output(&empty, &["source-path", &target])?;
-        let source = PathBuf::from(String::from_utf8(out)?.trim());
+        let out = self.output(&empty, &[OsStr::new("source-path"), target.as_os_str()])?;
+        let source = Path::new(OsStr::from_bytes(out.trim_ascii_end())).to_path_buf();
         let inside = source
             .strip_prefix(&self.config.source)
             .is_ok_and(|rel| rel.components().all(|c| matches!(c, Component::Normal(_))));
         if !inside {
             bail!(
-                "chezmoi put {target} outside {}",
+                "chezmoi put {} outside {}",
+                target.display(),
                 self.config.source.display()
             );
         }
         Ok(source)
     }
 
-    pub fn output(&self, snapshot: &Snapshot, args: &[&str]) -> Result<Vec<u8>> {
+    pub fn output<S: AsRef<OsStr>>(&self, snapshot: &Snapshot, args: &[S]) -> Result<Vec<u8>> {
         let (command, run) = self.command(None, snapshot, args)?;
         let out = cmd::output(command, "chezmoi", args)?;
         run.finish(&self.user)?;
         Ok(out)
     }
 
-    pub fn run(&self, recipients: &str, snapshot: &Snapshot, args: &[&str]) -> Result<()> {
+    pub fn run<S: AsRef<OsStr>>(
+        &self,
+        recipients: &str,
+        snapshot: &Snapshot,
+        args: &[S],
+    ) -> Result<()> {
         let (command, run) = self.command(Some(recipients), snapshot, args)?;
         cmd::status(command, "chezmoi", args)?;
         run.finish(&self.user)
     }
 
-    fn command(
+    fn command<S: AsRef<OsStr>>(
         &self,
         recipients: Option<&str>,
         snapshot: &Snapshot,
-        args: &[&str],
+        args: &[S],
     ) -> Result<(Cmd, Run)> {
         let dir = TempDir::new()?;
         let mut config = ChezmoiConfig {
@@ -182,3 +198,7 @@ pub fn config_text(config: &ChezmoiConfig) -> Result<String> {
 
 pub const CONFIG: &str = ".config/chezmoi/chezmoi.toml";
 const STATE: &str = ".config/chezmoi/chezmoistate.boltdb";
+
+#[cfg(test)]
+#[path = "../tests/chezmoi.rs"]
+mod tests;

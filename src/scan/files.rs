@@ -9,13 +9,19 @@ use crate::{
     secrets::Storage,
 };
 use anyhow::{Context, Result};
-use std::{collections::BTreeSet, path::PathBuf, thread};
+use std::{
+    collections::BTreeSet,
+    ffi::OsStr,
+    os::unix::ffi::OsStrExt,
+    path::{Path, PathBuf},
+    thread,
+};
 
 pub struct Chezmoi {
     pub managed: Vec<PathBuf>,
     encrypted: BTreeSet<PathBuf>,
     templates: BTreeSet<PathBuf>,
-    status: String,
+    status: Vec<u8>,
 }
 
 impl Chezmoi {
@@ -30,7 +36,7 @@ impl Chezmoi {
             let managed = s.spawn(|| chezmoi::managed(user, "files,symlinks"));
             let encrypted = s.spawn(|| chezmoi::managed(user, "encrypted"));
             let templates = s.spawn(|| chezmoi::managed(user, "templates"));
-            let status = s.spawn(|| cmd::stdout(As::User(user), "chezmoi", status_args));
+            let status = s.spawn(|| cmd::bytes(As::User(user), "chezmoi", status_args));
             Ok(Chezmoi {
                 managed: join(managed)?,
                 encrypted: join(encrypted)?.into_iter().collect(),
@@ -52,9 +58,13 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
     let mut items = Vec::new();
     let mut listed = BTreeSet::new();
     let root = chezmoi::Root::new(fleet, member);
-    for line in status.lines() {
-        let (here, target, rel) =
-            status_line(line).with_context(|| format!("chezmoi status printed {line:?}"))?;
+    for line in status
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        let (here, target, rel) = status_line(line).with_context(|| {
+            format!("chezmoi status printed {:?}", String::from_utf8_lossy(line))
+        })?;
         if here == b'R' || target == b'R' {
             continue;
         }
@@ -122,9 +132,11 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
     Ok(items)
 }
 
-fn status_line(line: &str) -> Option<(u8, u8, &str)> {
-    match line.as_bytes() {
-        [here, target, b' ', _, ..] => Some((*here, *target, line.get(3..)?)),
+fn status_line(line: &[u8]) -> Option<(u8, u8, &Path)> {
+    match line {
+        [here, target, b' ', rest @ ..] if !rest.is_empty() => {
+            Some((*here, *target, Path::new(OsStr::from_bytes(rest))))
+        }
         _ => None,
     }
 }

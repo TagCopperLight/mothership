@@ -85,7 +85,7 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     };
     let copy = walk::under(root, fleet::DIR);
     if copy.exists() {
-        let origin = repo::origin(dir, || As::Root.command("git", &[]))?;
+        let origin = repo::origin(dir, || As::Root.command::<&str>("git", &[]))?;
         pull_as_owner(&origin, &copy, token.as_deref())?;
     } else {
         let parent = copy.parent().expect("the fleet folder has a parent");

@@ -9,6 +9,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use std::{
+    ffi::OsStr,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -106,9 +107,9 @@ impl Preview {
             Preview::Chezmoi { path, root, seen } => {
                 let snapshot = Snapshot::take(root.user(), &[path])?;
                 seen.keep(&snapshot);
-                let path = path.to_string_lossy();
-                let args = ["diff", "--reverse", "--no-pager", "--color=false", &path];
-                let diff = String::from_utf8(root.output(&snapshot, &args)?)?;
+                let args = ["diff", "--reverse", "--no-pager", "--color=false"].map(OsStr::new);
+                let args = [&args[..], &[path.as_os_str()]].concat();
+                let diff = String::from_utf8_lossy(&root.output(&snapshot, &args)?).into_owned();
                 paint_diff(hunks(&diff), color)
             }
             Preview::Unit { name, user } => {

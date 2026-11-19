@@ -1,6 +1,7 @@
 use crate::{style, user::User};
 use anyhow::{Context, Result, bail};
 use std::{
+    ffi::OsStr,
     io::{self, Read, Write},
     ops::{Deref, DerefMut},
     os::unix::process::CommandExt,
@@ -48,7 +49,7 @@ impl From<Command> for Cmd {
 }
 
 impl As<'_> {
-    pub fn command(self, program: &str, args: &[&str]) -> Cmd {
+    pub fn command<S: AsRef<OsStr>>(self, program: &str, args: &[S]) -> Cmd {
         let mut cmd = match self {
             As::Root => Cmd::from(Command::new(program)),
             As::User(user) => {
@@ -78,15 +79,19 @@ impl As<'_> {
     }
 }
 
-pub fn stdout(who: As, program: &str, args: &[&str]) -> Result<String> {
+pub fn stdout<S: AsRef<OsStr>>(who: As, program: &str, args: &[S]) -> Result<String> {
     Ok(String::from_utf8(bytes(who, program, args)?)?)
 }
 
-pub fn bytes(who: As, program: &str, args: &[&str]) -> Result<Vec<u8>> {
+pub fn bytes<S: AsRef<OsStr>>(who: As, program: &str, args: &[S]) -> Result<Vec<u8>> {
     output(who.command(program, args), program, args)
 }
 
-pub fn output(command: impl Into<Cmd>, program: &str, args: &[&str]) -> Result<Vec<u8>> {
+pub fn output<S: AsRef<OsStr>>(
+    command: impl Into<Cmd>,
+    program: &str,
+    args: &[S],
+) -> Result<Vec<u8>> {
     let mut cmd = command.into();
     let limit = cmd.user.then(|| Instant::now() + USER_QUERY_LIMIT);
     let child = cmd
@@ -99,7 +104,7 @@ pub fn output(command: impl Into<Cmd>, program: &str, args: &[&str]) -> Result<V
     if !status.success() {
         bail!(
             "{program} {} failed: {}",
-            args.join(" "),
+            shown(args),
             style::clean(String::from_utf8_lossy(&err).trim())
         );
     }
@@ -110,15 +115,15 @@ pub fn found(who: As, program: &str) -> bool {
     bytes(who, "sh", &["-c", "command -v \"$1\"", "sh", program]).is_ok()
 }
 
-pub fn run(who: As, program: &str, args: &[&str]) -> Result<()> {
+pub fn run<S: AsRef<OsStr>>(who: As, program: &str, args: &[S]) -> Result<()> {
     status(who.command(program, args), program, args)
 }
 
-pub fn root(program: &str, args: &[&str]) -> Result<()> {
+pub fn root<S: AsRef<OsStr>>(program: &str, args: &[S]) -> Result<()> {
     run(As::Root, program, args)
 }
 
-pub fn with_input(who: As, program: &str, args: &[&str], input: &[u8]) -> Result<()> {
+pub fn with_input<S: AsRef<OsStr>>(who: As, program: &str, args: &[S], input: &[u8]) -> Result<()> {
     let mut cmd = who.command(program, args);
     cmd.stdin(Stdio::piped());
     let mut child = spawn(cmd, program)?;
@@ -127,18 +132,23 @@ pub fn with_input(who: As, program: &str, args: &[&str], input: &[u8]) -> Result
     unsafe { libc::signal(libc::SIGPIPE, previous) };
     let (status, ..) = finish(child, None, Sink::Show)?;
     if !status.success() {
-        bail!("{program} {} failed", args.join(" "));
+        bail!("{program} {} failed", shown(args));
     }
     written.with_context(|| format!("writing to {program}"))
 }
 
-pub fn status(command: impl Into<Cmd>, program: &str, args: &[&str]) -> Result<()> {
+pub fn status<S: AsRef<OsStr>>(command: impl Into<Cmd>, program: &str, args: &[S]) -> Result<()> {
     let child = spawn(command.into(), program)?;
     let (status, ..) = finish(child, None, Sink::Show)?;
     if !status.success() {
-        bail!("{program} {} failed", args.join(" "));
+        bail!("{program} {} failed", shown(args));
     }
     Ok(())
+}
+
+fn shown<S: AsRef<OsStr>>(args: &[S]) -> String {
+    let args: Vec<_> = args.iter().map(|a| a.as_ref().to_string_lossy()).collect();
+    style::clean(&args.join(" "))
 }
 
 fn spawn(mut cmd: Cmd, program: &str) -> Result<Child> {

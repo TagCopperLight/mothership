@@ -213,3 +213,26 @@ $ cat /etc/fleet.conf
 managed = yes
 level = 3
 ```
+
+A file whose name isn't valid UTF-8 shows with a replacement character, and review adds the file
+itself.
+
+```console
+$ printf 'x = 1\n' > "$(printf '/home/me/.config/caf\351.conf')"
+$ printf 'a\n' | sudo mothership review
+[1/1] Files
+    + ~/.config/caf�.conf  new
+      x = 1
+  a  add         add it to chezmoi
+  s  secret      add it to chezmoi, encrypted
+  i ignore · l later · p pass · q quit
+  › a
+1 added
+1 put off before and not due yet
+Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+$ ls /var/lib/mothership/fleet/homes/me/dot_config | od -c | grep -c 351
+1
+$ sudo mothership scan | grep -c -e caf -e 'not scanned'
+0
+[exit 1]
+```
