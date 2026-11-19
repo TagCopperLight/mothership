@@ -431,7 +431,7 @@ fn tracked(fleet: &Fleet, member: &Member, which: Checks) -> Result<Vec<Item>> {
         ]);
     }
     let chezmoi = files::Chezmoi::load(member)?;
-    let mut items = files::scan(member, &chezmoi)?;
+    let mut items = files::scan(fleet, member, &chezmoi)?;
     if which == Checks::All {
         let managed = &chezmoi.managed;
         thread::scope(|s| {
@@ -476,7 +476,7 @@ impl<'a> Ships<'a> {
         if let Some(user) = member.and_then(|m| m.user.as_ref())
             && resolved.starts_with(&user.home)
         {
-            return Ok(chezmoi::source_path(user, &resolved).is_ok());
+            return Ok(chezmoi::managed(user, "files,symlinks")?.contains(&resolved));
         }
         let file = resolved.to_string_lossy();
         Ok(self
@@ -612,7 +612,7 @@ impl Columns {
     pub fn of(items: &[&Item]) -> Self {
         let widest = |text: &dyn Fn(&Item) -> usize| items.iter().map(|i| text(i)).max();
         Columns {
-            subject: widest(&|i| style::visible(&i.subject))
+            subject: widest(&|i| style::visible(&style::clean(&i.subject)))
                 .unwrap_or(0)
                 .min(Columns::SUBJECT),
             verb: widest(&|i| style::visible(&i.verb())).unwrap_or(0),
@@ -635,12 +635,13 @@ pub fn line(item: &Item, style: Style, columns: Columns, waiting: Option<u64>) -
         extras.push(style.paint(left, &[Paint::Blue]));
     }
     if !item.note.is_empty() {
-        extras.push(style.paint(&item.note, &[Paint::Dim]));
+        extras.push(style.paint(style::clean(&item.note), &[Paint::Dim]));
     }
+    let subject = style::clean(&item.subject);
     let subject = if waiting.is_some() {
-        style.paint(&item.subject, &[Paint::Dim])
+        style.paint(subject, &[Paint::Dim])
     } else {
-        item.subject.clone()
+        subject
     };
     let text = format!(
         "    {} {}  {}  {}",

@@ -5,9 +5,16 @@ use crate::{
     fleet::{GitTool, Manager, Member, Tool, Tools},
     revert::Revert,
     user::User,
+    walk,
 };
 use anyhow::{Context, Result};
-use std::{collections::BTreeMap, fs, io::ErrorKind, path::Path, thread};
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    thread,
+};
 
 pub fn scan(member: &Member) -> Result<Vec<Item>> {
     let user = member.user();
@@ -141,8 +148,14 @@ fn installed(user: &User, manager: Manager) -> Result<BTreeMap<String, Source>> 
             "cargo",
             &["install", "--list"],
         )?)),
-        Manager::Uv => uv_tools(Path::new(cmd::stdout(who, "uv", &["tool", "dir"])?.trim())),
-        Manager::Bun => bun_globals(&user.home.join(crate::tools::BUN_GLOBALS)),
+        Manager::Uv => {
+            let dir = PathBuf::from(cmd::stdout(who, "uv", &["tool", "dir"])?.trim());
+            user.with_rights(|| uv_tools(&dir))
+        }
+        Manager::Bun => {
+            let globals = user.home.join(crate::tools::BUN_GLOBALS);
+            user.with_rights(|| bun_globals(&globals))
+        }
     }
 }
 
@@ -195,12 +208,11 @@ fn uv_tools(dir: &Path) -> Result<BTreeMap<String, Source>> {
     };
     for entry in entries {
         let receipt = entry?.path().join("uv-receipt.toml");
-        if !receipt.exists() {
+        let Some(bytes) = walk::read(&receipt)? else {
             continue;
-        }
-        let text = fs::read_to_string(&receipt)?;
-        let (name, source) =
-            uv_receipt(&text).with_context(|| format!("reading {}", receipt.display()))?;
+        };
+        let (name, source) = uv_receipt(&String::from_utf8_lossy(&bytes))
+            .with_context(|| format!("reading {}", receipt.display()))?;
         tools.insert(name, source);
     }
     Ok(tools)
@@ -241,11 +253,11 @@ fn uv_receipt(text: &str) -> Result<(String, Source)> {
 }
 
 fn bun_globals(path: &Path) -> Result<BTreeMap<String, Source>> {
-    let text = match fs::read_to_string(path) {
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(BTreeMap::new()),
-        text => text.with_context(|| format!("reading {}", path.display()))?,
+    let Some(bytes) = walk::read(path)? else {
+        return Ok(BTreeMap::new());
     };
-    let manifest: serde_json::Value = serde_json::from_str(&text)?;
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&bytes).with_context(|| format!("reading {}", path.display()))?;
     let Some(deps) = manifest["dependencies"].as_object() else {
         return Ok(BTreeMap::new());
     };

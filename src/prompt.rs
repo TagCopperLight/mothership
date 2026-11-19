@@ -1,5 +1,23 @@
 use anyhow::{Result, bail};
-use std::io::{self, BufRead, IsTerminal, Read, Write};
+use std::{
+    fmt,
+    io::{self, BufRead, IsTerminal, Read, Write},
+};
+
+#[derive(Debug)]
+pub struct Stopped;
+
+impl fmt::Display for Stopped {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("stopped with Ctrl-C")
+    }
+}
+
+impl std::error::Error for Stopped {}
+
+pub fn stopped(e: &anyhow::Error) -> bool {
+    e.is::<Stopped>()
+}
 
 pub struct Choice {
     pub name: String,
@@ -51,7 +69,11 @@ impl Prompt {
         match &mut self.input {
             Input::Keys => loop {
                 match read_key()? {
-                    None | Some(CTRL_C | CTRL_D) => {
+                    Some(CTRL_C) => {
+                        println!();
+                        return Err(Stopped.into());
+                    }
+                    None | Some(CTRL_D) => {
                         println!();
                         return Ok(None);
                     }
@@ -95,9 +117,10 @@ impl Prompt {
             if *echo {
                 println!("{}", answer.as_deref().unwrap_or_default());
             }
-            return Ok(answer.as_deref() == Some("y"));
+            return Ok(matches!(answer.as_deref(), Some("y" | "Y")));
         }
-        Ok(self.ask(&question, &['y', 'n', '\r', '\n'])? == Some('y'))
+        let keys = ['y', 'Y', 'n', 'N', '\r', '\n'];
+        Ok(matches!(self.ask(&question, &keys)?, Some('y' | 'Y')))
     }
 
     pub fn line(&mut self, question: &str) -> Result<String> {
@@ -154,7 +177,7 @@ impl Prompt {
                         .as_deref()
                         .is_some_and(|a| a.contains(char::from(CTRL_C)))
                     {
-                        bail!("stopped at \"{question}\"");
+                        return Err(Stopped.into());
                     }
                     answer
                 }
@@ -205,6 +228,9 @@ fn with_terminal<T>(off: libc::tcflag_t, read: impl FnOnce() -> Result<T>) -> Re
     if unsafe { libc::tcgetattr(fd, &mut saved) } != 0 {
         return Err(io::Error::last_os_error().into());
     }
+    if unsafe { libc::tcflush(fd, libc::TCIFLUSH) } != 0 {
+        return Err(io::Error::last_os_error().into());
+    }
     let mut raw = saved;
     raw.c_lflag &= !off;
     raw.c_cc[libc::VMIN] = 1;
@@ -213,7 +239,9 @@ fn with_terminal<T>(off: libc::tcflag_t, read: impl FnOnce() -> Result<T>) -> Re
         return Err(io::Error::last_os_error().into());
     }
     let result = read();
-    unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) };
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) } != 0 {
+        return Err(io::Error::last_os_error().into());
+    }
     result
 }
 

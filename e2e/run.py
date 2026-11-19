@@ -82,7 +82,7 @@ def run(path: Path) -> bool:
     name = system(path)
     print(f"{name}/{path.stem}: ", end="", flush=True)
     container = subprocess.run(
-        ["docker", "run", "-d", "--rm", "--network", "none",
+        ["docker", "run", "-d", "--rm", "--network", "none", "--cap-add", "SYS_ADMIN",
          "--hostname", "machine", "--add-host", "machine:127.0.0.1",
          "-v", f"{BINARIES[name]}:/usr/local/bin/mothership:ro", image(name), "sleep", "infinity"],
         check=True, capture_output=True, text=True,

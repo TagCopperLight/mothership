@@ -67,6 +67,22 @@ pub fn count(n: usize, noun: &str) -> String {
     }
 }
 
+pub fn clean(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\t' => out.push_str("    "),
+            c if c.is_control() || is_bidi(c) => out.push('\u{fffd}'),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn is_bidi(c: char) -> bool {
+    matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
 pub fn width() -> usize {
     terminal_size::terminal_size().map_or(100, |(w, _)| usize::from(w.0))
 }

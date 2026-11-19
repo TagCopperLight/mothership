@@ -2,7 +2,7 @@ use crate::{
     edit::{self, Add},
     fleet::Fleet,
     later::{self, DAY, Later},
-    prompt::Prompt,
+    prompt::{self, Prompt},
     record::{self, Record},
     revert::{self, Revert},
     scan::{self, Columns, Item, Secret, Section},
@@ -22,8 +22,7 @@ static BACK_LATER: LazyLock<String> = LazyLock::new(|| {
 pub fn run() -> Result<()> {
     let report = scan::collect()?;
     let result = ask(&report);
-    report.fleet.hand_back()?;
-    result
+    result.and(report.fleet.hand_back())
 }
 
 #[derive(Default)]
@@ -197,8 +196,11 @@ fn ask(report: &scan::Report) -> Result<()> {
             .collect();
 
         loop {
-            let Some(answer) = prompt.ask("  ›", &keys)?.map(Answer::from_key) else {
-                break 'items;
+            let answer = match prompt.ask("  ›", &keys) {
+                Ok(Some(key)) => Answer::from_key(key),
+                Ok(None) => break 'items,
+                Err(e) if prompt::stopped(&e) => break 'items,
+                Err(e) => return Err(e),
             };
             let outcome = match answer {
                 Answer::Quit => break 'items,
@@ -208,7 +210,7 @@ fn ask(report: &scan::Report) -> Result<()> {
                         _ => encrypted.as_ref(),
                     };
                     let add = add.expect("offered only when there is one");
-                    add.apply(fleet, member, &mut prompt)
+                    add.apply(fleet, member, &mut prompt, item.preview.seen())
                         .map(|added| added.then_some("added to the fleet"))
                 }
                 Answer::NotSecret => edit::not_secret(fleet, member, &item.subject)
@@ -227,8 +229,9 @@ fn ask(report: &scan::Report) -> Result<()> {
             let done = match outcome {
                 Ok(Some(done)) => done,
                 Ok(None) => continue,
+                Err(e) if prompt::stopped(&e) => break 'items,
                 Err(e) => {
-                    println!("  failed: {e:#}");
+                    println!("  failed: {}", style::clean(&format!("{e:#}")));
                     continue;
                 }
             };
@@ -238,7 +241,7 @@ fn ask(report: &scan::Report) -> Result<()> {
                 _ => later.remove(fleet, item),
             }
             tally.count(answer);
-            last = Some(format!("{}: {done}", item.subject));
+            last = Some(format!("{}: {done}", style::clean(&item.subject)));
             break;
         }
         seen = n + 1;

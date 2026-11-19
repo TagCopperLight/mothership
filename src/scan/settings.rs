@@ -8,12 +8,15 @@ use crate::{
     user::User,
 };
 use anyhow::Result;
-use std::{collections::BTreeMap, fs, io::ErrorKind, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
     let mut items = dconf(member.user())?;
     for user_js in managed.iter().filter(|path| path.ends_with("user.js")) {
-        items.extend(prefs(user_js)?);
+        items.extend(prefs(member.user(), user_js)?);
     }
     Ok(items)
 }
@@ -48,12 +51,19 @@ fn dconf(user: &User) -> Result<Vec<Item>> {
         .collect())
 }
 
-fn prefs(user_js: &PathBuf) -> Result<Vec<Item>> {
-    let wanted = parse(&fs::read_to_string(user_js)?);
-    let actual = match fs::read_to_string(user_js.with_file_name("prefs.js")) {
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        text => parse(&text?),
+fn prefs(user: &User, user_js: &Path) -> Result<Vec<Item>> {
+    let read = |path: &Path| -> Result<Option<String>> {
+        Ok(user
+            .read(path)?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
     };
+    let Some(wanted) = read(user_js)? else {
+        return Ok(Vec::new());
+    };
+    let Some(actual) = read(&user_js.with_file_name("prefs.js"))? else {
+        return Ok(Vec::new());
+    };
+    let (wanted, actual) = (parse(&wanted), parse(&actual));
     Ok(actual
         .iter()
         .filter_map(|(key, value)| {
@@ -70,7 +80,7 @@ fn prefs(user_js: &PathBuf) -> Result<Vec<Item>> {
                 Item::new(Kind::Pref, change, key, detail)
                     .noting(note)
                     .with(Add::Pref {
-                        user_js: user_js.clone(),
+                        user_js: user_js.to_path_buf(),
                         key: key.clone(),
                         value: value.clone(),
                     }),

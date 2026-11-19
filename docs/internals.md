@@ -49,3 +49,9 @@
 - bun refuses a name before a git source. Its installer puts it in `~/.bun/bin`, outside a login shell's PATH.
 - A wireless mouse or headset shows up as a battery, with the scope `Device`.
 - Rust ignores SIGPIPE, so main restores the default, or `mothership scan | head` would panic.
+
+## Code
+
+- `tests/` holds unit tests that each module includes with `#[path]`, not standalone test crates, so Cargo's `autotests` is off.
+- Root reads a user's files with that user's rights: a thread sets its filesystem uid, gid and groups (they are per thread in Linux, and `setfsuid` drops the file capabilities), so a link a user swaps in leads only where the user could read anyway.
+- chezmoi runs as root only on such a copy of the home, bound over the home in a private mount namespace (`unshare`), so it can't follow a user's links. Docker needs `--cap-add SYS_ADMIN` for that.

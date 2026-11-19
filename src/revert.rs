@@ -157,8 +157,8 @@ fn run_member(fleet: &Fleet, member: &Member, reverts: &[&Revert]) -> Result<()>
     for revert in account {
         match revert {
             Revert::Shell(shell) => cmd::root("usermod", &["--shell", shell, name])?,
-            Revert::Join(group) => cmd::root("gpasswd", &["--add", name, group])?,
-            Revert::Leave(group) => cmd::root("gpasswd", &["--delete", name, group])?,
+            Revert::Join(group) => cmd::root("gpasswd", &["--add", name, "--", group])?,
+            Revert::Leave(group) => cmd::root("gpasswd", &["--delete", name, "--", group])?,
             Revert::Linger(true) => cmd::root("loginctl", &["enable-linger", name])?,
             Revert::Linger(false) => cmd::root("loginctl", &["disable-linger", name])?,
             _ => unreachable!("sorted above"),
@@ -213,7 +213,7 @@ fn systemctl(scope: &[&str], revert: &Revert) -> Result<()> {
         Revert::Disable { unit, .. } => ("disable", unit),
         _ => unreachable!("sorted above"),
     };
-    cmd::root("systemctl", &[scope, &[verb, "--now", unit]].concat())
+    cmd::root("systemctl", &[scope, &[verb, "--now", "--", unit]].concat())
 }
 
 fn etc_path(revert: &Revert) -> &Path {

@@ -80,7 +80,7 @@ impl Checkout {
 
     fn try_apply(&self, add: Add, answers: &'static str) -> Result<bool> {
         let me = &self.fleet.members[0];
-        add.apply(&self.fleet, Some(me), &mut Prompt::answering(answers))
+        add.apply(&self.fleet, Some(me), &mut Prompt::answering(answers), None)
     }
 
     fn read(&self, rel: &str) -> String {
@@ -272,7 +272,10 @@ fn sets_and_drops_linger() {
 
 #[test]
 fn tracking_a_folder_stops_unless_confirmed() {
-    let checkout = Checkout::new();
+    let mut checkout = Checkout::new();
+    let mut me = crate::user::by_uid(unsafe { libc::geteuid() }).unwrap();
+    me.home = checkout.dir.path().to_path_buf();
+    checkout.fleet.members[0].user = Some(me);
     let folder = checkout.dir.path().join("app");
     fs::create_dir(&folder).unwrap();
     fs::write(folder.join("config"), "").unwrap();

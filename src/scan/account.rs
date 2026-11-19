@@ -3,6 +3,7 @@ use crate::{
     edit::{Add, Key},
     fleet::Member,
     revert::Revert,
+    user,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -49,18 +50,8 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
             item.because("no package the fleet lists installs this shell")
         });
     }
-    let groups = fs::read_to_string("/etc/group")?;
-    let actual: Vec<&str> = groups
-        .lines()
-        .filter_map(|line| {
-            let fields: Vec<&str> = line.split(':').collect();
-            let members = fields.get(3)?;
-            members
-                .split(',')
-                .any(|m| m == user.name)
-                .then_some(fields[0])
-        })
-        .collect();
+    let joined = user::joined(&user.name)?;
+    let actual: Vec<&str> = joined.iter().map(|g| g.name.as_str()).collect();
     let declared = &config.groups;
     let created = shipped_groups(ships)?;
     items.extend(

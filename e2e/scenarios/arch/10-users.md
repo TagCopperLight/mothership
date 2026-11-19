@@ -85,12 +85,12 @@ $ sudo mothership scan
 \d+ ignored (re)
 ```
 
-When dev changes the shared `.gitconfig`, review writes the change into `shared/`, and the link
-stays. Apply then brings it to me.
+When dev changes the shared `.gitconfig`, review says it reaches me too, then writes the change
+into `shared/`, and the link stays. Apply then brings it to me.
 
 ```console
 $ sudo -u dev bash -c 'echo "[user]" >> ~/.gitconfig'
-$ printf 'a\n' | sudo mothership review
+$ printf 'a\ny\n' | sudo mothership review
 [1/1] Files · dev
     ~ ~/.gitconfig  edited
       @@ -1,3 +1,4 @@
@@ -103,6 +103,8 @@ $ printf 'a\n' | sudo mothership review
   r  revert      write the fleet's version
   i ignore · l later · p pass · q quit
   › a
+  shared/dot_gitconfig is shared: dev's version reaches me too.
+  Go on [y/N]? y
 1 added
 Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
 $ cd /var/lib/mothership/fleet && git status --short && test -L homes/dev/dot_gitconfig && tail -1 shared/dot_gitconfig

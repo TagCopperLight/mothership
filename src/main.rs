@@ -17,6 +17,7 @@ mod revert;
 mod review;
 mod scan;
 mod secrets;
+mod snapshot;
 mod style;
 mod tools;
 mod user;
@@ -69,6 +70,10 @@ fn main() -> anyhow::Result<()> {
     if !user::is_root() {
         bail!("mothership reads every user's home: run it with sudo");
     }
+    let _lock = match command {
+        Command::Scan => None,
+        _ => Some(lock()?),
+    };
     match (command, rest) {
         (Command::Scan, []) => scan::run(),
         (Command::Review, []) => review::run(),
@@ -93,6 +98,20 @@ fn usage() -> ! {
 fn edit_fleet(command: impl FnOnce(&Fleet) -> anyhow::Result<()>) -> anyhow::Result<()> {
     let fleet = Fleet::load()?;
     let result = command(&fleet);
-    fleet.hand_back()?;
-    result
+    result.and(fleet.hand_back())
 }
+
+fn lock() -> anyhow::Result<std::fs::File> {
+    use anyhow::Context;
+    use std::os::fd::AsRawFd;
+    std::fs::create_dir_all(LOCK_DIR)?;
+    let path = std::path::Path::new(LOCK_DIR).join("lock");
+    let file =
+        std::fs::File::create(&path).with_context(|| format!("opening {}", path.display()))?;
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        bail!("another mothership command is running");
+    }
+    Ok(file)
+}
+
+const LOCK_DIR: &str = "/var/lib/mothership";

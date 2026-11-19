@@ -222,14 +222,14 @@ The fleet has 9 changes not committed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 $ sudo mothership retire workstation/me laptop
 laptop is gone from workstation/me. Commit and push the fleet.
-git history keeps the versions laptop opens, so change these:
+git history keeps the versions laptop opens, and that machine may keep copies, so change these:
   types/workstation/users/me/secrets/proxy-key.age
   ~/.config/app/token
   ~/.netrc
   ~/.ssh/id_test
 $ sudo mothership retire workstation/root laptop
 laptop is gone from workstation/root. Commit and push the fleet.
-git history keeps the versions laptop opens, so change these:
+git history keeps the versions laptop opens, and that machine may keep copies, so change these:
   /etc/wifi.conf
 $ sudo mothership retire workstation/root desktop
 Error: desktop is the last key of workstation/root: trust another one first

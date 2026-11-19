@@ -47,8 +47,7 @@ impl Record {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        fs::create_dir_all(path.parent().expect("has a parent"))?;
-        walk::write(path, serde_json::to_string_pretty(self)?.as_bytes(), 0o644)
+        walk::write(path, serde_json::to_string_pretty(self)?.as_bytes(), 0o600)
             .with_context(|| format!("writing {}", path.display()))
     }
 

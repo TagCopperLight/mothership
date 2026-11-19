@@ -1,6 +1,8 @@
 use crate::{
+    chezmoi,
     cmd::{self, As},
     package::Archive,
+    snapshot::Snapshot,
     style::{self, Paint, Style},
     user::User,
     walk,
@@ -11,6 +13,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
+    sync::OnceLock,
 };
 
 const LINES: usize = 16;
@@ -20,14 +23,53 @@ const INDENT: &str = "      ";
 pub enum Preview {
     None,
     Contents(PathBuf),
-    Diff { old: PathBuf, new: PathBuf },
-    Original { path: PathBuf, archive: Archive },
-    Chezmoi { path: PathBuf, user: User },
-    Unit { name: String, user: Option<String> },
-    Dconf { section: String, user: User },
+    Home {
+        path: PathBuf,
+        user: User,
+        seen: Seen,
+    },
+    Diff {
+        old: PathBuf,
+        new: PathBuf,
+    },
+    Original {
+        path: PathBuf,
+        archive: Archive,
+    },
+    Chezmoi {
+        path: PathBuf,
+        root: chezmoi::Root,
+        seen: Seen,
+    },
+    Unit {
+        name: String,
+        user: Option<String>,
+    },
+    Dconf {
+        section: String,
+        user: User,
+    },
+}
+
+#[derive(Default)]
+pub struct Seen(OnceLock<String>);
+
+impl Seen {
+    fn keep(&self, snapshot: &Snapshot) {
+        let _ = self.0.set(snapshot.digest().to_owned());
+    }
 }
 
 impl Preview {
+    pub fn seen(&self) -> Option<&str> {
+        match self {
+            Preview::Home { seen, .. } | Preview::Chezmoi { seen, .. } => {
+                seen.0.get().map(String::as_str)
+            }
+            _ => None,
+        }
+    }
+
     pub fn show(&self, color: bool) {
         let lines = match self.render(color) {
             Ok(lines) => lines,
@@ -48,11 +90,26 @@ impl Preview {
             Preview::Contents(path) => contents(path)?,
             Preview::Diff { old, new } => paint_diff(diff(old, new)?, color),
             Preview::Original { path, archive } => paint_diff(original(path, archive)?, color),
-            Preview::Chezmoi { path, user } => {
+            Preview::Home { path, user, seen } => {
+                let is_dir = user.with_rights(|| Ok(fs::symlink_metadata(path)?.is_dir()))?;
+                if is_dir {
+                    let files = user.with_rights(|| walk::files(path))?;
+                    return Ok(files
+                        .iter()
+                        .map(|f| style::clean(&f.to_string_lossy()))
+                        .collect());
+                }
+                let snapshot = Snapshot::take(user, &[path])?;
+                seen.keep(&snapshot);
+                contents(&snapshot.path(user, path)?)?
+            }
+            Preview::Chezmoi { path, root, seen } => {
+                let snapshot = Snapshot::take(root.user(), &[path])?;
+                seen.keep(&snapshot);
                 let path = path.to_string_lossy();
                 let args = ["diff", "--reverse", "--no-pager", "--color=false", &path];
-                let diff = hunks(&cmd::stdout(As::User(user), "chezmoi", &args)?);
-                paint_diff(diff, color)
+                let diff = String::from_utf8(root.output(&snapshot, &args)?)?;
+                paint_diff(hunks(&diff), color)
             }
             Preview::Unit { name, user } => {
                 let machine = user.as_ref().map(|u| format!("{u}@"));
@@ -60,7 +117,7 @@ impl Preview {
                     Some(machine) => vec!["--user", "--machine", machine],
                     None => vec![],
                 };
-                let args = [&scope[..], &["cat", name.as_str()]].concat();
+                let args = [&scope[..], &["cat", "--", name.as_str()]].concat();
                 lines(&cmd::stdout(As::Root, "systemctl", &args)?)
             }
             Preview::Dconf { section, user } => {
@@ -77,14 +134,7 @@ impl Preview {
 }
 
 fn lines(text: &str) -> Vec<String> {
-    text.lines()
-        .map(|line| {
-            line.replace('\t', "    ")
-                .chars()
-                .map(|c| if c.is_control() { '\u{fffd}' } else { c })
-                .collect()
-        })
-        .collect()
+    text.lines().map(style::clean).collect()
 }
 
 fn paint_diff(lines: Vec<String>, color: bool) -> Vec<String> {
@@ -109,11 +159,18 @@ fn paint_diff(lines: Vec<String>, color: bool) -> Vec<String> {
 fn contents(path: &Path) -> Result<Vec<String>> {
     let meta = fs::symlink_metadata(path)?;
     if meta.is_symlink() {
-        return Ok(vec![format!("→ {}", fs::read_link(path)?.display())]);
+        let target = fs::read_link(path)?;
+        return Ok(vec![format!(
+            "→ {}",
+            style::clean(&target.to_string_lossy())
+        )]);
     }
     if meta.is_dir() {
         let files = walk::files(path)?;
-        return Ok(files.iter().map(|f| f.display().to_string()).collect());
+        return Ok(files
+            .iter()
+            .map(|f| style::clean(&f.to_string_lossy()))
+            .collect());
     }
     let mut head = Vec::new();
     fs::File::open(path)?

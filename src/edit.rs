@@ -5,7 +5,9 @@ use crate::{
     ignore::Level,
     package::Distro,
     prompt::Prompt,
-    secrets, style, walk,
+    revert, secrets,
+    snapshot::Snapshot,
+    style, walk,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -152,6 +154,7 @@ impl Add {
         fleet: &Fleet,
         member: Option<&Member>,
         prompt: &mut Prompt,
+        seen: Option<&str>,
     ) -> Result<bool> {
         let member = || member.context("the item belongs to no user");
         match self {
@@ -174,7 +177,11 @@ impl Add {
                 let installers = doc["installers"]
                     .as_array_of_tables_mut()
                     .context("user.toml has no [[installers]]")?;
+                let before = installers.len();
                 installers.retain(|t| t.get("name").and_then(|n| n.as_str()) != Some(name));
+                if installers.len() == before {
+                    bail!("user.toml has no installer {name}");
+                }
                 Ok(())
             })?,
             Add::Shell(shell) => edit_toml(&member()?.path(), |doc| {
@@ -190,18 +197,22 @@ impl Add {
                 Ok(())
             })?,
             Add::Track { path, encrypt } => {
-                if path.is_dir() {
-                    let count = walk::files(path)?.len();
+                let member = member()?;
+                let root = chezmoi::Root::new(fleet, member);
+                let snapshot = taken(member, path, seen)?;
+                if snapshot.path(member.user(), path)?.is_dir() {
+                    let count = walk::files(&snapshot.path(member.user(), path)?)?.len();
                     let files = style::count(count, "file");
                     if !prompt.confirm(&format!("  That adds {files}. Go on"))? {
                         return Ok(false);
                     }
                 }
-                chezmoi_add(fleet, member()?, path, *encrypt)?;
+                chezmoi_add(fleet, member, &root, &snapshot, path, *encrypt)?;
             }
             Add::Update { path, encrypt } => {
                 let member = member()?;
-                let source = chezmoi::source_path(member.user(), path)?;
+                let root = chezmoi::Root::new(fleet, member);
+                let source = root.source_path(path)?;
                 if source.extension().is_some_and(|e| e == "tmpl") {
                     bail!("{} is a template, edit it by hand", source.display());
                 }
@@ -216,14 +227,17 @@ impl Add {
                         homes::target(&fleet.dir, &source)?.display()
                     );
                 }
+                if link && !confirm_shared(fleet, member, &source, prompt)? {
+                    return Ok(false);
+                }
+                let snapshot = taken(member, path, seen)?;
                 if link {
-                    update_shared(fleet, member, &source, path)?;
+                    update_shared(fleet, &root, &snapshot, &source, path)?;
                 } else if !encrypt {
-                    let recipients = own_list(fleet, member)?;
                     let args = ["re-add", &path.to_string_lossy()];
-                    chezmoi::write_for(fleet, member, &recipients, &args)?;
+                    root.run(&own_list(fleet, member)?, &snapshot, &args)?;
                 } else {
-                    chezmoi_add(fleet, member, path, true)?;
+                    chezmoi_add(fleet, member, &root, &snapshot, path, true)?;
                     if clear {
                         println!("  git history keeps the version in clear, so change it.");
                     }
@@ -231,8 +245,10 @@ impl Add {
             }
             Add::Forget(path) => {
                 let member = member()?;
+                let root = chezmoi::Root::new(fleet, member);
+                let empty = Snapshot::take(member.user(), &[])?;
                 let args = ["forget", "--force", &path.to_string_lossy()];
-                chezmoi::write_for(fleet, member, &own_list(fleet, member)?, &args)?
+                root.run(&own_list(fleet, member)?, &empty, &args)?
             }
             Add::CopyEtc { path, encrypt } => copy_etc(fleet, etc_rel(path), path, *encrypt)?,
             Add::RemoveEtc(path) => remove_etc(fleet, etc_rel(path))?,
@@ -240,11 +256,20 @@ impl Add {
                 user_js,
                 key,
                 value,
-            } => set_pref(
-                &chezmoi::source_path(member()?.user(), user_js)?,
-                key,
-                value,
-            )?,
+            } => {
+                let member = member()?;
+                let source = chezmoi::Root::new(fleet, member).source_path(user_js)?;
+                let file = match fs::symlink_metadata(&source)?.is_symlink() {
+                    true => {
+                        if !confirm_shared(fleet, member, &source, prompt)? {
+                            return Ok(false);
+                        }
+                        homes::target(&fleet.dir, &source)?
+                    }
+                    false => source,
+                };
+                set_pref(&file, key, value)?
+            }
         }
         Ok(true)
     }
@@ -254,26 +279,65 @@ fn encrypted_suffix(encrypt: bool) -> &'static str {
     if encrypt { ", encrypted" } else { "" }
 }
 
+fn taken(member: &Member, path: &Path, seen: Option<&str>) -> Result<Snapshot> {
+    let snapshot = Snapshot::take(member.user(), &[path])?;
+    if seen.is_some_and(|seen| seen != snapshot.digest()) {
+        bail!("it changed since it was shown: pass, then review it again");
+    }
+    Ok(snapshot)
+}
+
+fn confirm_shared(
+    fleet: &Fleet,
+    member: &Member,
+    source: &Path,
+    prompt: &mut Prompt,
+) -> Result<bool> {
+    let shared = homes::target(&fleet.dir, source)?;
+    let others: Vec<String> = homes::users(&fleet.dir, source)?
+        .into_iter()
+        .filter(|user| *user != member.name)
+        .collect();
+    let shown = shared.strip_prefix(&fleet.dir).unwrap_or(&shared).display();
+    println!(
+        "  {shown} is shared: {}'s version reaches {} too.",
+        member.name,
+        others.join(" and ")
+    );
+    prompt.confirm("  Go on")
+}
+
 fn own_list(fleet: &Fleet, member: &Member) -> Result<String> {
     secrets::home_list(&fleet.dir, &homes::source(&fleet.dir, &member.name))
 }
 
-fn update_shared(fleet: &Fleet, member: &Member, source: &Path, path: &Path) -> Result<()> {
+fn update_shared(
+    fleet: &Fleet,
+    root: &chezmoi::Root,
+    snapshot: &Snapshot,
+    source: &Path,
+    path: &Path,
+) -> Result<()> {
     let shared = homes::target(&fleet.dir, source)?;
     let link = fs::read_link(source)?;
     let recipients = secrets::home_list(&fleet.dir, source)?;
-    let args = ["re-add", &path.to_string_lossy()];
-    chezmoi::write_for(fleet, member, &recipients, &args)?;
+    root.run(&recipients, snapshot, &["re-add", &path.to_string_lossy()])?;
     fs::rename(source, &shared)?;
-    unix::fs::symlink(link, source)?;
-    Ok(())
+    revert::link(source, &link)
 }
 
-fn chezmoi_add(fleet: &Fleet, member: &Member, path: &Path, encrypt: bool) -> Result<()> {
+fn chezmoi_add(
+    fleet: &Fleet,
+    member: &Member,
+    root: &chezmoi::Root,
+    snapshot: &Snapshot,
+    path: &Path,
+    encrypt: bool,
+) -> Result<()> {
     let path = path.to_string_lossy();
     let recipients = own_list(fleet, member)?;
     if !encrypt {
-        return chezmoi::write_for(fleet, member, &recipients, &["add", &path]);
+        return root.run(&recipients, snapshot, &["add", &path]);
     }
     if !member.open {
         bail!(
@@ -282,7 +346,7 @@ fn chezmoi_add(fleet: &Fleet, member: &Member, path: &Path, encrypt: bool) -> Re
             member.recipients().display()
         );
     }
-    chezmoi::write_for(fleet, member, &recipients, &["add", "--encrypt", &path])
+    root.run(&recipients, snapshot, &["add", "--encrypt", &path])
 }
 
 fn append_line(path: &Path, line: &str) -> Result<()> {
@@ -300,12 +364,19 @@ fn append_line(path: &Path, line: &str) -> Result<()> {
 
 pub fn ignore(fleet: &Fleet, member: Option<&Member>, line: &str) -> Result<()> {
     let path = member.map_or_else(|| fleet.ignore_path(), Member::ignore_path);
-    append_line(&path, line)
+    append_line(&path, one_line(line)?)
 }
 
 pub fn not_secret(fleet: &Fleet, member: Option<&Member>, subject: &str) -> Result<()> {
     let path = member.map_or_else(|| fleet.not_secret_path(), Member::not_secret_path);
-    append_line(&path, &globset::escape(subject))
+    append_line(&path, one_line(&globset::escape(subject))?)
+}
+
+fn one_line(line: &str) -> Result<&str> {
+    if line.chars().any(char::is_control) || line.trim() != line {
+        bail!("its name holds a control character or spaces at an end: write a pattern by hand");
+    }
+    Ok(line)
 }
 
 fn package_key(fleet: &Fleet, name: &str) -> Result<Key> {
@@ -571,6 +642,10 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()>
         })?;
     }
     match fs::remove_file(other) {
+        Ok(()) if encrypt => {
+            println!("  git history keeps the version in clear, so change it.");
+            Ok(())
+        }
         Err(e) if e.kind() != ErrorKind::NotFound => Err(e.into()),
         _ => Ok(()),
     }
@@ -593,14 +668,20 @@ fn remove_etc(fleet: &Fleet, rel: &Path) -> Result<()> {
                 remove(array, &rel);
             }
         }
+        if let Some(modes) = doc.get_mut("etc_modes").and_then(|m| m.as_table_like_mut()) {
+            modes.remove(&rel);
+        }
         Ok(())
     })
 }
 
 fn set_pref(source: &Path, key: &str, value: &str) -> Result<()> {
-    if source.extension().is_some_and(|e| e == "age") {
+    if source
+        .extension()
+        .is_some_and(|e| e == "age" || e == "tmpl")
+    {
         bail!(
-            "{} is encrypted: set the pref in it by hand",
+            "{} is encrypted or a template: set the pref in it by hand",
             source.display()
         );
     }

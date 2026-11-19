@@ -2,7 +2,7 @@ use super::{Change, Item, Kind, services};
 use crate::{
     edit::Add,
     fleet::{Fleet, Manager, Member},
-    preview::Preview,
+    preview::{Preview, Seen},
     secrets, walk,
 };
 use anyhow::Result;
@@ -48,7 +48,8 @@ pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<I
         visible || services::is_enablement(path)
     };
     let ignored = |path: &Path| member.ignore.matches_subject(Kind::Home, &user.tilde(path));
-    let walk = walk::unknown(home, &known, &HashSet::new(), &skip, &ignored)?;
+    let walk =
+        user.with_rights(|| walk::unknown(home, &known, &HashSet::new(), &skip, &ignored))?;
     let mut items: Vec<Item> = walk
         .unknown
         .iter()
@@ -58,7 +59,11 @@ pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<I
                     path: path.clone(),
                     encrypt: false,
                 })
-                .showing(Preview::Contents(path.clone()))
+                .showing(Preview::Home {
+                    path: path.clone(),
+                    user: user.clone(),
+                    seen: Seen::default(),
+                })
                 .guessing(path)
         })
         .collect();

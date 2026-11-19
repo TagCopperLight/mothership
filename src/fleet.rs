@@ -204,6 +204,7 @@ impl Tool {
     }
 }
 
+pub const TYPES: &str = "types";
 const IGNORE: &str = "ignore.txt";
 const NOT_SECRET: &str = "not-secret.txt";
 pub const USERS: &str = "users";
@@ -220,19 +221,34 @@ impl Fleet {
         for member in &mut fleet.members {
             member.user = user::by_name(&member.name)?;
         }
-        let keys = Keys::load(
-            std::iter::once(PathBuf::from(secrets::ROOT_KEY)).chain(
-                fleet
-                    .members
-                    .iter()
-                    .filter_map(|m| m.user.as_ref().map(secrets::key_path)),
-            ),
-        )?;
-        let etc_open = secrets::opens(&fleet.recipients(), Path::new(secrets::ROOT_KEY))?;
+        let mut keys = Keys::default();
+        let etc_open = match secrets::root_key()? {
+            Some(key) => {
+                let open = secrets::holds(&fleet.recipients(), &secrets::public(&key))?;
+                keys.push(key);
+                open
+            }
+            None => false,
+        };
         for i in 0..fleet.members.len() {
             let member = &fleet.members[i];
             let Some(user) = &member.user else { continue };
-            let open = secrets::opens(&member.recipients(), &secrets::key_path(user))?;
+            let open = match secrets::user_key(user) {
+                Ok(Some(key)) => {
+                    let open = secrets::holds(&member.recipients(), &secrets::public(&key))?;
+                    keys.push(key);
+                    open
+                }
+                Ok(None) => false,
+                Err(e) => {
+                    eprintln!(
+                        "{}'s secrets stay locked: {}",
+                        member.name,
+                        style::clean(&format!("{e:#}"))
+                    );
+                    false
+                }
+            };
             let chezmoi = reads_fleet(&fleet, member)?;
             (fleet.members[i].open, fleet.members[i].chezmoi) = (open, chezmoi);
         }
@@ -267,7 +283,7 @@ impl Fleet {
         hardware: &BTreeSet<Hardware>,
     ) -> Result<Self> {
         homes::check(&dir)?;
-        let type_dir = dir.join("types").join(device_type);
+        let type_dir = dir.join(TYPES).join(device_type);
         let system_path = type_dir.join("system.toml");
         let mut system: System = read_toml(&system_path)?;
 
@@ -472,7 +488,7 @@ impl Fleet {
 }
 
 pub fn types(dir: &Path) -> Result<Vec<String>> {
-    let types = dir.join("types");
+    let types = dir.join(TYPES);
     let mut names = Vec::new();
     for entry in fs::read_dir(&types).with_context(|| format!("reading {}", types.display()))? {
         let entry = entry?;
@@ -543,6 +559,7 @@ fn read_toml<T: de::DeserializeOwned>(path: &Path) -> Result<T> {
     .with_context(|| format!("parsing {}", path.display()))
 }
 
+#[derive(Clone)]
 pub struct ChezmoiConfig {
     pub source: PathBuf,
     pub identity: PathBuf,

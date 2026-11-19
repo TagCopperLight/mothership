@@ -1,11 +1,13 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use std::{
     collections::HashSet,
     fs,
-    io::{ErrorKind, Write},
-    os::unix::fs::PermissionsExt,
+    io::{ErrorKind, Read, Write},
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
+
+const READ_LIMIT: u64 = 64 << 20;
 
 pub struct Walk {
     pub unknown: Vec<PathBuf>,
@@ -143,10 +145,49 @@ pub fn write(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
     fs::create_dir_all(dir)?;
     let mut file = tempfile::NamedTempFile::new_in(dir)?;
     file.write_all(bytes)?;
-    file.as_file()
-        .set_permissions(fs::Permissions::from_mode(mode))?;
+    let temp = file.as_file();
+    match fs::symlink_metadata(path) {
+        Ok(old) if old.is_file() => {
+            let new = temp.metadata()?;
+            if (old.uid(), old.gid()) != (new.uid(), new.gid()) {
+                std::os::unix::fs::fchown(temp, Some(old.uid()), Some(old.gid()))
+                    .with_context(|| format!("keeping the owner of {}", path.display()))?;
+            }
+        }
+        Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
+        _ => {}
+    }
+    temp.set_permissions(fs::Permissions::from_mode(mode))?;
+    temp.sync_all()?;
     file.persist(path)?;
     Ok(())
+}
+
+pub fn read(path: &Path) -> Result<Option<Vec<u8>>> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path);
+    let mut file = match file {
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        file => file.with_context(|| format!("opening {}", path.display()))?,
+    };
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        bail!("{} isn't a regular file", path.display());
+    }
+    if meta.len() > READ_LIMIT {
+        bail!("{} is over {} MB", path.display(), READ_LIMIT >> 20);
+    }
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(READ_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("reading {}", path.display()))?;
+    if bytes.len() as u64 > READ_LIMIT {
+        bail!("{} is over {} MB", path.display(), READ_LIMIT >> 20);
+    }
+    Ok(Some(bytes))
 }
 
 pub fn under(root: &Path, absolute: &str) -> PathBuf {

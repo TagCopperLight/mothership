@@ -3,11 +3,11 @@ use crate::{
     chezmoi,
     cmd::{self, As},
     edit::Add,
-    fleet::Member,
-    preview::Preview,
+    fleet::{Fleet, Member},
+    preview::{Preview, Seen},
     revert::Revert,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::{collections::BTreeSet, path::PathBuf, thread};
 
 pub struct Chezmoi {
@@ -40,7 +40,7 @@ impl Chezmoi {
     }
 }
 
-pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
+pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
     let user = member.user();
     let Chezmoi {
         managed,
@@ -50,15 +50,16 @@ pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
     } = chezmoi;
     let mut items = Vec::new();
     let mut listed = BTreeSet::new();
+    let root = chezmoi::Root::new(fleet, member);
     for line in status.lines() {
-        let codes = line.as_bytes();
-        let (here, target) = (codes[0], codes[1]);
+        let (here, target, rel) =
+            status_line(line).with_context(|| format!("chezmoi status printed {line:?}"))?;
         if here == b'R' || target == b'R' {
             continue;
         }
         let edited = here != b' ';
         let (change, detail) = chezmoi_status(if edited { here } else { target }, edited);
-        let path = user.home.join(&line[3..]);
+        let path = chezmoi::in_home(user, &user.home.join(rel))?;
         let add = if edited && change == Change::Removed {
             Add::Forget(path.clone())
         } else {
@@ -67,7 +68,7 @@ pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
                 encrypt: false,
             }
         };
-        let item = Item::new(Kind::File, change, format!("~/{}", &line[3..]), detail)
+        let item = Item::new(Kind::File, change, user.tilde(&path), detail)
             .with(add)
             .reverting(Revert::ApplyFile {
                 path: path.clone(),
@@ -75,7 +76,8 @@ pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
             })
             .showing(Preview::Chezmoi {
                 path: path.clone(),
-                user: user.clone(),
+                root: root.clone(),
+                seen: Seen::default(),
             });
         items.push(if encrypted.contains(&path) {
             item.secret(Secret::Fleet)
@@ -117,6 +119,13 @@ pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
         }
     }
     Ok(items)
+}
+
+fn status_line(line: &str) -> Option<(u8, u8, &str)> {
+    match line.as_bytes() {
+        [here, target, b' ', _, ..] => Some((*here, *target, line.get(3..)?)),
+        _ => None,
+    }
 }
 
 fn chezmoi_status(code: u8, edited: bool) -> (Change, &'static str) {
