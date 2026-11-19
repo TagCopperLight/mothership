@@ -9,7 +9,6 @@ use super::{
 use crate::{
     cmd::{self, As, Cmd},
     fleet::{self, Fleet},
-    hardware,
     package::Distro,
     prompt::Prompt,
     walk,
@@ -45,13 +44,7 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     fs::create_dir_all(dir)?;
     let private = repo::clone(&url, dir, As::Root, Distro::Arch)?;
     let machine = answers::machine(flags, prompt, dir)?;
-    let hardware = hardware::detect(Path::new("/"))?;
-    let fleet = Fleet::new(
-        dir.into(),
-        &machine.device_type,
-        &machine.options,
-        &hardware,
-    )?;
+    let fleet = Fleet::for_machine(dir.into(), &machine)?;
     boot::check_type(&fleet)?;
     let members: Vec<String> = fleet.members.iter().map(|m| m.name.clone()).collect();
     answers::admin_given(flags, &members)?;

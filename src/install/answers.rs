@@ -1,7 +1,6 @@
 use super::disk::Layout;
 use crate::{
     fleet::{self, Fleet, Machine},
-    hardware,
     prompt::{Choice, Prompt},
 };
 use anyhow::{Context, Result, bail};
@@ -86,9 +85,13 @@ pub fn machine(flags: &Flags, prompt: &mut Prompt, dir: &Path) -> Result<Machine
             types[prompt.choose("Device type", &choices)?].clone()
         }
     };
-    let hardware = hardware::detect(Path::new("/"))?;
-    let offered = Fleet::new(dir.into(), &device_type, &[], &hardware)?.options();
-    let options = match &flags.device_type {
+    let mut machine = Machine {
+        device_type,
+        options: Vec::new(),
+    };
+    let offered = Fleet::for_machine(dir.into(), &machine)?.options();
+    let device_type = &machine.device_type;
+    machine.options = match &flags.device_type {
         Some(_) => {
             if let Some(unknown) = flags.options.iter().find(|o| !offered.contains(o)) {
                 bail!("{device_type} has no option {unknown}");
@@ -105,10 +108,7 @@ pub fn machine(flags: &Flags, prompt: &mut Prompt, dir: &Path) -> Result<Machine
             options
         }
     };
-    Ok(Machine {
-        device_type,
-        options,
-    })
+    Ok(machine)
 }
 
 pub fn admin_given(flags: &Flags, members: &[String]) -> Result<Option<String>> {

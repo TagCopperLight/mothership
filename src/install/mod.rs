@@ -12,7 +12,6 @@ use crate::{
     apply::{self, ServiceManager},
     cmd::{self, As},
     fleet::{self, Fleet, Machine},
-    hardware,
     package::{self, Distro, aur},
     prompt::Prompt,
     scan, user,
@@ -52,14 +51,7 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     }
     let machine = Machine::load()?;
     let dir = Path::new(fleet::DIR);
-    let hardware = hardware::detect(Path::new("/"))?;
-    let members = Fleet::new(
-        dir.into(),
-        &machine.device_type,
-        &machine.options,
-        &hardware,
-    )?
-    .members;
+    let members = Fleet::for_machine(dir.into(), &machine)?.members;
     for member in &members {
         if user::by_name(&member.name)?.is_none() {
             user::create(member)?;

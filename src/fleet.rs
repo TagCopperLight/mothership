@@ -240,8 +240,7 @@ impl Fleet {
         let meta = fs::metadata(&dir)
             .with_context(|| format!("reading {DIR}: clone the fleet there as its admin"))?;
         let admin = user::by_uid(meta.uid())?;
-        let hardware = hardware::detect(Path::new("/"))?;
-        let mut fleet = Fleet::new(dir, &machine.device_type, &machine.options, &hardware)?;
+        let mut fleet = Fleet::for_machine(dir, &machine)?;
         for member in &mut fleet.members {
             member.user = user::by_name(&member.name)?;
         }
@@ -298,6 +297,11 @@ impl Fleet {
 
     pub fn etc_open(&self) -> bool {
         self.local().etc_open
+    }
+
+    pub fn for_machine(dir: PathBuf, machine: &Machine) -> Result<Self> {
+        let hardware = hardware::detect(Path::new("/"))?;
+        Fleet::new(dir, &machine.device_type, &machine.options, &hardware)
     }
 
     pub fn new(
