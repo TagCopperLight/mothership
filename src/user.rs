@@ -1,4 +1,4 @@
-use crate::{cmd, fleet::Member, walk};
+use crate::walk;
 use anyhow::{Context, Result, bail};
 use std::{
     fs, io,
@@ -23,14 +23,6 @@ impl User {
     pub fn own(&self, path: &Path) -> Result<()> {
         unix::fs::lchown(path, Some(self.uid), Some(self.gid))
             .with_context(|| format!("giving {} to {}", path.display(), self.name))
-    }
-
-    pub fn own_all(&self, dir: &Path) -> Result<()> {
-        let owner = format!("{}:{}", self.uid, self.gid);
-        cmd::root(
-            "chown",
-            &["-R", "--no-dereference", &owner, &dir.to_string_lossy()],
-        )
     }
 
     pub fn create_dir_all(&self, dir: &Path) -> Result<()> {
@@ -108,15 +100,6 @@ impl User {
             Err(_) => path.display().to_string(),
         }
     }
-}
-
-pub fn create(member: &Member) -> Result<()> {
-    let mut args = vec!["--create-home"];
-    if let Some(shell) = &member.config.shell {
-        args.extend(["--shell", shell]);
-    }
-    args.extend(["--", &member.name]);
-    cmd::root("useradd", &args)
 }
 
 pub fn is_root() -> bool {

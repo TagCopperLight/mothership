@@ -14,12 +14,12 @@ use crate::{
     fleet::{self, Fleet, Machine},
     package::{self, Distro, aur},
     prompt::Prompt,
-    scan, user,
+    revert, scan, user,
 };
 use answers::Flags;
 use anyhow::{Context, Result, bail};
 use net::Needs;
-use std::{env, fs, os::unix::fs::MetadataExt, path::Path};
+use std::{env, ffi::OsStr, fs, os::unix::fs::MetadataExt, path::Path};
 
 const ARCHISO: &str = "/run/archiso";
 const GH_TOKEN: &str = "MOTHERSHIP_GH_TOKEN";
@@ -54,7 +54,7 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     let members = Fleet::for_machine(dir.into(), &machine)?.members;
     for member in &members {
         if user::by_name(&member.name)?.is_none() {
-            user::create(member)?;
+            revert::create_user(member)?;
         }
     }
     if fs::metadata(dir)?.uid() == 0 {
@@ -148,5 +148,7 @@ fn adopt(
     if let Some(token) = token {
         repo::log_in(As::User(&admin), token)?;
     }
-    admin.own_all(dir)
+    let owner = format!("{}:", admin.name);
+    let args = ["-R", "--no-dereference", "--", &owner].map(OsStr::new);
+    cmd::root("chown", &[&args[..], &[dir.as_os_str()]].concat())
 }

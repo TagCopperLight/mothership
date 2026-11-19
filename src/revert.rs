@@ -3,7 +3,7 @@ use crate::{
     cmd::{self, As},
     fleet::{self, Fleet, Manager, Member, Mode, Tool},
     package::{Archive, Distro},
-    tools, user, walk,
+    tools, walk,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -219,7 +219,7 @@ fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
     let (mut files, mut units, mut init) = (Vec::new(), Vec::new(), false);
     for change in changes.iter().copied() {
         match change {
-            User::Create => return user::create(member),
+            User::Create => return create_user(member),
             User::InitChezmoi => init = true,
             User::Account(change) => account.push(change),
             User::Service(Service::Linger(on)) => linger = Some(*on),
@@ -282,6 +282,15 @@ fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub fn create_user(member: &Member) -> Result<()> {
+    let mut args = vec!["--create-home"];
+    if let Some(shell) = &member.config.shell {
+        args.extend(["--shell", shell]);
+    }
+    args.extend(["--", &member.name]);
+    cmd::root("useradd", &args)
 }
 
 fn systemctl(scope: &[&str], unit: &Unit) -> Result<()> {
