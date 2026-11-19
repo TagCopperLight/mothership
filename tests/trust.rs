@@ -138,3 +138,18 @@ fn a_secret_this_machine_can_not_open_stops_trust_before_any_write() {
     assert_eq!(before("a.conf.age"), a);
     assert_eq!(fs::read(fleet.recipients()).unwrap(), list);
 }
+
+#[test]
+fn a_name_the_list_holds_is_refused_until_it_is_retired() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let laptop = make_key(&dir.path().join("laptop.txt")).unwrap();
+    let other = make_key(&dir.path().join("other.txt")).unwrap();
+    let list = format!("# laptop\n{}\n", public(&laptop));
+    let fleet = fleet_with(dir.path(), &list, &[]);
+    let mut keys = Keys::default();
+    keys.push(laptop);
+    let error = trust_with(&fleet, &keys, "workstation/root", "laptop", &public(&other));
+    let error = error.err().unwrap().to_string();
+    assert!(error.contains("mothership retire workstation/root laptop"));
+    assert_eq!(fs::read_to_string(fleet.recipients()).unwrap(), list);
+}

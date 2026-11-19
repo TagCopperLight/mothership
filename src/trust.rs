@@ -3,8 +3,8 @@ use crate::{
     fleet::{self, Fleet},
     homes,
     secrets::{
-        AGE, Keys, RECIPIENTS, RECOVERY, ROOT_KEY, Recipient, SECRETS, Storage, encrypt_for,
-        format, holds, key_path, make_key, public, read, root_key, user_key,
+        AGE, Keys, RECIPIENTS, ROOT_KEY, Recipient, SECRETS, Storage, encrypt_for, format, holds,
+        key_path, make_key, public, read, root_key, user_key,
     },
     walk,
 };
@@ -131,13 +131,10 @@ pub fn trust_with(fleet: &Fleet, keys: &Keys, text: &str, name: &str, key: &str)
     if let Some(known) = list.iter().find(|r| r.key == key) {
         bail!("{text} already holds this key, as {}", known.name);
     }
-    if name == RECOVERY && list.iter().any(|r| r.name == RECOVERY) {
-        bail!("{text} already has a recovery key: retire it first");
-    }
-    let before = list.len();
-    list.retain(|r| r.name != name);
-    if list.len() < before {
-        println!("This key replaces {name}'s old one.");
+    if list.iter().any(|r| r.name == name) {
+        bail!(
+            "{text} already holds a key named {name}: run `mothership retire {text} {name}` first"
+        );
     }
     list.push(Recipient {
         name: name.to_owned(),

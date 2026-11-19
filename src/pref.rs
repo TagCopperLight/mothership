@@ -13,7 +13,33 @@ pub fn parse_line(line: &str) -> Option<(&str, &str)> {
         .strip_suffix(';')?
         .trim_end()
         .strip_suffix(')')?;
-    Some((key, value.trim()))
+    let value = value.trim();
+    is_literal(value).then_some((key, value))
+}
+
+fn is_literal(value: &str) -> bool {
+    if matches!(value, "true" | "false") {
+        return true;
+    }
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    let Some(inner) = value
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+    else {
+        return false;
+    };
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return false,
+            '\\' if !matches!(chars.next(), Some('"' | '\\' | 'n' | 'r')) => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 pub fn parse(text: &str) -> BTreeMap<String, String> {
