@@ -54,13 +54,13 @@ impl Found {
             let hidden = hidden_below(path, base)?;
             if !meta.is_dir() {
                 return Ok(Found::File {
-                    private: hidden || private(&meta),
+                    private: hidden || walk::private(&meta),
                 });
             }
             let files = walk::files_with_metadata(path)?;
             let mut private = hidden || closed(&meta);
             for (rel, meta) in &files {
-                private |= self::private(meta) || hidden_below(&path.join(rel), path)?;
+                private |= walk::private(meta) || hidden_below(&path.join(rel), path)?;
             }
             Ok(Found::Folder {
                 files: files.len(),
@@ -118,10 +118,6 @@ fn judge_secret(not_secret: &Paths, item: Item, found: &Found) -> Item {
     } else {
         item
     }
-}
-
-fn private(meta: &fs::Metadata) -> bool {
-    meta.is_file() && meta.permissions().mode() & 0o004 == 0
 }
 
 #[cfg(test)]

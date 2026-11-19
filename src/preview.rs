@@ -1,6 +1,7 @@
 use crate::{
     chezmoi,
     cmd::{self, As},
+    file, hash,
     package::Archive,
     secrets::Keys,
     snapshot::Snapshot,
@@ -10,12 +11,12 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use std::{
+    cell::RefCell,
     ffi::OsStr,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
-    sync::OnceLock,
 };
 
 const SNIFF: usize = 8 * 1024;
@@ -27,7 +28,6 @@ pub enum Preview {
     Home {
         path: PathBuf,
         user: User,
-        seen: Seen,
     },
     Diff {
         old: PathBuf,
@@ -40,7 +40,6 @@ pub enum Preview {
     Chezmoi {
         path: PathBuf,
         root: chezmoi::Root,
-        seen: Seen,
     },
     Unit(String),
     AsUser {
@@ -60,26 +59,36 @@ pub enum Preview {
 }
 
 #[derive(Default)]
-pub struct Seen(OnceLock<String>);
+pub struct Seen(RefCell<Option<String>>);
 
 impl Seen {
-    fn keep(&self, snapshot: &Snapshot) {
-        let _ = self.0.set(snapshot.digest().to_owned());
+    fn keep(&self, digest: String) {
+        *self.0.borrow_mut() = Some(digest);
+    }
+
+    pub fn check(&self, now: &str) -> Result<()> {
+        if self.0.borrow().as_deref() != Some(now) {
+            bail!("it changed since it was shown: pass, then review it again");
+        }
+        Ok(())
     }
 }
 
 impl Preview {
-    pub fn seen(&self) -> Option<&str> {
+    fn machine_file(&self) -> Option<&Path> {
         match self {
-            Preview::Home { seen, .. } | Preview::Chezmoi { seen, .. } => {
-                seen.0.get().map(String::as_str)
-            }
+            Preview::Contents(path)
+            | Preview::Original { path, .. }
+            | Preview::Diff { new: path, .. }
+            | Preview::Decrypted {
+                now: Some(path), ..
+            } => Some(path),
             _ => None,
         }
     }
 
-    pub fn show(&self, color: bool) {
-        let lines = match self.render() {
+    pub fn show(&self, seen: &Seen, color: bool) {
+        let lines = match self.render(seen) {
             Ok(lines) => lines,
             Err(e) => vec![format!("can't show it: {e:#}")],
         };
@@ -109,21 +118,26 @@ impl Preview {
         }
     }
 
-    fn render(&self) -> Result<Vec<String>> {
+    fn render(&self, seen: &Seen) -> Result<Vec<String>> {
+        if let Some(path) = self.machine_file()
+            && !fs::symlink_metadata(path)?.is_dir()
+        {
+            seen.keep(hash::sha256(&file::content(path)?));
+        }
         Ok(match self {
             Preview::None => Vec::new(),
             Preview::Locked => vec!["locked: this machine's key can't open it".into()],
             Preview::Contents(path) => contents(path)?,
             Preview::Diff { old, new } => diff(old, new)?,
             Preview::Original { path, archive } => original(path, archive)?,
-            Preview::Home { path, user, seen } => {
+            Preview::Home { path, user } => {
                 let snapshot = Snapshot::take(user, &[path])?;
-                seen.keep(&snapshot);
+                seen.keep(snapshot.digest().to_owned());
                 contents(&snapshot.path(user, path)?)?
             }
-            Preview::Chezmoi { path, root, seen } => {
+            Preview::Chezmoi { path, root } => {
                 let snapshot = Snapshot::take(root.user(), &[path])?;
-                seen.keep(&snapshot);
+                seen.keep(snapshot.digest().to_owned());
                 let args = ["diff", "--reverse", "--no-pager", "--color=false"].map(OsStr::new);
                 let args = [&args[..], &[path.as_os_str()]].concat();
                 let diff = String::from_utf8_lossy(&root.output(&snapshot, &args)?).into_owned();

@@ -1,5 +1,6 @@
-use super::Key;
+use super::{FILE_MODE, Key};
 use crate::{
+    file,
     fleet::{Fleet, Member, Table, Tool},
     kind::Level,
 };
@@ -86,7 +87,7 @@ pub fn edit_toml(path: &Path, change: impl FnOnce(&mut DocumentMut) -> Result<()
         .parse()
         .with_context(|| format!("parsing {}", path.display()))?;
     change(&mut doc)?;
-    fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
+    file::write(path, doc.to_string().as_bytes(), FILE_MODE)
 }
 
 pub fn array(doc: &mut DocumentMut, key: Key) -> Result<&mut Array> {

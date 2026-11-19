@@ -1,15 +1,22 @@
-use super::append_line;
+use super::{FILE_MODE, append_line};
 use crate::{
-    chezmoi, file,
+    chezmoi::{self, ENCRYPTED, TEMPLATE},
+    file,
     fleet::{Fleet, Member},
     homes, pref,
+    preview::Seen,
     prompt::Prompt,
-    secrets::Storage,
+    secrets::{AGE, Storage},
     snapshot::Snapshot,
     style, trust, walk,
 };
 use anyhow::{Context, Result, bail};
-use std::{ffi::OsStr, fs, path::Path};
+use std::{
+    ffi::OsStr,
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+};
 
 pub fn track(
     fleet: &Fleet,
@@ -17,12 +24,16 @@ pub fn track(
     path: &Path,
     storage: Storage,
     prompt: &mut Prompt,
-    seen: Option<&str>,
+    seen: &Seen,
 ) -> Result<bool> {
     let root = member.chezmoi_root(fleet);
     let snapshot = taken(member, path, seen)?;
-    if snapshot.path(member.user(), path)?.is_dir() {
-        let count = walk::files(&snapshot.path(member.user(), path)?)?.len();
+    let shown = snapshot.path(member.user(), path)?;
+    if shown.is_dir() {
+        if storage == Storage::Clear {
+            refuse_private(&shown)?;
+        }
+        let count = walk::files(&shown)?.len();
         let files = style::count(count, "file");
         if !prompt.confirm(&format!("  That adds {files}. Go on"))? {
             return Ok(false);
@@ -38,16 +49,18 @@ pub fn update(
     path: &Path,
     storage: Storage,
     prompt: &mut Prompt,
-    seen: Option<&str>,
+    seen: &Seen,
 ) -> Result<bool> {
     let root = member.chezmoi_root(fleet);
     let source = root.source_path(path)?;
-    if source.extension().is_some_and(|e| e == "tmpl") {
+    let name = source
+        .file_name()
+        .context("the source has no name")?
+        .to_string_lossy();
+    if name.ends_with(TEMPLATE) {
         bail!("{} is a template, edit it by hand", source.display());
     }
-    let clear = !source
-        .file_name()
-        .is_some_and(|name| name.to_string_lossy().starts_with("encrypted_"));
+    let clear = !name.starts_with(ENCRYPTED);
     let link = fs::symlink_metadata(&source)?.is_symlink();
     if link && storage == Storage::Encrypted && clear {
         bail!(
@@ -107,12 +120,49 @@ pub fn pref(
     Ok(true)
 }
 
-fn taken(member: &Member, path: &Path, seen: Option<&str>) -> Result<Snapshot> {
+fn taken(member: &Member, path: &Path, seen: &Seen) -> Result<Snapshot> {
     let snapshot = Snapshot::take(member.user(), &[path])?;
-    if seen.is_some_and(|seen| seen != snapshot.digest()) {
-        bail!("it changed since it was shown: pass, then review it again");
-    }
+    seen.check(snapshot.digest())?;
     Ok(snapshot)
+}
+
+fn files_in(shown: &Path) -> Result<Vec<(PathBuf, fs::Metadata)>> {
+    let meta = fs::symlink_metadata(shown)?;
+    if !meta.is_dir() {
+        return Ok(vec![(shown.to_path_buf(), meta)]);
+    }
+    Ok(walk::files_with_metadata(shown)?
+        .into_iter()
+        .map(|(rel, meta)| (shown.join(rel), meta))
+        .collect())
+}
+
+fn refuse_private(shown: &Path) -> Result<()> {
+    let names: Vec<String> = files_in(shown)?
+        .into_iter()
+        .filter(|(_, meta)| walk::private(meta))
+        .map(|(file, _)| {
+            file.strip_prefix(shown)
+                .map(|rel| rel.display().to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    if !names.is_empty() {
+        bail!(
+            "the folder holds files only their owner can read ({}): add them encrypted, one by one",
+            names.join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn keep_owner_only(shown: &Path) -> Result<()> {
+    for (file, meta) in files_in(shown)? {
+        if meta.is_file() {
+            let mode = meta.permissions().mode() & 0o700;
+            fs::set_permissions(&file, fs::Permissions::from_mode(mode))?;
+        }
+    }
+    Ok(())
 }
 
 fn confirm_shared(
@@ -154,6 +204,12 @@ fn update_shared(
         snapshot,
         &[OsStr::new("re-add"), path.as_os_str()],
     )?;
+    if !fs::symlink_metadata(source)?.is_file() {
+        bail!(
+            "chezmoi left {} as a link, as the file matches the fleet again",
+            source.display()
+        );
+    }
     fs::rename(source, &shared)?;
     file::link(source, &link)
 }
@@ -166,10 +222,10 @@ fn chezmoi_add(
     path: &Path,
     storage: Storage,
 ) -> Result<()> {
-    let path = path.as_os_str();
-    let recipients = own_list(fleet, member)?;
+    let args = [OsStr::new("add"), path.as_os_str()];
     if storage == Storage::Clear {
-        return root.run(&recipients, snapshot, &[OsStr::new("add"), path]);
+        root.output(snapshot, &args)?;
+        return Ok(());
     }
     if !member.open {
         bail!(
@@ -178,18 +234,14 @@ fn chezmoi_add(
             member.recipients().display()
         );
     }
-    root.run(
-        &recipients,
-        snapshot,
-        &[OsStr::new("add"), OsStr::new("--encrypt"), path],
-    )
+    keep_owner_only(&snapshot.path(member.user(), path)?)?;
+    let args = [OsStr::new("add"), OsStr::new("--encrypt"), path.as_os_str()];
+    root.run(&own_list(fleet, member)?, snapshot, &args)
 }
 
 fn set_pref(source: &Path, key: &str, value: &str) -> Result<()> {
-    if source
-        .extension()
-        .is_some_and(|e| e == "age" || e == "tmpl")
-    {
+    let name = source.to_string_lossy();
+    if name.ends_with(AGE) || name.ends_with(TEMPLATE) {
         bail!(
             "{} is encrypted or a template: set the pref in it by hand",
             source.display()
@@ -205,8 +257,7 @@ fn set_pref(source: &Path, key: &str, value: &str) -> Result<()> {
         .lines()
         .map(|l| if sets_it(l) { line.as_str() } else { l })
         .collect();
-    fs::write(source, out.join("\n") + "\n")
-        .with_context(|| format!("writing {}", source.display()))
+    file::write(source, (out.join("\n") + "\n").as_bytes(), FILE_MODE)
 }
 
 #[cfg(test)]

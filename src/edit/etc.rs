@@ -2,18 +2,20 @@ use super::doc::{self, edit_toml, find_array};
 use crate::{
     file,
     fleet::{Fleet, Mode},
+    hash,
+    preview::Seen,
     secrets::{self, Storage},
 };
 use anyhow::{Context, Result, bail};
 use std::{
+    ffi::OsStr,
     fs,
-    io::ErrorKind,
-    os::unix::fs::PermissionsExt,
+    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
     path::{Path, PathBuf},
 };
 use toml_edit::value;
 
-pub fn copy(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage) -> Result<()> {
+pub fn copy(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage, seen: &Seen) -> Result<()> {
     if fleet.etc_elsewhere.contains(rel) {
         bail!(
             "etc/{} belongs to hardware or an option this machine doesn't have",
@@ -30,23 +32,20 @@ pub fn copy(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage) -> Result<
     };
     fs::create_dir_all(dest.parent().expect("under etc/"))?;
     let meta = fs::symlink_metadata(path)?;
-    if meta.is_symlink() {
-        if storage == Storage::Encrypted {
-            bail!("{} is a link, which holds no secret", path.display());
-        }
-        file::link(dest, &fs::read_link(path)?)?;
-    } else if meta.is_dir() {
+    if meta.is_dir() {
         bail!(
             "{} is a folder: copy the files you want one by one",
             path.display()
         );
+    }
+    let mut bytes = file::content(path)?;
+    seen.check(&hash::sha256(&bytes))?;
+    if meta.is_symlink() {
+        if storage == Storage::Encrypted {
+            bail!("{} is a link, which holds no secret", path.display());
+        }
+        file::link(dest, Path::new(OsStr::from_bytes(&bytes)))?;
     } else {
-        let mut bytes = match fs::read(path) {
-            Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-                bail!("{} needs root to read", path.display())
-            }
-            read => read?,
-        };
         if storage == Storage::Encrypted {
             if !fleet.etc_open() {
                 bail!(
@@ -56,12 +55,12 @@ pub fn copy(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage) -> Result<
             }
             bytes = secrets::encrypt(&fleet.recipients(), &bytes)?;
         }
-        fs::write(dest, bytes)?;
         let mode = meta.permissions().mode() & 0o7777;
         let executable = mode & 0o111 != 0;
-        fs::set_permissions(
+        file::write(
             dest,
-            fs::Permissions::from_mode(Mode::default_for(executable, Storage::Clear).0),
+            &bytes,
+            Mode::default_for(executable, Storage::Clear).0,
         )?;
         let default = Mode::default_for(executable, storage);
         let rel = rel.to_string_lossy().into_owned();

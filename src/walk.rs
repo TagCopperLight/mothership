@@ -3,7 +3,7 @@ use std::{
     collections::HashSet,
     fs,
     io::{self, ErrorKind},
-    os::unix::fs::MetadataExt,
+    os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -170,6 +170,10 @@ pub fn files_with_metadata(root: &Path) -> Result<Vec<(PathBuf, fs::Metadata)>> 
     }
     found.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(found)
+}
+
+pub fn private(meta: &fs::Metadata) -> bool {
+    meta.is_file() && meta.permissions().mode() & 0o004 == 0
 }
 
 pub fn children(dir: &Path) -> Result<Vec<PathBuf>> {

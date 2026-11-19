@@ -124,6 +124,7 @@ $ echo "machine example.com login me" > ~/.netrc && chmod 600 ~/.netrc && chezmo
 $ printf 'a\n' | sudo mothership review
 [1/1] Files
     ! ~/.netrc  secret in clear  git history keeps it: change it once encrypted
+      machine example.com login me
   a  add         copy this machine's version into chezmoi, encrypted
   n  not secret  list it in not-secret.txt, and add it later in clear
   i ignore · l later · p pass · q quit

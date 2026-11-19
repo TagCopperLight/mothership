@@ -10,15 +10,7 @@ use crate::{
     style::{self, Paint, Style},
     walk,
 };
-use anyhow::Result;
-use std::sync::LazyLock;
-
-static BACK_LATER: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        "back in {}",
-        style::count((later::LATER / DAY) as usize, "day")
-    )
-});
+use anyhow::{Error, Result};
 
 pub fn run() -> Result<()> {
     let report = scan::collect()?;
@@ -100,6 +92,10 @@ fn ask(report: &scan::Report) -> Result<()> {
     let mut later = Later::load()?;
     let mut record = Record::load()?;
     let now = later::now()?;
+    let back_later = format!(
+        "back in {}",
+        style::count((later::LATER / DAY) as usize, "day")
+    );
     let mine: Vec<&Item> = report
         .shown
         .iter()
@@ -115,6 +111,7 @@ fn ask(report: &scan::Report) -> Result<()> {
     let mut tally = Tally::default();
     let mut last: Option<String> = None;
     let mut seen = 0;
+    let mut failure: Option<Error> = None;
     'items: for (n, item) in due.iter().enumerate() {
         if style.terminal {
             print!("{}", style::CLEAR);
@@ -139,7 +136,7 @@ fn ask(report: &scan::Report) -> Result<()> {
             let ago = format!("put off {days} ago");
             println!("      {}", style.paint(ago, &[Paint::Blue]));
         }
-        item.preview.show(style.color);
+        item.preview.show(&item.seen, style.color);
 
         let add = match &item.add {
             Adding::Offered(add) => Some(add),
@@ -148,20 +145,7 @@ fn ask(report: &scan::Report) -> Result<()> {
         let encrypted = add
             .filter(|_| item.secret == Secret::No)
             .and_then(Add::encrypted);
-        let mut choices: Vec<(Answer, String)> = Vec::new();
-        if let Some(add) = add {
-            choices.push((Answer::Add(add), add.describe()));
-        }
-        if let Some(encrypted) = &encrypted {
-            choices.push((Answer::Secret(encrypted), encrypted.describe()));
-        }
-        if item.secret == Secret::Guessed {
-            let what = "list it in not-secret.txt, and add it later in clear";
-            choices.push((Answer::NotSecret, what.into()));
-        }
-        if let Some(revert) = &item.revert {
-            choices.push((Answer::Revert(revert), revert.describe()));
-        }
+        let choices = choices(item, add, encrypted.as_ref());
         let key = |answer: Answer| style.paint(answer.key(), &[Paint::Bold, Paint::Cyan]);
         for (answer, what) in &choices {
             println!("  {}  {:10}  {what}", key(*answer), answer.name());
@@ -187,12 +171,15 @@ fn ask(report: &scan::Report) -> Result<()> {
                 Ok(Some(answer)) => answer,
                 Ok(None) => break 'items,
                 Err(e) if prompt::stopped(&e) => break 'items,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    failure = Some(e);
+                    break 'items;
+                }
             };
             let outcome = match answer {
                 Answer::Quit => break 'items,
                 Answer::Add(add) | Answer::Secret(add) => add
-                    .apply(fleet, member, &mut prompt, item.preview.seen())
+                    .apply(fleet, member, &mut prompt, &item.seen)
                     .map(|added| added.then_some("added to the fleet")),
                 Answer::NotSecret => edit::not_secret(fleet, member, &item.subject)
                     .map(|()| Some("marked not secret")),
@@ -203,7 +190,7 @@ fn ask(report: &scan::Report) -> Result<()> {
                 Answer::Ignore => {
                     edit::ignore(fleet, member, &item.ignore_line()).map(|()| Some("ignored"))
                 }
-                Answer::Later => Ok(Some(BACK_LATER.as_str())),
+                Answer::Later => Ok(Some(back_later.as_str())),
                 Answer::Pass => Ok(Some("passed")),
             };
             let done = match outcome {
@@ -228,6 +215,9 @@ fn ask(report: &scan::Report) -> Result<()> {
     }
 
     later.save(fleet, &mine)?;
+    if let Some(e) = failure {
+        return Err(e);
+    }
     if style.terminal {
         print!("{}", style::CLEAR);
     }
@@ -269,6 +259,28 @@ fn ask(report: &scan::Report) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn choices<'a>(
+    item: &'a Item,
+    add: Option<&'a Add>,
+    encrypted: Option<&'a Add>,
+) -> Vec<(Answer<'a>, String)> {
+    let mut choices = Vec::new();
+    if let Some(add) = add {
+        choices.push((Answer::Add(add), add.describe()));
+    }
+    if let Some(encrypted) = encrypted {
+        choices.push((Answer::Secret(encrypted), encrypted.describe()));
+    }
+    if item.secret == Secret::Guessed {
+        let what = "list it in not-secret.txt, and add it later in clear";
+        choices.push((Answer::NotSecret, what.into()));
+    }
+    if let Some(revert) = &item.revert {
+        choices.push((Answer::Revert(revert), revert.describe()));
+    }
+    choices
 }
 
 fn summary(fleet: &Fleet, tally: &Tally, style: Style) {

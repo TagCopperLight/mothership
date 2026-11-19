@@ -7,7 +7,7 @@ use crate::{
     cmd::{self, As},
     edit::Add,
     fleet::{Fleet, Member},
-    preview::{Preview, Seen},
+    preview::Preview,
     revert::User,
     secrets::Storage,
 };
@@ -91,7 +91,6 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
             .showing(Preview::Chezmoi {
                 path: path.clone(),
                 root: root.clone(),
-                seen: Seen::default(),
             });
         items.push(if encrypted.contains(&path) {
             item.secret(Secret::Fleet)
@@ -125,7 +124,11 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
                 "secret in clear",
             )
             .noting("git history keeps it: change it once encrypted")
-            .with(add),
+            .with(add)
+            .showing(Preview::Home {
+                path: path.clone(),
+                user: user.clone(),
+            }),
             path,
         );
         if item.secret == Secret::Guessed {

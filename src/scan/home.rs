@@ -3,7 +3,7 @@ use crate::kind::Kind;
 use crate::{
     edit::Add,
     fleet::{Manager, Member},
-    preview::{Preview, Seen},
+    preview::Preview,
     secrets::{self, Storage},
     systemd, walk,
 };
@@ -63,7 +63,6 @@ pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
                 .showing(Preview::Home {
                     path: path.clone(),
                     user: user.clone(),
-                    seen: Seen::default(),
                 })
                 .guessing(path)
         })

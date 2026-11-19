@@ -56,13 +56,13 @@ fn a_secret_shows_what_the_fleet_holds_decrypted() {
         keys: keys.clone(),
         now: None,
     };
-    assert_eq!(alone.render().unwrap(), ["psk=abc"]);
+    assert_eq!(alone.render(&Seen::default()).unwrap(), ["psk=abc"]);
     let against = Preview::Decrypted {
         source,
         keys,
         now: Some(now),
     };
-    let lines = against.render().unwrap();
+    let lines = against.render(&Seen::default()).unwrap();
     assert!(lines.contains(&"-psk=abc".to_owned()));
     assert!(lines.contains(&"+psk=xyz".to_owned()));
 }
@@ -75,7 +75,20 @@ fn a_user_unit_is_read_from_its_file() {
     let user = crate::user::by_uid(unsafe { libc::geteuid() }).unwrap();
     let shown = Preview::AsUser { path, user };
     assert_eq!(
-        shown.render().unwrap(),
+        shown.render(&Seen::default()).unwrap(),
         ["[Service]", "ExecStart=/bin/true"]
     );
+}
+
+#[test]
+fn what_was_shown_must_match_what_is_added() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    fs::write(file.path(), "one").unwrap();
+    let digest = |path: &Path| hash::sha256(&file::content(path).unwrap());
+    let seen = Seen::default();
+    assert!(seen.check(&digest(file.path())).is_err());
+    Preview::Contents(file.path().to_path_buf()).show(&seen, false);
+    seen.check(&digest(file.path())).unwrap();
+    fs::write(file.path(), "two").unwrap();
+    assert!(seen.check(&digest(file.path())).is_err());
 }

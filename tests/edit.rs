@@ -4,9 +4,11 @@ use crate::{
     hardware::Hardware,
     ignore::Ignore,
     kind::Level,
+    preview::{Preview, Seen},
 };
 use std::{
     collections::BTreeSet,
+    fs,
     os::unix::{self, fs::PermissionsExt},
 };
 use tempfile::TempDir;
@@ -86,8 +88,20 @@ impl Checkout {
     }
 
     fn try_apply(&self, add: Add, answers: &'static str) -> Result<bool> {
+        self.try_apply_seen(add, answers, &Seen::default())
+    }
+
+    fn try_apply_seen(&self, add: Add, answers: &'static str, seen: &Seen) -> Result<bool> {
         let me = &self.fleet.members[0];
-        add.apply(&self.fleet, Some(me), &mut Prompt::answering(answers), None)
+        add.apply(&self.fleet, Some(me), &mut Prompt::answering(answers), seen)
+    }
+
+    fn shown_home(&self, path: &Path) -> Seen {
+        let seen = Seen::default();
+        let user = self.fleet.members[0].user().clone();
+        let path = path.to_path_buf();
+        Preview::Home { path, user }.show(&seen, false);
+        seen
     }
 
     fn read(&self, rel: &str) -> String {
@@ -277,19 +291,60 @@ fn sets_and_drops_linger() {
     assert!(!checkout.user().contains("linger"));
 }
 
+fn shown(path: &Path) -> Seen {
+    let seen = Seen::default();
+    Preview::Contents(path.to_path_buf()).show(&seen, false);
+    seen
+}
+
 #[test]
 fn tracking_a_folder_stops_unless_confirmed() {
     let checkout = Checkout::new();
     let folder = checkout.dir.path().join("app");
     fs::create_dir(&folder).unwrap();
     fs::write(folder.join("config"), "").unwrap();
-    assert!(!checkout.apply(
-        Add::Track {
-            path: folder,
-            storage: Storage::Clear
-        },
-        "n"
-    ));
+    let seen = checkout.shown_home(&folder);
+    let add = Add::Track {
+        path: folder,
+        storage: Storage::Clear,
+    };
+    assert!(!checkout.try_apply_seen(add, "n", &seen).unwrap());
+}
+
+#[test]
+fn a_folder_in_clear_is_refused_when_it_holds_files_only_the_owner_reads() {
+    let checkout = Checkout::new();
+    let folder = checkout.dir.path().join("app");
+    fs::create_dir(&folder).unwrap();
+    fs::write(folder.join("config"), "").unwrap();
+    fs::write(folder.join("token"), "").unwrap();
+    fs::set_permissions(folder.join("token"), fs::Permissions::from_mode(0o600)).unwrap();
+    let seen = checkout.shown_home(&folder);
+    let add = Add::Track {
+        path: folder,
+        storage: Storage::Clear,
+    };
+    let error = checkout.try_apply_seen(add, "y", &seen).unwrap_err();
+    assert!(format!("{error:#}").contains("token"));
+    assert!(!format!("{error:#}").contains("config"));
+}
+
+#[test]
+fn a_home_add_needs_what_was_shown_unchanged() {
+    let checkout = Checkout::new();
+    let folder = checkout.dir.path().join("app");
+    fs::create_dir(&folder).unwrap();
+    fs::write(folder.join("config"), "one").unwrap();
+    let add = || Add::Track {
+        path: folder.clone(),
+        storage: Storage::Clear,
+    };
+    let unseen = checkout.try_apply_seen(add(), "n", &Seen::default());
+    assert!(format!("{:#}", unseen.unwrap_err()).contains("changed since it was shown"));
+    let seen = checkout.shown_home(&folder);
+    fs::write(folder.join("config"), "two").unwrap();
+    let changed = checkout.try_apply_seen(add(), "n", &seen);
+    assert!(format!("{:#}", changed.unwrap_err()).contains("changed since it was shown"));
 }
 
 #[test]
@@ -328,6 +383,7 @@ fn copies_files_and_symlinks_into_etc() {
         Path::new("sub/locale.conf"),
         &machine.join("locale.conf"),
         Storage::Clear,
+        &shown(&machine.join("locale.conf")),
     )
     .unwrap();
     etc::copy(
@@ -335,6 +391,7 @@ fn copies_files_and_symlinks_into_etc() {
         Path::new("resolv.conf"),
         &machine.join("resolv.conf"),
         Storage::Clear,
+        &shown(&machine.join("resolv.conf")),
     )
     .unwrap();
     assert_eq!(
@@ -345,8 +402,34 @@ fn copies_files_and_symlinks_into_etc() {
         fs::read_link(etc.join("resolv.conf")).unwrap(),
         Path::new("/run/resolv.conf")
     );
-    assert!(etc::copy(fleet, Path::new("machine"), &machine, Storage::Clear).is_err());
+    assert!(
+        etc::copy(
+            fleet,
+            Path::new("machine"),
+            &machine,
+            Storage::Clear,
+            &shown(&machine)
+        )
+        .is_err()
+    );
     assert!(!checkout.system().contains("etc_modes"));
+}
+
+#[test]
+fn an_etc_copy_refuses_what_was_not_shown_or_changed_since() {
+    let checkout = Checkout::new();
+    let machine = checkout.dir.path().join("hosts");
+    fs::write(&machine, "one\n").unwrap();
+    let rel = Path::new("hosts");
+    let copy = |seen: &Seen| etc::copy(&checkout.fleet, rel, &machine, Storage::Clear, seen);
+    let error = copy(&Seen::default()).unwrap_err();
+    assert!(format!("{error:#}").contains("changed since it was shown"));
+    let seen = shown(&machine);
+    fs::write(&machine, "two\n").unwrap();
+    assert!(copy(&seen).is_err());
+    assert!(!checkout.fleet.etc_dir().join(rel).exists());
+    copy(&shown(&machine)).unwrap();
+    assert_eq!(checkout.read("types/workstation/etc/hosts"), "two\n");
 }
 
 #[test]
@@ -356,7 +439,14 @@ fn copying_keeps_a_mode_git_cannot_in_etc_modes() {
     fs::write(&machine, "%wheel ALL=(ALL:ALL) ALL\n").unwrap();
     fs::set_permissions(&machine, fs::Permissions::from_mode(0o640)).unwrap();
     let rel = Path::new("sudoers.d/wheel");
-    etc::copy(&checkout.fleet, rel, &machine, Storage::Clear).unwrap();
+    etc::copy(
+        &checkout.fleet,
+        rel,
+        &machine,
+        Storage::Clear,
+        &shown(&machine),
+    )
+    .unwrap();
     assert!(
         checkout
             .system()
@@ -367,7 +457,14 @@ fn copying_keeps_a_mode_git_cannot_in_etc_modes() {
     assert_eq!(mode, 0o644);
 
     fs::set_permissions(&machine, fs::Permissions::from_mode(0o644)).unwrap();
-    etc::copy(&checkout.fleet, rel, &machine, Storage::Clear).unwrap();
+    etc::copy(
+        &checkout.fleet,
+        rel,
+        &machine,
+        Storage::Clear,
+        &shown(&machine),
+    )
+    .unwrap();
     assert!(!checkout.system().contains("sudoers.d/wheel"));
 }
 
@@ -409,7 +506,8 @@ fn copying_over_the_file_of_an_option_off_here_fails() {
             &checkout.fleet,
             Path::new("grub.d/dual"),
             &machine,
-            Storage::Clear
+            Storage::Clear,
+            &shown(&machine)
         )
         .is_err()
     );

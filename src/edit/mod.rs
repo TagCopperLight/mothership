@@ -9,15 +9,15 @@ use crate::{
     fleet::{self, Fleet, Manager, Member, Tool},
     kind::Level,
     package::Distro,
+    preview::Seen,
     prompt::Prompt,
     secrets::Storage,
 };
 use anyhow::{Context, Result, bail};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 use toml_edit::value;
+
+const FILE_MODE: u32 = 0o644;
 
 #[derive(Clone, Copy)]
 pub enum Key {
@@ -158,7 +158,7 @@ impl Add {
         fleet: &Fleet,
         member: Option<&Member>,
         prompt: &mut Prompt,
-        seen: Option<&str>,
+        seen: &Seen,
     ) -> Result<bool> {
         let member = || member.context("the item belongs to no user");
         match self {
@@ -208,7 +208,7 @@ impl Add {
             }
             Add::Forget(path) => home::forget(fleet, member()?, path)?,
             Add::CopyEtc { rel, storage } => {
-                etc::copy(fleet, rel, &Path::new(file::ETC).join(rel), *storage)?
+                etc::copy(fleet, rel, &Path::new(file::ETC).join(rel), *storage, seen)?
             }
             Add::RemoveEtc(rel) => etc::remove(fleet, rel)?,
             Add::Pref {
@@ -235,7 +235,7 @@ fn append_line(path: &Path, line: &str) -> Result<()> {
     }
     text.push_str(line);
     text.push('\n');
-    fs::write(path, text).with_context(|| format!("writing {}", path.display()))
+    file::write(path, text.as_bytes(), FILE_MODE)
 }
 
 pub fn ignore(fleet: &Fleet, member: Option<&Member>, line: &str) -> Result<()> {

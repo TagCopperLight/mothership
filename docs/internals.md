@@ -50,6 +50,7 @@
 - Without `encryption` set, chezmoi keeps `.age` in target names.
 - In `status`, the first column says what changed on the machine since chezmoi last wrote the file, the second what its apply would do.
 - Root's chezmoi starts from an empty state each run and never reads or writes the user's `chezmoistate.boltdb`, so a crafted database can't reach it. `add`, `re-add` and `diff` don't need it.
+- chezmoi adds `private_` only when neither group nor others can read the file, and asks before an add would drop it, so an encrypted add chmods the snapshot's files to owner-only first.
 - chezmoi follows a link to a file in its source folder, but not a link to a folder. `re-add` replaces a linked file with a copy.
 
 ## Other tools
@@ -67,3 +68,4 @@
 - `tests/` holds unit tests that each module includes with `#[path]`, not standalone test crates, so Cargo's `autotests` is off.
 - Root reads a user's files with that user's rights: a thread sets its filesystem uid, gid and groups (they are per thread in Linux, and `setfsuid` drops the file capabilities), so a link a user swaps in leads only where the user could read anyway.
 - chezmoi runs as root only on such a copy of the home, bound over the home in a private mount namespace (`unshare`), so it can't follow a user's links. Docker needs `--cap-add SYS_ADMIN` for that.
+- Every add that copies machine content records a fingerprint of what its preview showed (the snapshot's digest, or a hash of the `/etc` file) and refuses when it is missing or different. A revert writes the fleet's or the package's version, so it needs none.

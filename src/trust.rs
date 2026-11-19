@@ -1,4 +1,5 @@
 use crate::{
+    chezmoi::{ENCRYPTED, TEMPLATE},
     file,
     fleet::{self, Fleet},
     homes,
@@ -16,8 +17,6 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
-
-const ENCRYPTED: &str = "encrypted_";
 
 pub struct MachineKey {
     pub name: String,
@@ -329,7 +328,7 @@ fn home_secret(rel: &Path) -> Option<String> {
     let last = parts.last_mut()?;
     while let Some(rest) = last
         .strip_suffix(AGE)
-        .or_else(|| last.strip_suffix(".tmpl"))
+        .or_else(|| last.strip_suffix(TEMPLATE))
     {
         *last = rest.to_owned();
     }

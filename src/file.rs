@@ -2,7 +2,10 @@ use anyhow::{Context, Result, bail};
 use std::{
     fs,
     io::{self, ErrorKind, Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::{
+        ffi::OsStringExt,
+        fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    },
     path::{Path, PathBuf},
 };
 
@@ -83,6 +86,14 @@ pub fn read(path: &Path) -> Result<Option<Vec<u8>>> {
         bail!("{} is over {} MB", path.display(), READ_LIMIT >> 20);
     }
     Ok(Some(bytes))
+}
+
+pub fn content(path: &Path) -> Result<Vec<u8>> {
+    let meta = fs::symlink_metadata(path).with_context(|| format!("reading {}", path.display()))?;
+    if meta.is_symlink() {
+        return Ok(fs::read_link(path)?.into_os_string().into_vec());
+    }
+    fs::read(path).with_context(|| format!("reading {}", path.display()))
 }
 
 pub fn under(root: &Path, absolute: &str) -> PathBuf {

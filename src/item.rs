@@ -1,4 +1,11 @@
-use crate::{edit::Add, fleet::Fleet, kind::Kind, preview::Preview, revert::Revert, style::Paint};
+use crate::{
+    edit::Add,
+    fleet::Fleet,
+    kind::Kind,
+    preview::{Preview, Seen},
+    revert::Revert,
+    style::Paint,
+};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -63,6 +70,7 @@ pub struct Item {
     pub add: Adding,
     pub revert: Option<Revert>,
     pub preview: Preview,
+    pub seen: Seen,
     pub guess: Option<PathBuf>,
 }
 
@@ -89,6 +97,7 @@ impl Item {
             add: Adding::Never,
             revert: None,
             preview: Preview::None,
+            seen: Seen::default(),
             guess: None,
         }
     }

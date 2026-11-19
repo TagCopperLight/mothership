@@ -203,6 +203,8 @@ pub fn config_text(config: &ChezmoiConfig) -> Result<String> {
 }
 
 pub const CONFIG: &str = ".config/chezmoi/chezmoi.toml";
+pub const ENCRYPTED: &str = "encrypted_";
+pub const TEMPLATE: &str = ".tmpl";
 
 #[cfg(test)]
 #[path = "../tests/chezmoi.rs"]
