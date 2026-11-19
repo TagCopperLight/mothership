@@ -17,6 +17,7 @@ pub const USER_DIRS: [&str; 3] = [
     "/run/systemd/user",
     "/usr/lib/systemd/user",
 ];
+pub const HOME_UNITS: &str = ".config/systemd/user";
 const DEPENDENCY_DIRS: [&str; 3] = [".wants", ".requires", ".upholds"];
 const MAX_ALIASES: usize = 16;
 
@@ -89,9 +90,9 @@ fn is_dependency_name(path: &Path) -> bool {
 }
 
 pub fn is_enablement(path: &Path) -> bool {
-    let in_unit_dir = path.parent().is_some_and(|dir| {
-        dir == Path::new(SYSTEM_DIRS[0]) || dir.ends_with(".config/systemd/user")
-    });
+    let in_unit_dir = path
+        .parent()
+        .is_some_and(|dir| dir == Path::new(SYSTEM_DIRS[0]) || dir.ends_with(HOME_UNITS));
     let is_alias = fs::read_link(path).is_ok_and(|target| {
         !is_mask(&target)
             && target

@@ -1,6 +1,6 @@
 use crate::{
     chezmoi,
-    fleet::{Fleet, Manager, Member, Mode, Table, Tool},
+    fleet::{self, Fleet, Manager, Member, Mode, Table, Tool},
     homes,
     ignore::Level,
     package::Distro,
@@ -58,8 +58,8 @@ impl Key {
 
     fn file(self) -> &'static str {
         match self.level() {
-            Level::Machine => "system.toml",
-            Level::User => "user.toml",
+            Level::Machine => fleet::SYSTEM_TOML,
+            Level::User => fleet::USER_TOML,
         }
     }
 }
@@ -256,7 +256,7 @@ impl Add {
                 root.run(&own_list(fleet, member)?, &empty, &args)?
             }
             Add::CopyEtc { rel, storage } => {
-                copy_etc(fleet, rel, &Path::new("/etc").join(rel), *storage)?
+                copy_etc(fleet, rel, &Path::new(fleet::ETC).join(rel), *storage)?
             }
             Add::RemoveEtc(rel) => remove_etc(fleet, rel)?,
             Add::Pref {

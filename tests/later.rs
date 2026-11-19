@@ -9,7 +9,7 @@ fn item(subject: &str) -> Item {
 fn fleet(dir: &Path) -> Fleet {
     let type_dir = dir.join("types/workstation");
     fs::create_dir_all(type_dir.join("etc")).unwrap();
-    fs::write(type_dir.join("system.toml"), "").unwrap();
+    fs::write(type_dir.join(crate::fleet::SYSTEM_TOML), "").unwrap();
     Fleet::new(dir.to_path_buf(), "workstation", &[], &Default::default()).unwrap()
 }
 

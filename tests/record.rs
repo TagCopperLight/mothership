@@ -286,7 +286,7 @@ fn fleet(dir: &Path, system: &str, user: &str, etc: &[&str]) -> Fleet {
     for file in etc {
         fs::write(type_dir.join("etc").join(file), "fleet").unwrap();
     }
-    fs::write(type_dir.join("system.toml"), system).unwrap();
+    fs::write(type_dir.join(crate::fleet::SYSTEM_TOML), system).unwrap();
     fs::write(type_dir.join("users/me/user.toml"), user).unwrap();
     Fleet::new(dir.to_path_buf(), "workstation", &[], &BTreeSet::new()).unwrap()
 }

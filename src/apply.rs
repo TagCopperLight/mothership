@@ -1,5 +1,5 @@
 use crate::{
-    fleet::Fleet,
+    fleet::{self, Fleet},
     package::Db,
     prompt::Prompt,
     record::{self, Record},
@@ -98,7 +98,7 @@ fn round(
     } else {
         return Ok(false);
     }
-    Record::after(&fleet, &record, Path::new("/etc"), &skipped)?.save(record_path)?;
+    Record::after(&fleet, &record, Path::new(fleet::ETC), &skipped)?.save(record_path)?;
     Ok(todo.iter().any(|item| {
         matches!(
             item.revert,

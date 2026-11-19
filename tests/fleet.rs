@@ -24,7 +24,7 @@ fn checkout(system: &str) -> TempDir {
     fs::create_dir_all(type_dir.join("etc/pam.d")).unwrap();
     fs::write(type_dir.join("etc/pam.d/sudo"), "").unwrap();
     fs::write(type_dir.join("etc/locale.conf"), "").unwrap();
-    fs::write(type_dir.join("system.toml"), system).unwrap();
+    fs::write(type_dir.join(SYSTEM_TOML), system).unwrap();
     dir
 }
 

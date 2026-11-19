@@ -53,7 +53,7 @@ pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
 }
 
 pub fn scan_user(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
-    let mut dirs = vec![member.user().home.join(".config/systemd/user")];
+    let mut dirs = vec![member.user().home.join(systemd::HOME_UNITS)];
     dirs.extend(systemd::paths(&USER_DIRS));
     let defaults = Defaults::load(ships.db.distro, Scope::User)?;
     member.user().with_rights(|| {

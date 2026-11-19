@@ -1,7 +1,7 @@
 use super::{Archive, Backup, Db, Distro, Origin, Package};
 use crate::{
     cmd::{self, As},
-    fleet::Fleet,
+    fleet::{self, Fleet},
     parallel,
     prompt::Prompt,
     systemd::{self, SYSTEM_DIRS, USER_DIRS},
@@ -100,7 +100,7 @@ fn claim_written(packages: &mut [Package]) -> Result<()> {
             .chain(names.iter().map(|n| Path::new("/etc/alternatives").join(n)));
         claims.extend(links.map(|link| (target.clone(), link)));
     }
-    for dir in walk::children(Path::new("/etc"))? {
+    for dir in walk::children(Path::new(fleet::ETC))? {
         let is_rc = dir
             .file_name()
             .and_then(|n| n.to_str())

@@ -65,7 +65,7 @@ impl Checkout {
         fs::create_dir_all(type_dir.join("etc/grub.d")).unwrap();
         fs::write(type_dir.join("etc/battery.conf"), "").unwrap();
         fs::write(type_dir.join("etc/grub.d/dual"), "").unwrap();
-        fs::write(type_dir.join("system.toml"), SYSTEM).unwrap();
+        fs::write(type_dir.join(crate::fleet::SYSTEM_TOML), SYSTEM).unwrap();
         fs::write(type_dir.join("ignore.txt"), "package htop\n").unwrap();
         fs::create_dir_all(type_dir.join("users/me")).unwrap();
         fs::write(type_dir.join("users/me/user.toml"), USER).unwrap();

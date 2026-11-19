@@ -1,7 +1,7 @@
 use crate::{
     chezmoi,
     cmd::{self, As},
-    fleet::{Fleet, Manager, Member, Mode, Tool},
+    fleet::{self, Fleet, Manager, Member, Mode, Tool},
     package::{Archive, Distro},
     tools, user, walk,
 };
@@ -299,7 +299,7 @@ fn change_etc(fleet: &Fleet, change: &Etc) -> Result<()> {
     let path = change.path();
     let run = || match change {
         Etc::Write(_) => {
-            let rel = path.strip_prefix("/etc")?;
+            let rel = path.strip_prefix(fleet::ETC)?;
             let source = fleet.etc_source(rel);
             if fs::symlink_metadata(&source)?.is_symlink() {
                 link(path, &fs::read_link(&source)?)

@@ -225,6 +225,10 @@ impl Tool {
 }
 
 pub const TYPES: &str = "types";
+pub const SYSTEM_TOML: &str = "system.toml";
+pub const USER_TOML: &str = "user.toml";
+pub const ETC: &str = "/etc";
+const ETC_DIR: &str = "etc";
 const IGNORE: &str = "ignore.txt";
 const NOT_SECRET: &str = "not-secret.txt";
 pub const USERS: &str = "users";
@@ -303,8 +307,8 @@ impl Fleet {
         hardware: &BTreeSet<Hardware>,
     ) -> Result<Self> {
         homes::check(&dir)?;
-        let type_dir = dir.join(TYPES).join(device_type);
-        let system_path = type_dir.join("system.toml");
+        let type_dir = type_dir(&dir, device_type);
+        let system_path = type_dir.join(SYSTEM_TOML);
         let mut system: System = read_toml(&system_path)?;
 
         let mut blocks = Vec::new();
@@ -337,21 +341,12 @@ impl Fleet {
             .collect();
 
         let (mut all, mut secret_etc) = (BTreeSet::new(), BTreeSet::new());
-        let etc_dir = type_dir.join("etc");
-        let etc_files = match etc_dir.exists() {
-            true => walk::files(&etc_dir)?,
-            false => Vec::new(),
-        };
-        for file in etc_files {
-            let rel = match file.to_str().and_then(|f| f.strip_suffix(secrets::AGE)) {
-                Some(rel) => {
-                    secret_etc.insert(PathBuf::from(rel));
-                    PathBuf::from(rel)
-                }
-                None => file,
-            };
-            if !all.insert(rel.clone()) {
-                bail!("etc/{} is both in clear and encrypted", rel.display());
+        for file in etc_files(&type_dir)? {
+            if file.storage == Storage::Encrypted {
+                secret_etc.insert(file.rel.clone());
+            }
+            if !all.insert(file.rel.clone()) {
+                bail!("etc/{} is both in clear and encrypted", file.rel.display());
             }
         }
         let mut owned = BTreeSet::new();
@@ -418,7 +413,7 @@ impl Fleet {
     }
 
     pub fn system_path(&self) -> PathBuf {
-        self.type_dir.join("system.toml")
+        self.type_dir.join(SYSTEM_TOML)
     }
 
     pub fn recipients(&self) -> PathBuf {
@@ -426,7 +421,7 @@ impl Fleet {
     }
 
     pub fn etc_dir(&self) -> PathBuf {
-        self.type_dir.join("etc")
+        self.type_dir.join(ETC_DIR)
     }
 
     pub fn etc_source(&self, rel: &Path) -> PathBuf {
@@ -523,6 +518,41 @@ impl Fleet {
     }
 }
 
+pub fn type_dir(fleet_dir: &Path, name: &str) -> PathBuf {
+    fleet_dir.join(TYPES).join(name)
+}
+
+pub struct EtcFile {
+    pub rel: PathBuf,
+    pub source: PathBuf,
+    pub storage: Storage,
+}
+
+pub fn etc_files(type_dir: &Path) -> Result<Vec<EtcFile>> {
+    let dir = type_dir.join(ETC_DIR);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    Ok(walk::files(&dir)?
+        .into_iter()
+        .map(|file| {
+            let source = dir.join(&file);
+            match file.to_str().and_then(|f| f.strip_suffix(secrets::AGE)) {
+                Some(rel) => EtcFile {
+                    rel: PathBuf::from(rel),
+                    source,
+                    storage: Storage::Encrypted,
+                },
+                None => EtcFile {
+                    rel: file,
+                    source,
+                    storage: Storage::Clear,
+                },
+            }
+        })
+        .collect())
+}
+
 pub fn types(dir: &Path) -> Result<Vec<String>> {
     let types = dir.join(TYPES);
     let mut names = Vec::new();
@@ -557,8 +587,6 @@ impl Member {
         self.user.as_ref().expect("checked by the caller")
     }
 }
-
-const USER_TOML: &str = "user.toml";
 
 fn members(dir: &Path) -> Result<Vec<Member>> {
     let mut members = Vec::new();

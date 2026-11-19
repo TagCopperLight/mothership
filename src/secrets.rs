@@ -276,7 +276,7 @@ fn target(fleet: &Fleet, text: &str) -> Result<Target> {
     let (type_name, scope) = text
         .split_once('/')
         .with_context(|| format!("{text} is not <type>/root or <type>/<user>"))?;
-    let type_dir = fleet.dir.join(fleet::TYPES).join(type_name);
+    let type_dir = fleet::type_dir(&fleet.dir, type_name);
     if type_name.is_empty() || type_name.contains("..") || !type_dir.is_dir() {
         bail!("the fleet has no type {type_name}");
     }
@@ -382,9 +382,7 @@ fn home_recipients(
     let mut all: Vec<Recipient> = Vec::new();
     for user in homes::users(fleet_dir, source)? {
         for type_name in fleet::types(fleet_dir)? {
-            let dir = fleet_dir
-                .join(fleet::TYPES)
-                .join(type_name)
+            let dir = fleet::type_dir(fleet_dir, &type_name)
                 .join(fleet::USERS)
                 .join(&user);
             if !dir.is_dir() {
@@ -450,7 +448,7 @@ impl Source {
 }
 
 fn secrets_of(fleet: &Fleet, target: &Target) -> Result<BTreeMap<String, Source>> {
-    let type_dir = fleet.dir.join(fleet::TYPES).join(&target.type_name);
+    let type_dir = fleet::type_dir(&fleet.dir, &target.type_name);
     let mut all = BTreeMap::new();
     let files = |dir: &Path| match dir.exists() {
         true => walk::files(dir),
@@ -458,10 +456,10 @@ fn secrets_of(fleet: &Fleet, target: &Target) -> Result<BTreeMap<String, Source>
     };
     match &target.scope {
         Scope::Root => {
-            let etc = type_dir.join("etc");
-            for rel in files(&etc)? {
-                if let Some(clear) = rel.to_str().and_then(|r| r.strip_suffix(AGE)) {
-                    all.insert(format!("/etc/{clear}"), Source::List(etc.join(&rel)));
+            for file in fleet::etc_files(&type_dir)? {
+                if file.storage == Storage::Encrypted {
+                    let path = Path::new(fleet::ETC).join(&file.rel);
+                    all.insert(path.display().to_string(), Source::List(file.source));
                 }
             }
         }
