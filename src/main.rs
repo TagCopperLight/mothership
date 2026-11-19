@@ -10,6 +10,7 @@ mod install;
 mod later;
 mod package;
 mod parallel;
+mod pref;
 mod preview;
 mod prompt;
 mod record;

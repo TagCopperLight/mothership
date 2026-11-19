@@ -116,7 +116,7 @@ fn ask(report: &scan::Report) -> Result<()> {
     let mut seen = 0;
     'items: for (n, item) in due.iter().enumerate() {
         if style.terminal {
-            print!("\x1b[2J\x1b[3J\x1b[H");
+            print!("{}", style::CLEAR);
             if let Some(last) = last.take() {
                 println!("{}\n", style.paint(last, &[Paint::Dim]));
             }
@@ -226,7 +226,7 @@ fn ask(report: &scan::Report) -> Result<()> {
 
     later.save(fleet, &mine)?;
     if style.terminal {
-        print!("\x1b[2J\x1b[3J\x1b[H");
+        print!("{}", style::CLEAR);
     }
     if due.is_empty() {
         println!("Nothing to review.");

@@ -3,6 +3,7 @@ use crate::{
     cmd::{self, As},
     edit::Add,
     fleet::Member,
+    pref,
     preview::Preview,
     style,
     user::User,
@@ -63,7 +64,7 @@ fn prefs(user: &User, user_js: &Path) -> Result<Vec<Item>> {
     let Some(actual) = read(&user_js.with_file_name("prefs.js"))? else {
         return Ok(Vec::new());
     };
-    let (wanted, actual) = (parse(&wanted), parse(&actual));
+    let (wanted, actual) = (pref::parse(&wanted), pref::parse(&actual));
     Ok(actual
         .iter()
         .filter_map(|(key, value)| {
@@ -87,14 +88,6 @@ fn prefs(user: &User, user_js: &Path) -> Result<Vec<Item>> {
             )
         })
         .collect())
-}
-
-fn parse(text: &str) -> BTreeMap<String, String> {
-    text.lines()
-        .filter_map(|line| line.trim().strip_prefix("user_pref(\"")?.strip_suffix(");"))
-        .filter_map(|rest| rest.split_once("\", "))
-        .map(|(key, value)| (key.to_owned(), value.to_owned()))
-        .collect()
 }
 
 #[cfg(test)]

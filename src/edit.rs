@@ -4,6 +4,7 @@ use crate::{
     homes,
     ignore::Level,
     package::Distro,
+    pref,
     prompt::Prompt,
     revert, secrets,
     snapshot::Snapshot,
@@ -685,25 +686,18 @@ fn set_pref(source: &Path, key: &str, value: &str) -> Result<()> {
             source.display()
         );
     }
-    let start = format!("user_pref(\"{key}\",");
-    let line = format!("user_pref(\"{key}\", {value});");
+    let line = pref::line(key, value);
     let text = fs::read_to_string(source)?;
-    if text.lines().any(|l| l.trim_start().starts_with(&start)) {
-        let out: Vec<&str> = text
-            .lines()
-            .map(|l| {
-                if l.trim_start().starts_with(&start) {
-                    line.as_str()
-                } else {
-                    l
-                }
-            })
-            .collect();
-        fs::write(source, out.join("\n") + "\n")?;
-        Ok(())
-    } else {
-        append_line(source, &line)
+    let sets_it = |l: &str| pref::parse_line(l).is_some_and(|(k, _)| k == key);
+    if !text.lines().any(sets_it) {
+        return append_line(source, &line);
     }
+    let out: Vec<&str> = text
+        .lines()
+        .map(|l| if sets_it(l) { line.as_str() } else { l })
+        .collect();
+    fs::write(source, out.join("\n") + "\n")
+        .with_context(|| format!("writing {}", source.display()))
 }
 
 #[cfg(test)]

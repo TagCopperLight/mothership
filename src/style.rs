@@ -4,6 +4,8 @@ use std::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+pub const CLEAR: &str = "\x1b[2J\x1b[3J\x1b[H";
+
 #[derive(Clone, Copy)]
 pub enum Paint {
     Bold,

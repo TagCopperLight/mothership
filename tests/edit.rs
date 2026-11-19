@@ -408,7 +408,7 @@ fn copying_over_the_file_of_an_option_off_here_fails() {
 fn writes_prefs_into_user_js() {
     let checkout = Checkout::new();
     let user_js = checkout.dir.path().join("user.js");
-    fs::write(&user_js, "user_pref(\"a\", 1);\nuser_pref(\"ab\", 2);\n").unwrap();
+    fs::write(&user_js, "user_pref(\"a\",1);\nuser_pref(\"ab\", 2);\n").unwrap();
     set_pref(&user_js, "a", "3").unwrap();
     set_pref(&user_js, "c", "\"text\"").unwrap();
     assert_eq!(
