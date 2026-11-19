@@ -8,7 +8,7 @@ use crate::{
     prompt::Prompt,
     secrets::{self, Storage},
     snapshot::Snapshot,
-    style, walk,
+    style, trust, walk,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -322,7 +322,7 @@ fn confirm_shared(
 }
 
 fn own_list(fleet: &Fleet, member: &Member) -> Result<String> {
-    secrets::home_list(&fleet.dir, &homes::source(&fleet.dir, &member.name))
+    trust::home_list(&fleet.dir, &homes::source(&fleet.dir, &member.name))
 }
 
 fn update_shared(
@@ -334,7 +334,7 @@ fn update_shared(
 ) -> Result<()> {
     let shared = homes::target(&fleet.dir, source)?;
     let link = fs::read_link(source)?;
-    let recipients = secrets::home_list(&fleet.dir, source)?;
+    let recipients = trust::home_list(&fleet.dir, source)?;
     root.run(
         &recipients,
         snapshot,

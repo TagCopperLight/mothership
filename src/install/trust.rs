@@ -3,7 +3,8 @@ use crate::{
     cmd::As,
     fleet::{self, Fleet},
     prompt::Prompt,
-    secrets::{self, MachineKey},
+    secrets,
+    trust::MachineKey,
 };
 use anyhow::{Result, bail};
 use std::{collections::BTreeMap, path::Path};
@@ -18,12 +19,12 @@ pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
     loop {
         let fleet = Fleet::load()?;
         let mut waiting = Vec::new();
-        for key in secrets::machine_keys(&fleet)? {
+        for key in crate::trust::machine_keys(&fleet)? {
             if key.trusted {
                 continue;
             }
             if secrets::names(&key.list)?.is_empty() {
-                secrets::trust(&fleet, &key.target, hostname, &key.public)?;
+                crate::trust::trust(&fleet, &key.target, hostname, &key.public)?;
             } else {
                 waiting.push(key);
             }
@@ -51,7 +52,7 @@ pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
                     }
                 }
                 for key in &waiting {
-                    secrets::trust_with(&fleet, &keys, &key.target, hostname, &key.public)?;
+                    crate::trust::trust_with(&fleet, &keys, &key.target, hostname, &key.public)?;
                 }
                 fleet.hand_back()?;
             }
@@ -81,7 +82,7 @@ fn print(waiting: &[MachineKey], hostname: &str) -> Result<bool> {
         for key in keys {
             println!(
                 "    {}",
-                secrets::trust_command(&key.target, hostname, &key.public)
+                crate::trust::trust_command(&key.target, hostname, &key.public)
             );
         }
     }

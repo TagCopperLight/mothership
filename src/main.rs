@@ -25,6 +25,7 @@ mod snapshot;
 mod style;
 mod systemd;
 mod tools;
+mod trust;
 mod user;
 mod walk;
 
@@ -103,13 +104,11 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         (Command::Review, []) => review::run(),
         (Command::Apply, []) => apply::run(),
         (Command::Install, flags) => install::run(flags),
-        (Command::Key, []) => secrets::key(&Fleet::load()?),
+        (Command::Key, []) => trust::key(&Fleet::load()?),
         (Command::Trust, [target, name, key]) => {
-            edit_fleet(|fleet| secrets::trust(fleet, target, name, key))
+            edit_fleet(|fleet| trust::trust(fleet, target, name, key))
         }
-        (Command::Retire, [target, name]) => {
-            edit_fleet(|fleet| secrets::retire(fleet, target, name))
-        }
+        (Command::Retire, [target, name]) => edit_fleet(|fleet| trust::retire(fleet, target, name)),
         _ => usage(),
     }
 }
