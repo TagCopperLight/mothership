@@ -9,7 +9,7 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use std::{fs, path::Path, process::Command};
 
-pub const GITHUB: &str = "https://github.com";
+const GITHUB: &str = "https://github.com";
 const GH_LOGIN: [&str; 4] = ["auth", "login", "--hostname", "github.com"];
 const GH_CREDENTIALS: [&str; 4] = [
     "-c",

@@ -102,7 +102,7 @@ impl Deref for Member {
     }
 }
 
-pub const TYPES: &str = "types";
+const TYPES: &str = "types";
 pub const SYSTEM_TOML: &str = "system.toml";
 pub const USER_TOML: &str = "user.toml";
 const ETC_DIR: &str = "etc";
@@ -456,9 +456,6 @@ pub struct EtcFile {
 
 pub fn etc_files(type_dir: &Path) -> Result<Vec<EtcFile>> {
     let dir = type_dir.join(ETC_DIR);
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
     Ok(walk::files(&dir)?
         .into_iter()
         .map(|file| {

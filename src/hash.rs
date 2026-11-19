@@ -9,7 +9,7 @@ pub fn sha256(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
-pub fn hex(digest: &[u8]) -> String {
+fn hex(digest: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 

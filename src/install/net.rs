@@ -134,9 +134,7 @@ fn first_pacman_server() -> Result<Option<String>> {
 fn first_apt_uri() -> Result<Option<String>> {
     let dir = Path::new(APT_SOURCES_DIR);
     let mut files = vec![Path::new(APT_SOURCES).to_path_buf()];
-    if dir.exists() {
-        files.extend(walk::files(dir)?.into_iter().map(|f| dir.join(f)));
-    }
+    files.extend(walk::files(dir)?.into_iter().map(|f| dir.join(f)));
     for file in files {
         let Some(text) = file::read_if_any(&file)? else {
             continue;

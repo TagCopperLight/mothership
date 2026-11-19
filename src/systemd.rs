@@ -72,7 +72,7 @@ fn alias(path: &Path) -> Result<Option<String>> {
     Ok(target(path)?.filter(|unit| name(path).as_ref() != Some(unit)))
 }
 
-pub fn is_mask(target: &Path) -> bool {
+fn is_mask(target: &Path) -> bool {
     target == Path::new("/dev/null")
 }
 

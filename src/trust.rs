@@ -265,10 +265,6 @@ impl Source {
 fn secrets_of(fleet: &Fleet, target: &Target) -> Result<BTreeMap<String, Source>> {
     let type_dir = fleet::type_dir(&fleet.dir, &target.type_name);
     let mut all = BTreeMap::new();
-    let files = |dir: &Path| match dir.exists() {
-        true => walk::files(dir),
-        false => Ok(Vec::new()),
-    };
     match &target.scope {
         Scope::Root => {
             for file in fleet::etc_files(&type_dir)? {
@@ -280,13 +276,13 @@ fn secrets_of(fleet: &Fleet, target: &Target) -> Result<BTreeMap<String, Source>
         }
         Scope::User(user) => {
             let home = homes::source(&fleet.dir, user);
-            for rel in files(&home)? {
+            for rel in walk::files(&home)? {
                 if let Some(shown) = home_secret(&rel) {
                     all.insert(shown, Source::Home(home.join(&rel)));
                 }
             }
             let dir = type_dir.join(fleet::USERS).join(user).join(SECRETS);
-            for rel in files(&dir)? {
+            for rel in walk::files(&dir)? {
                 let source = dir.join(&rel);
                 let shown = source.strip_prefix(&fleet.dir)?.display().to_string();
                 all.insert(shown, Source::List(source));

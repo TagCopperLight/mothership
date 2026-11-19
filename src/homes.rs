@@ -57,9 +57,6 @@ pub fn target(fleet_dir: &Path, link: &Path) -> Result<PathBuf> {
 
 fn links(fleet_dir: &Path) -> Result<Vec<PathBuf>> {
     let homes = fleet_dir.join(HOMES);
-    if !homes.exists() {
-        return Ok(Vec::new());
-    }
     let mut links = Vec::new();
     for rel in walk::files(&homes)? {
         let path = homes.join(rel);

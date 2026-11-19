@@ -115,7 +115,7 @@ pub fn visible(line: &str) -> usize {
     strip_ansi(line).width()
 }
 
-pub fn strip_ansi(line: &str) -> String {
+fn strip_ansi(line: &str) -> String {
     let mut out = String::new();
     let mut chars = line.chars();
     while let Some(c) = chars.next() {

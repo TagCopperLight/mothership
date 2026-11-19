@@ -33,7 +33,3 @@ impl Kind {
         self.into()
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/kind.rs"]
-mod tests;

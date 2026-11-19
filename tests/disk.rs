@@ -10,7 +10,7 @@ fn a_disk_whose_name_ends_in_a_digit_puts_p_before_the_number() {
 
 #[test]
 fn a_layout_reads_its_own_name() {
-    for layout in Layout::ALL {
+    for layout in Layout::iter() {
         assert_eq!(layout.name().parse::<Layout>().unwrap(), layout);
     }
 }

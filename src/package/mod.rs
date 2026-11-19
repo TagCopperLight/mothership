@@ -1,8 +1,9 @@
+mod apt;
 pub mod aur;
 mod dpkg;
 mod pacman;
 
-pub use dpkg::keep_only;
+pub use apt::keep_only;
 
 use crate::user::User;
 use anyhow::{Context, Result, bail};
@@ -54,7 +55,7 @@ impl Distro {
     pub fn cannot_install(self, aur: &Aur, name: &str) -> Result<Option<String>> {
         match self {
             Distro::Arch => pacman::cannot_install(aur, name),
-            Distro::Debian => dpkg::cannot_install(name),
+            Distro::Debian => apt::cannot_install(name),
         }
     }
 
@@ -76,14 +77,14 @@ impl Distro {
     pub fn bootstrap(self, names: &[&str]) -> Result<()> {
         match self {
             Distro::Arch => pacman::bootstrap(names),
-            Distro::Debian => dpkg::install(names),
+            Distro::Debian => apt::install(names),
         }
     }
 
     pub fn install(self, aur: &Aur, names: &[&str]) -> Result<()> {
         match self {
             Distro::Arch => pacman::install(aur, names)?,
-            Distro::Debian => dpkg::install(names)?,
+            Distro::Debian => apt::install(names)?,
         }
         Db::load()?.require_installed(names)
     }
@@ -98,7 +99,7 @@ impl Distro {
             .collect();
         let removed = match self {
             Distro::Arch => pacman::uninstall(&keep, names)?,
-            Distro::Debian => dpkg::uninstall(&db, &keep, names)?,
+            Distro::Debian => apt::uninstall(&db, &keep, names)?,
         };
         for name in names.iter().filter(|name| !removed.contains(**name)) {
             println!("{}", stays(name, &db.needed_by(name)));

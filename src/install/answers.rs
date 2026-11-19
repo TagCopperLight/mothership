@@ -3,7 +3,7 @@ use crate::{
     fleet::{self, Machine, Repo},
     prompt::{Choice, Prompt},
 };
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Default)]
@@ -44,7 +44,12 @@ impl Flags {
                 }
                 "--timezone" => once(&mut flags.timezone, flag, value)?,
                 "--disk" => once(&mut flags.disk, flag, value)?,
-                "--layout" => once(&mut flags.layout, flag, value.parse()?)?,
+                "--layout" => {
+                    let layout = value
+                        .parse()
+                        .map_err(|_| anyhow!("the layout is wipe or beside, not {value}"))?;
+                    once(&mut flags.layout, flag, layout)?
+                }
                 _ => bail!("install has no {flag}"),
             }
         }

@@ -1,6 +1,6 @@
 use crate::{
     cmd::{self, As},
-    secrets,
+    file, secrets,
     snapshot::Snapshot,
     user::{self, User},
 };
@@ -9,7 +9,7 @@ use std::{
     ffi::OsStr,
     fs,
     os::unix::ffi::OsStrExt,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     process::Command,
 };
 use tempfile::TempDir;
@@ -39,10 +39,7 @@ fn lines(out: &[u8]) -> impl Iterator<Item = &Path> {
 }
 
 pub fn in_home(user: &User, path: &Path) -> Result<PathBuf> {
-    let plain = path
-        .strip_prefix(&user.home)
-        .is_ok_and(|rel| rel.components().all(|c| matches!(c, Component::Normal(_))));
-    if !plain {
+    if file::plain_within(&user.home, path).is_none() {
         bail!(
             "chezmoi named {}, which isn't a plain path in {}",
             path.display(),
@@ -84,10 +81,7 @@ impl Root {
         let empty = Snapshot::take(&self.user, &[])?;
         let out = self.output(&empty, &[OsStr::new("source-path"), target.as_os_str()])?;
         let source = Path::new(OsStr::from_bytes(out.trim_ascii_end())).to_path_buf();
-        let inside = source
-            .strip_prefix(&self.config.source)
-            .is_ok_and(|rel| rel.components().all(|c| matches!(c, Component::Normal(_))));
-        if !inside {
+        if file::plain_within(&self.config.source, &source).is_none() {
             bail!(
                 "chezmoi put {} outside {}",
                 target.display(),
@@ -197,7 +191,7 @@ pub fn configured(user: &User, config: &ChezmoiConfig) -> Result<bool> {
     Ok(String::from_utf8_lossy(&text) == config_text(config)?)
 }
 
-pub fn config_text(config: &ChezmoiConfig) -> Result<String> {
+fn config_text(config: &ChezmoiConfig) -> Result<String> {
     Ok(toml::to_string(&serde_json::json!({
         "sourceDir": config.source,
         "encryption": "age",
@@ -210,7 +204,7 @@ pub fn config_text(config: &ChezmoiConfig) -> Result<String> {
     }))?)
 }
 
-pub const CONFIG: &str = ".config/chezmoi/chezmoi.toml";
+const CONFIG: &str = ".config/chezmoi/chezmoi.toml";
 const STATE: &str = ".config/chezmoi/chezmoistate.boltdb";
 pub const ENCRYPTED: &str = "encrypted_";
 pub const TEMPLATE: &str = ".tmpl";

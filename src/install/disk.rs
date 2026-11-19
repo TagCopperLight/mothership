@@ -9,8 +9,8 @@ use serde::Deserialize;
 use std::{
     fs,
     path::{Path, PathBuf},
-    str::FromStr,
 };
+use strum::{Display, EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 
 pub const ROOT: &str = "/mnt";
 pub const MAPPER: &str = "root";
@@ -39,20 +39,16 @@ const LINUX_ROOT: PartType = PartType {
     guid: "4f68bce3-e8cd-4db1-96e7-fbcaf984b709",
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, IntoStaticStr, EnumString, EnumIter)]
+#[strum(serialize_all = "kebab-case")]
 pub enum Layout {
     Wipe,
     Beside,
 }
 
 impl Layout {
-    const ALL: [Layout; 2] = [Layout::Wipe, Layout::Beside];
-
     fn name(self) -> &'static str {
-        match self {
-            Layout::Wipe => "wipe",
-            Layout::Beside => "beside",
-        }
+        self.into()
     }
 
     fn about(self) -> &'static str {
@@ -63,15 +59,15 @@ impl Layout {
     }
 }
 
-impl FromStr for Layout {
-    type Err = anyhow::Error;
-
-    fn from_str(text: &str) -> Result<Layout> {
-        Layout::ALL
-            .into_iter()
-            .find(|layout| layout.name() == text)
-            .with_context(|| format!("the layout is wipe or beside, not {text}"))
-    }
+#[derive(PartialEq, Eq, Deserialize, Display)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+enum DeviceKind {
+    Disk,
+    Part,
+    #[serde(untagged)]
+    #[strum(to_string = "{0}")]
+    Other(String),
 }
 
 #[derive(Deserialize)]
@@ -83,7 +79,7 @@ struct Lsblk {
 struct Device {
     name: String,
     #[serde(rename = "type")]
-    kind: String,
+    kind: DeviceKind,
     size: String,
     model: Option<String>,
     ro: bool,
@@ -134,7 +130,7 @@ impl Device {
         }
         self.children
             .iter()
-            .filter(|child| child.kind != "part")
+            .filter(|child| child.kind != DeviceKind::Part)
             .chain(self.children.iter().flat_map(|part| &part.children))
             .next()
             .map(|holder| format!("{} is open as {}", holder.kind, holder.name))
@@ -193,7 +189,7 @@ fn disks() -> Result<Vec<Device>> {
     let iso = Iso::find()?;
     Ok(lsblk(&[])?
         .into_iter()
-        .filter(|device| device.kind == "disk" && !device.ro)
+        .filter(|device| device.kind == DeviceKind::Disk && !device.ro)
         .filter(|device| {
             let name = device.name.trim_start_matches("/dev/");
             Path::new("/sys/block").join(name).join("device").exists()
@@ -229,11 +225,12 @@ pub fn choose(flags: &Flags, prompt: &mut Prompt) -> Result<Disk> {
     let layout = match flags.layout {
         Some(layout) => layout,
         None => {
-            let choices: Vec<Choice> = Layout::ALL
+            let layouts: Vec<Layout> = Layout::iter().collect();
+            let choices: Vec<Choice> = layouts
                 .iter()
                 .map(|l| Choice::new(l.name(), l.about()))
                 .collect();
-            Layout::ALL[prompt.choose("Layout", &choices)?]
+            layouts[prompt.choose("Layout", &choices)?]
         }
     };
     Ok(Disk { device, layout })

@@ -213,9 +213,6 @@ impl Defaults {
 }
 
 fn packaged_units(dir: &Path) -> Result<BTreeSet<String>> {
-    if !dir.exists() {
-        return Ok(BTreeSet::new());
-    }
     Ok(walk::files(dir)?
         .iter()
         .filter_map(|rel| rel.file_name())
@@ -246,9 +243,7 @@ struct Rule {
 
 impl Rule {
     fn matches(&self, name: &str) -> bool {
-        let Ok(name) = CString::new(name) else {
-            return false;
-        };
+        let name = CString::new(name).expect("unit names are file names, which hold no NUL");
         unsafe { libc::fnmatch(self.pattern.as_ptr(), name.as_ptr(), libc::FNM_NOESCAPE) == 0 }
     }
 }

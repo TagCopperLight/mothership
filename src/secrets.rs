@@ -66,7 +66,7 @@ pub fn public(key: &x25519::Identity) -> String {
     key.to_public().to_string()
 }
 
-pub fn parse_key(text: &[u8], shown: &Path) -> Result<x25519::Identity> {
+fn parse_key(text: &[u8], shown: &Path) -> Result<x25519::Identity> {
     String::from_utf8_lossy(text)
         .lines()
         .find(|line| line.starts_with("AGE-SECRET-KEY-"))

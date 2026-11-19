@@ -6,11 +6,29 @@ use std::{
         ffi::OsStringExt,
         fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     },
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 pub const ETC: &str = "/etc";
 const READ_LIMIT: u64 = 64 << 20;
+
+pub fn plain_within<'a>(root: &Path, path: &'a Path) -> Option<&'a Path> {
+    path.strip_prefix(root)
+        .ok()
+        .filter(|rel| rel.components().all(|c| matches!(c, Component::Normal(_))))
+}
+
+pub fn read_limited(reader: impl Read, label: &str) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    reader
+        .take(READ_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("reading {label}"))?;
+    if bytes.len() as u64 > READ_LIMIT {
+        bail!("{label} is over {} MB", READ_LIMIT >> 20);
+    }
+    Ok(bytes)
+}
 
 pub fn if_found<T>(result: io::Result<T>) -> io::Result<Option<T>> {
     match result {
@@ -66,25 +84,14 @@ pub fn read(path: &Path) -> Result<Option<Vec<u8>>> {
         .read(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
         .open(path);
-    let Some(mut file) = if_found(file).with_context(|| format!("opening {}", path.display()))?
-    else {
+    let Some(file) = if_found(file).with_context(|| format!("opening {}", path.display()))? else {
         return Ok(None);
     };
     let meta = file.metadata()?;
     if !meta.is_file() {
         bail!("{} isn't a regular file", path.display());
     }
-    if meta.len() > READ_LIMIT {
-        bail!("{} is over {} MB", path.display(), READ_LIMIT >> 20);
-    }
-    let mut bytes = Vec::new();
-    Read::by_ref(&mut file)
-        .take(READ_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("reading {}", path.display()))?;
-    if bytes.len() as u64 > READ_LIMIT {
-        bail!("{} is over {} MB", path.display(), READ_LIMIT >> 20);
-    }
+    let bytes = read_limited(file, &path.display().to_string())?;
     Ok(Some(bytes))
 }
 

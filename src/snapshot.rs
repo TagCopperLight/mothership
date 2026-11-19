@@ -3,18 +3,16 @@ use anyhow::{Context, Result, bail};
 use std::{
     collections::HashSet,
     fs::{self, File},
-    io::{Read, Write},
+    io::Write,
     os::unix::{
         ffi::OsStrExt,
         fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
     },
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::mpsc,
     thread,
 };
 use tempfile::TempDir;
-
-const FILE_LIMIT: u64 = 64 << 20;
 
 pub struct Snapshot {
     dir: TempDir,
@@ -74,12 +72,13 @@ impl Snapshot {
 }
 
 fn relative<'a>(home: &Path, target: &'a Path) -> Result<&'a Path> {
-    let rel = target
-        .strip_prefix(home)
-        .with_context(|| format!("{} isn't in {}", target.display(), home.display()))?;
-    if !rel.components().all(|c| matches!(c, Component::Normal(_))) {
-        bail!("{} isn't a plain path in the home", target.display());
-    }
+    let rel = file::plain_within(home, target).with_context(|| {
+        format!(
+            "{} isn't a plain path in {}",
+            target.display(),
+            home.display()
+        )
+    })?;
     Ok(rel)
 }
 
@@ -187,11 +186,7 @@ fn write(
             fields.add(target.as_os_str().as_bytes());
         }
         Entry::File { rel, mode, file } => {
-            let mut bytes = Vec::new();
-            file.take(FILE_LIMIT + 1).read_to_end(&mut bytes)?;
-            if bytes.len() as u64 > FILE_LIMIT {
-                bail!("~/{} is over {} MB", rel.display(), FILE_LIMIT >> 20);
-            }
+            let bytes = file::read_limited(file, &format!("~/{}", rel.display()))?;
             let mut out = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)

@@ -158,7 +158,12 @@ pub fn files_with_metadata(root: &Path) -> Result<Vec<(PathBuf, fs::Metadata)>> 
     let mut found = Vec::new();
     let mut dirs = vec![root.to_path_buf()];
     while let Some(dir) = dirs.pop() {
-        for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
+        let Some(entries) = crate::file::if_found(fs::read_dir(&dir))
+            .with_context(|| format!("reading {}", dir.display()))?
+        else {
+            continue;
+        };
+        for entry in entries {
             let entry = entry?;
             let meta = entry.metadata()?;
             if meta.is_dir() {
