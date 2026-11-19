@@ -1,6 +1,5 @@
 use crate::{
     cmd::{self, As, Cmd},
-    fleet::{ChezmoiConfig, Fleet, Member},
     secrets,
     snapshot::Snapshot,
     user::{self, User},
@@ -54,16 +53,26 @@ pub fn in_home(user: &User, path: &Path) -> Result<PathBuf> {
 }
 
 #[derive(Clone)]
+pub struct ChezmoiConfig {
+    pub source: PathBuf,
+    pub identity: PathBuf,
+    pub recipients: PathBuf,
+    pub profile: String,
+    pub user: String,
+    pub fleet: PathBuf,
+}
+
+#[derive(Clone)]
 pub struct Root {
     user: User,
     config: ChezmoiConfig,
 }
 
 impl Root {
-    pub fn new(fleet: &Fleet, member: &Member) -> Root {
+    pub fn new(user: &User, config: ChezmoiConfig) -> Root {
         Root {
-            user: member.user().clone(),
-            config: member.chezmoi_config(fleet),
+            user: user.clone(),
+            config,
         }
     }
 
@@ -177,10 +186,15 @@ impl Run {
     }
 }
 
-pub fn init(fleet: &Fleet, member: &Member) -> Result<()> {
-    let user = member.user();
-    let text = config_text(&member.chezmoi_config(fleet))?;
-    user.write(&user.home.join(CONFIG), text.as_bytes())
+pub fn init(user: &User, config: &ChezmoiConfig) -> Result<()> {
+    user.write(&user.home.join(CONFIG), config_text(config)?.as_bytes())
+}
+
+pub fn configured(user: &User, config: &ChezmoiConfig) -> Result<bool> {
+    let Some(text) = user.read(&user.home.join(CONFIG))? else {
+        return Ok(false);
+    };
+    Ok(String::from_utf8_lossy(&text) == config_text(config)?)
 }
 
 pub fn config_text(config: &ChezmoiConfig) -> Result<String> {

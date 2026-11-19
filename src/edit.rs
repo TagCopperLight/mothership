@@ -203,7 +203,7 @@ impl Add {
             })?,
             Add::Track { path, storage } => {
                 let member = member()?;
-                let root = chezmoi::Root::new(fleet, member);
+                let root = member.chezmoi_root(fleet);
                 let snapshot = taken(member, path, seen)?;
                 if snapshot.path(member.user(), path)?.is_dir() {
                     let count = walk::files(&snapshot.path(member.user(), path)?)?.len();
@@ -216,7 +216,7 @@ impl Add {
             }
             Add::Update { path, storage } => {
                 let member = member()?;
-                let root = chezmoi::Root::new(fleet, member);
+                let root = member.chezmoi_root(fleet);
                 let source = root.source_path(path)?;
                 if source.extension().is_some_and(|e| e == "tmpl") {
                     bail!("{} is a template, edit it by hand", source.display());
@@ -250,7 +250,7 @@ impl Add {
             }
             Add::Forget(path) => {
                 let member = member()?;
-                let root = chezmoi::Root::new(fleet, member);
+                let root = member.chezmoi_root(fleet);
                 let empty = Snapshot::take(member.user(), &[])?;
                 let args = [
                     OsStr::new("forget"),
@@ -269,7 +269,7 @@ impl Add {
                 value,
             } => {
                 let member = member()?;
-                let source = chezmoi::Root::new(fleet, member).source_path(user_js)?;
+                let source = member.chezmoi_root(fleet).source_path(user_js)?;
                 let file = match fs::symlink_metadata(&source)?.is_symlink() {
                     true => {
                         if !confirm_shared(fleet, member, &source, prompt)? {

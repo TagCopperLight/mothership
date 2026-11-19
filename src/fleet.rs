@@ -269,7 +269,7 @@ impl Fleet {
                     false
                 }
             };
-            let chezmoi = reads_fleet(&fleet, member)?;
+            let chezmoi = chezmoi::configured(member.user(), &member.chezmoi_config(&fleet))?;
             (fleet.members[i].open, fleet.members[i].chezmoi) = (open, chezmoi);
         }
         fleet.local = Some(Local {
@@ -619,19 +619,9 @@ fn read_toml<T: de::DeserializeOwned>(path: &Path) -> Result<T> {
     .with_context(|| format!("parsing {}", path.display()))
 }
 
-#[derive(Clone)]
-pub struct ChezmoiConfig {
-    pub source: PathBuf,
-    pub identity: PathBuf,
-    pub recipients: PathBuf,
-    pub profile: String,
-    pub user: String,
-    pub fleet: PathBuf,
-}
-
 impl Member {
-    pub fn chezmoi_config(&self, fleet: &Fleet) -> ChezmoiConfig {
-        ChezmoiConfig {
+    pub fn chezmoi_config(&self, fleet: &Fleet) -> chezmoi::ChezmoiConfig {
+        chezmoi::ChezmoiConfig {
             source: homes::source(&fleet.dir, &self.name),
             identity: secrets::key_path(self.user()),
             recipients: self.recipients(),
@@ -640,14 +630,10 @@ impl Member {
             fleet: fleet.dir.clone(),
         }
     }
-}
 
-fn reads_fleet(fleet: &Fleet, member: &Member) -> Result<bool> {
-    let user = member.user();
-    let Some(text) = user.read(&user.home.join(chezmoi::CONFIG))? else {
-        return Ok(false);
-    };
-    Ok(String::from_utf8_lossy(&text) == chezmoi::config_text(&member.chezmoi_config(fleet))?)
+    pub fn chezmoi_root(&self, fleet: &Fleet) -> chezmoi::Root {
+        chezmoi::Root::new(self.user(), self.chezmoi_config(fleet))
+    }
 }
 
 #[cfg(test)]

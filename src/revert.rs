@@ -232,7 +232,7 @@ fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
     let user = member.user();
     let name = &user.name;
     if init {
-        chezmoi::init(fleet, member)?;
+        chezmoi::init(member.user(), &member.chezmoi_config(fleet))?;
     }
     for change in account {
         match change {

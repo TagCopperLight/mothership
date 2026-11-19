@@ -60,7 +60,7 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
     } = chezmoi;
     let mut items = Vec::new();
     let mut listed = BTreeSet::new();
-    let root = chezmoi::Root::new(fleet, member);
+    let root = member.chezmoi_root(fleet);
     for line in status
         .split(|byte| *byte == b'\n')
         .filter(|line| !line.is_empty())
