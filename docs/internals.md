@@ -23,7 +23,7 @@
 ## Packages
 
 - pacman writes `%REASON%` only for dependencies.
-- The record keeps listed names as the fleet wrote them and scans see real ones, so scan refuses a listed package that only something provides, a group or a versioned name, and a listed unit that is an alias.
+- The record keeps listed names as the fleet wrote them and scans see real ones, so scan refuses a listed package that only something provides and a listed unit that is an alias, and apply fails when a package it installed doesn't exist under the listed name (a group, a virtual name or a version).
 - Asking pacman or dpkg for edited config files checks every file of every package (about 30 s), so scan reads their databases directly.
 - Debian's installer marks the whole base system as installed by hand.
 - dpkg lists no package for the `/etc` files ucf keeps, the alternatives it picks, or the `rc*.d` links.

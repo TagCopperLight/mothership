@@ -389,21 +389,12 @@ fn is_auto(auto: &BTreeSet<(String, String)>, name: &str, arch: &str) -> bool {
         .any(|(n, a)| n == name && (a == arch || arch == "all"))
 }
 
-pub fn cannot_install<'a>(names: &[&'a str]) -> Result<Vec<(&'a str, String)>> {
-    let out = cmd::stdout(As::Root, "apt-cache", &[&["madison"], names].concat())?;
-    let offered = offered(&out);
-    Ok(names
-        .iter()
-        .filter(|name| !offered.contains(**name))
-        .map(|name| (*name, "It is in none of apt's sources.".to_owned()))
-        .collect())
-}
-
-fn offered(madison: &str) -> BTreeSet<&str> {
-    madison
-        .lines()
-        .filter_map(|line| Some(line.split('|').next()?.trim()))
-        .collect()
+pub fn cannot_install(name: &str) -> Result<Option<String>> {
+    let offered = cmd::stdout(As::Root, "apt-cache", &["madison", name])?;
+    Ok(offered
+        .trim()
+        .is_empty()
+        .then(|| "It is in none of apt's sources.".to_owned()))
 }
 
 pub fn shipped(archive: &Path, member: &Path) -> Result<Vec<u8>> {

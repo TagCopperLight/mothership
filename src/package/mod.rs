@@ -52,20 +52,9 @@ impl Distro {
     }
 
     pub fn cannot_install(self, aur: &Aur, name: &str) -> Result<Option<String>> {
-        Ok(self
-            .cannot_install_all(aur, &[name])?
-            .pop()
-            .map(|(_, why)| why))
-    }
-
-    pub fn cannot_install_all<'a>(
-        self,
-        aur: &Aur,
-        names: &[&'a str],
-    ) -> Result<Vec<(&'a str, String)>> {
         match self {
-            Distro::Arch => pacman::cannot_install(aur, names),
-            Distro::Debian => dpkg::cannot_install(names),
+            Distro::Arch => pacman::cannot_install(aur, name),
+            Distro::Debian => dpkg::cannot_install(name),
         }
     }
 
@@ -93,9 +82,10 @@ impl Distro {
 
     pub fn install(self, aur: &Aur, names: &[&str]) -> Result<()> {
         match self {
-            Distro::Arch => pacman::install(aur, names),
-            Distro::Debian => dpkg::install(names),
+            Distro::Arch => pacman::install(aur, names)?,
+            Distro::Debian => dpkg::install(names)?,
         }
+        Db::load()?.require_installed(names)
     }
 
     pub fn uninstall(self, listed: &BTreeSet<String>, names: &[&str]) -> Result<()> {
@@ -209,6 +199,20 @@ impl Db {
             packages,
             index,
         }
+    }
+
+    fn require_installed(&self, names: &[&str]) -> Result<()> {
+        for name in names {
+            if self
+                .resolve(name)
+                .is_none_or(|package| package.name != *name)
+            {
+                bail!(
+                    "{name} isn't the name of an installed package (a group, a virtual name or a version?): list the real package names instead"
+                );
+            }
+        }
+        Ok(())
     }
 
     pub fn resolve(&self, name: &str) -> Option<&Package> {

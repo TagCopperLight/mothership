@@ -79,3 +79,15 @@ fn a_failed_removal_marks_the_packages_again_and_keeps_its_error() {
     assert_eq!(err.to_string(), "removal failed");
     assert_eq!(or_restore(Ok(1), || unreachable!()).unwrap(), 1);
 }
+
+#[test]
+fn an_installed_name_must_be_a_real_package_name() {
+    let db = Db::new(
+        Distro::Arch,
+        vec![package("jdk-openjdk", &[], &["java-runtime"])],
+    );
+    db.require_installed(&["jdk-openjdk"]).unwrap();
+    let err = db.require_installed(&["java-runtime"]).unwrap_err();
+    assert!(err.to_string().starts_with("java-runtime isn't the name"));
+    assert!(db.require_installed(&["gnome"]).is_err());
+}

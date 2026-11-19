@@ -143,10 +143,3 @@ fn the_machine_needs_required_packages_and_those_owning_boot_files_or_enabled_un
         ]
     );
 }
-
-#[test]
-fn madison_names_only_what_the_sources_offer() {
-    let out = "      vim |  2:9.1 | http://deb.debian.org/debian trixie/main amd64 Packages\n";
-    assert_eq!(offered(out), BTreeSet::from(["vim"]));
-    assert!(offered("").is_empty());
-}
