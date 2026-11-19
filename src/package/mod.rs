@@ -1,3 +1,4 @@
+pub mod aur;
 mod dpkg;
 mod pacman;
 
@@ -59,6 +60,13 @@ impl Distro {
             Distro::Debian => &["/etc/apt"],
         };
         config.iter().any(|dir| path.starts_with(dir))
+    }
+
+    pub fn gh_package(self) -> &'static str {
+        match self {
+            Distro::Arch => "github-cli",
+            Distro::Debian => "gh",
+        }
     }
 
     pub fn bootstrap(self, names: &[&str]) -> Result<()> {

@@ -182,37 +182,3 @@ pub fn config_text(config: &ChezmoiConfig) -> Result<String> {
 
 pub const CONFIG: &str = ".config/chezmoi/chezmoi.toml";
 const STATE: &str = ".config/chezmoi/chezmoistate.boltdb";
-
-pub fn download_deb(dir: &Path) -> Result<PathBuf> {
-    let arch = cmd::stdout(As::Root, "dpkg", &["--print-architecture"])?;
-    let suffix = format!("_linux_{}.deb", arch.trim());
-    let latest = "https://api.github.com/repos/twpayne/chezmoi/releases/latest";
-    let release: serde_json::Value =
-        serde_json::from_str(&cmd::stdout(As::Root, "curl", &["-fsSL", latest])?)?;
-    let asset = |wanted: &dyn Fn(&str) -> bool| -> Result<(String, String)> {
-        release["assets"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|asset| asset["name"].as_str().is_some_and(wanted))
-            .and_then(|asset| {
-                let name = asset["name"].as_str()?.to_owned();
-                Some((name, asset["browser_download_url"].as_str()?.to_owned()))
-            })
-            .context("chezmoi's latest release lacks the .deb or its checksums")
-    };
-    let (name, url) = asset(&|n| n.ends_with(&suffix))?;
-    let (_, sums_url) = asset(&|n| n.ends_with("_checksums.txt"))?;
-    let deb = dir.join(&name);
-    cmd::root("curl", &["-fsSL", "-o", &deb.to_string_lossy(), &url])?;
-    let sums = cmd::stdout(As::Root, "curl", &["-fsSL", &sums_url])?;
-    let wanted = sums
-        .lines()
-        .find_map(|line| line.strip_suffix(name.as_str())?.split_whitespace().next())
-        .with_context(|| format!("chezmoi's checksums don't list {name}"))?;
-    let actual = cmd::stdout(As::Root, "sha256sum", &[&deb.to_string_lossy()])?;
-    if actual.split_whitespace().next() != Some(wanted) {
-        bail!("{name} doesn't match chezmoi's checksum");
-    }
-    Ok(deb)
-}

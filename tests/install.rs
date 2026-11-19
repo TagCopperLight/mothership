@@ -12,7 +12,7 @@ fn flags_take_a_value_each_and_options_add_up() {
     .unwrap();
     assert_eq!(flags.device_type.as_deref(), Some("server"));
     assert_eq!(flags.options, ["a", "b"]);
-    assert_eq!(flags.layout, Some(disk::Layout::Beside));
+    assert_eq!(flags.layout, Some(Layout::Beside));
     assert_eq!(flags.only_on_the_iso(), Some("--layout"));
 }
 
@@ -26,6 +26,10 @@ fn flags_refuse_what_they_can_not_mean() {
         error(&["--layout", "half"]),
         "the layout is wipe or beside, not half"
     );
+    assert_eq!(
+        error(&["--remove-unlisted", "maybe"]),
+        "--remove-unlisted is yes or no, not maybe"
+    );
 }
 
 #[test]
@@ -35,5 +39,19 @@ fn a_hostname_follows_rfc_1123() {
     }
     for name in ["", "-help", "box-", "Box", "a_b", "a.b", &"a".repeat(64)] {
         assert!(!valid_hostname(name), "{name}");
+    }
+}
+
+#[test]
+fn a_time_zone_stays_inside_zoneinfo() {
+    assert!(known_timezone("UTC"));
+    for name in [
+        "../../../etc/passwd",
+        "/etc/passwd",
+        "Europe/../UTC",
+        "./UTC",
+        "",
+    ] {
+        assert!(!known_timezone(name), "{name}");
     }
 }

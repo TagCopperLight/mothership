@@ -475,7 +475,7 @@ fn unedited(backup: &Backup) -> Result<bool> {
     }
 }
 
-pub fn keep_only(fleet: &Fleet, prompt: &mut Prompt) -> Result<()> {
+pub fn keep_only(fleet: &Fleet, answer: Option<bool>, prompt: &mut Prompt) -> Result<()> {
     let db = Db::load()?;
     let mut keep = fleet.listed_packages();
     keep.extend(db.needing(&runs_the_machine(&db)?));
@@ -499,7 +499,11 @@ pub fn keep_only(fleet: &Fleet, prompt: &mut Prompt) -> Result<()> {
     for name in &unneeded {
         println!("  {name}");
     }
-    if !prompt.confirm("Remove them")? {
+    let confirmed = match answer {
+        Some(answer) => answer,
+        None => prompt.confirm("Remove them")?,
+    };
+    if !confirmed {
         return Ok(());
     }
     cmd::root("apt-mark", &[&["auto"], &unmark[..]].concat())?;

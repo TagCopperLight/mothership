@@ -12,7 +12,7 @@ packages = [
   "alpha",
   "gamma",
 ]
-aur_helper = "fake-aur"
+aur_helper = "yay"
 
 [etc_modes]
 "sudoers.d/wheel" = "440"

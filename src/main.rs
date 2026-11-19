@@ -8,7 +8,6 @@ mod homes;
 mod ignore;
 mod install;
 mod later;
-mod net;
 mod package;
 mod parallel;
 mod preview;

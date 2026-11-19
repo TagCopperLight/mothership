@@ -1,0 +1,27 @@
+use super::*;
+use std::{collections::BTreeSet, path::PathBuf};
+
+fn vm(options: &[&str]) -> Fleet {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("e2e/vm/fleet");
+    let options: Vec<String> = options.iter().map(|o| o.to_string()).collect();
+    Fleet::new(dir, "vm", &options, &BTreeSet::new()).unwrap()
+}
+
+#[test]
+fn the_test_vm_has_what_the_encrypted_disk_needs() {
+    let fleet = vm(&["encrypted"]);
+    check_type(&fleet).unwrap();
+    assert_eq!(keymap(&fleet).unwrap().as_deref(), Some("us"));
+}
+
+#[test]
+fn a_type_missing_the_boot_pieces_stops_before_the_disk() {
+    let error = check_type(&vm(&[])).unwrap_err().to_string();
+    assert_eq!(
+        error,
+        "the encrypted disk needs, from vm and its options: the package sbctl, the package \
+         tpm2-tss, /etc/kernel/cmdline, a mkinitcpio preset that builds a UKI in \
+         /boot/EFI/Linux, the mkinitcpio hook systemd, the mkinitcpio hook sd-encrypt, the \
+         mkinitcpio hook sd-vconsole"
+    );
+}

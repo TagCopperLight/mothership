@@ -10,7 +10,7 @@ repeat from the fleet alone, and one way it could:
 ```console
 $ echo y | sudo mothership apply &>/dev/null
 $ sudo pacman -U --noconfirm /local/omega-1-1-any.pkg.tar.zst &>/dev/null
-$ fake-aur -S --needed zeta &>/dev/null
+$ yay -S --needed zeta &>/dev/null
 $ printf '[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=multi-user.target\n' |
 > sudo tee /etc/systemd/system/mine.service >/dev/null &&
 > sudo mkdir -p /etc/systemd/system/multi-user.target.wants &&
@@ -30,7 +30,7 @@ $ printf 'a\na\np\np\np\nq\n' | sudo mothership review
   r  revert      uninstall
   i ignore · l later · p pass · q quit
   › a
-  It is in neither pacman's repos nor the AUR: fake-aur -Si omega failed: -> No AUR package found for omega
+  It is in neither pacman's repos nor the AUR: yay -Si omega failed: -> No AUR package found for omega
   It goes into `built_packages`.
 [2/5] Packages
     + zeta  installed  An app only the AUR has

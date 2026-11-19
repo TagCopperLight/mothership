@@ -4,6 +4,7 @@ use crate::{
     hardware::{self, Hardware},
     homes,
     ignore::{Ignore, Level, Paths},
+    package::aur,
     secrets::{self, Keys},
     style,
     user::{self, User},
@@ -57,7 +58,7 @@ pub struct Member {
 pub struct System {
     pub packages: Vec<String>,
     pub built_packages: Vec<String>,
-    pub aur_helper: Option<String>,
+    pub aur_helper: Option<aur::Helper>,
     pub services: Vec<String>,
     pub etc_modes: BTreeMap<PathBuf, Mode>,
     hardware: BTreeMap<Hardware, Block>,

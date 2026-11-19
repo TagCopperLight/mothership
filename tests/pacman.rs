@@ -10,12 +10,13 @@ fn reads_names_without_their_version() {
 #[test]
 fn installs_repo_packages_with_pacman_and_the_rest_with_the_aur_helper() {
     let in_repos = BTreeSet::from(["vim".to_owned(), "zip".to_owned()]);
-    let install = split_install(&["vim", "yay", "zip"], &in_repos, Some("paru")).unwrap();
+    let install =
+        split_install(&["vim", "yay", "zip"], &in_repos, Some(aur::Helper::Paru)).unwrap();
     assert_eq!(
         install,
         Install {
             repo: vec!["vim", "zip"],
-            aur: Some(("paru", vec!["yay"])),
+            aur: Some((aur::Helper::Paru, vec!["yay"])),
         }
     );
     let install = split_install(&["vim"], &in_repos, None).unwrap();

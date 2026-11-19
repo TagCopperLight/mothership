@@ -1,18 +1,27 @@
-use super::{BINARY, FROM_ISO, Flags, GH_TOKEN, ask_hostname, ask_machine, boot, clone, disk, git};
+use super::{
+    FROM_ISO, GH_TOKEN,
+    answers::{self, ADMIN, Flags},
+    boot::{self, BINARY},
+    disk,
+    net::{self, Needs},
+    repo,
+};
 use crate::{
-    cmd::{self, As},
-    fleet::{self, Machine},
-    net,
+    cmd::{self, As, Cmd},
+    fleet::{self, Fleet},
+    hardware,
     package::Distro,
     prompt::Prompt,
     walk,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use std::{
     env, fs,
-    io::ErrorKind,
-    os::unix::{self, fs::PermissionsExt},
-    path::{Path, PathBuf},
+    os::unix::{
+        self,
+        fs::{MetadataExt, PermissionsExt},
+    },
+    path::Path,
     process::Command,
 };
 
@@ -25,55 +34,69 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     } else {
         boot::check_firmware()?;
     }
-    net::wait();
-    net::retry("Installing git", || {
-        cmd::root("pacman", &["-Sy"])?;
-        Distro::Arch.bootstrap(&["git"])
-    })?;
-    let url = match &flags.fleet {
-        Some(url) => url.clone(),
-        None => prompt.line("Fleet repository:")?,
-    };
-    let dir = Path::new(FLEET);
-    if dir.exists() {
-        fs::remove_dir_all(dir)?;
+    let mirror = Needs::mirror(Distro::Arch)?;
+    if !cmd::found(As::Root, "git") {
+        net::retry("Installing git", &mirror, || {
+            cmd::root("pacman", &["-Sy", "--needed", "--noconfirm", "git"])
+        })?;
     }
+    let url = answers::fleet_url(flags, prompt)?;
+    let dir = Path::new(FLEET);
     fs::create_dir_all(dir)?;
-    let private = clone(&url, dir, As::Root, Distro::Arch)?;
-    let machine = ask_machine(flags, prompt, dir)?;
-    let hostname = ask_hostname(flags, prompt)?;
-    let timezone = ask_timezone(flags, prompt)?;
+    let private = repo::clone(&url, dir, As::Root, Distro::Arch)?;
+    let machine = answers::machine(flags, prompt, dir)?;
+    let hardware = hardware::detect(Path::new("/"))?;
+    let fleet = Fleet::new(
+        dir.into(),
+        &machine.device_type,
+        &machine.options,
+        &hardware,
+    )?;
+    boot::check_type(&fleet)?;
+    let members: Vec<String> = fleet.members.iter().map(|m| m.name.clone()).collect();
+    answers::admin_given(flags, &members)?;
+    let hostname = answers::hostname(flags, prompt)?;
+    let timezone = answers::timezone(flags, prompt)?;
     if !resumed {
         let target = disk::choose(flags, prompt)?;
-        load_keymap(dir, &machine)?;
+        if let Some(keymap) = boot::keymap(&fleet)? {
+            cmd::root("loadkeys", &[&keymap])?;
+        }
         disk::prepare(&target, prompt)?;
     }
 
     let mut packages = vec!["base", "base-devel", "git", "chezmoi"];
     if private {
-        packages.push("github-cli");
+        packages.push(Distro::Arch.gh_package());
     }
     let args = [&["-K", disk::ROOT], &packages[..]].concat();
-    net::retry("Installing the base system", || {
+    net::retry("Installing the base system", &mirror, || {
         cmd::root("pacstrap", &args)
     })?;
     let root = Path::new(disk::ROOT);
-    fs::write(root.join("etc/hostname"), format!("{hostname}\n"))?;
+    walk::write(
+        &root.join("etc/hostname"),
+        format!("{hostname}\n").as_bytes(),
+        0o644,
+    )?;
     let localtime = root.join("etc/localtime");
     if fs::symlink_metadata(&localtime).is_ok() {
         fs::remove_file(&localtime)?;
     }
-    unix::fs::symlink(zoneinfo(&timezone), &localtime)?;
+    unix::fs::symlink(answers::zoneinfo(&timezone), &localtime)?;
     machine.save(root)?;
+    let token = match private {
+        true => Some(
+            cmd::stdout(As::Root, "gh", &["auth", "token"])?
+                .trim()
+                .to_owned(),
+        ),
+        false => None,
+    };
     let copy = walk::under(root, fleet::DIR);
     if copy.exists() {
-        let path = copy.to_string_lossy();
-        let args = ["-c", "safe.directory=*", "-C", &path, "pull", "--ff-only"];
-        net::retry("Pulling the fleet", || git(As::Root, &args))?;
-        cmd::root(
-            "chown",
-            &["-R", "--no-dereference", "--reference", &path, &path],
-        )?;
+        let origin = repo::origin(dir, || As::Root.command("git", &[]))?;
+        pull_as_owner(&origin, &copy, token.as_deref())?;
     } else {
         let parent = copy.parent().expect("the fleet folder has a parent");
         fs::create_dir_all(parent)?;
@@ -88,12 +111,14 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     fs::copy(env::current_exe()?, &binary)?;
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))?;
 
-    let args = [disk::ROOT, BINARY, "install"];
+    let mut args = vec![disk::ROOT, BINARY, "install"];
+    if let Some(admin) = &flags.admin {
+        args.extend([ADMIN, admin]);
+    }
     let mut chroot = Command::new("arch-chroot");
-    chroot.args(args).env(FROM_ISO, "1");
-    if private {
-        let token = cmd::stdout(As::Root, "gh", &["auth", "token"])?;
-        chroot.env(GH_TOKEN, token.trim());
+    chroot.args(&args).env(FROM_ISO, "1");
+    if let Some(token) = &token {
+        chroot.env(GH_TOKEN, token);
     }
     cmd::status(chroot, "arch-chroot", &args)?;
     disk::close()?;
@@ -104,36 +129,26 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     Ok(())
 }
 
-fn load_keymap(dir: &Path, machine: &Machine) -> Result<()> {
-    let path = dir
-        .join("types")
-        .join(&machine.device_type)
-        .join("etc/vconsole.conf");
-    let text = match fs::read_to_string(&path) {
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-        text => text.with_context(|| format!("reading {}", path.display()))?,
-    };
-    match text.lines().find_map(|line| line.strip_prefix("KEYMAP=")) {
-        Some(keymap) => cmd::root("loadkeys", &[keymap.trim_matches('"')]),
-        None => Ok(()),
-    }
-}
-
-fn zoneinfo(timezone: &str) -> PathBuf {
-    Path::new("/usr/share/zoneinfo").join(timezone)
-}
-
-fn ask_timezone(flags: &Flags, prompt: &mut Prompt) -> Result<String> {
-    let known = |name: &str| !name.starts_with('/') && zoneinfo(name).is_file();
-    match &flags.timezone {
-        Some(name) if known(name) => Ok(name.clone()),
-        Some(name) => bail!("{name} isn't a time zone, such as Europe/Paris"),
-        None => loop {
-            let name = prompt.line("Time zone, such as Europe/Paris:")?;
-            if known(&name) {
-                return Ok(name);
-            }
-            println!("{name} isn't in /usr/share/zoneinfo.");
-        },
-    }
+fn pull_as_owner(origin: &str, copy: &Path, token: Option<&str>) -> Result<()> {
+    let meta = fs::metadata(copy)?;
+    let (uid, gid) = (meta.uid().to_string(), meta.gid().to_string());
+    let home = tempfile::tempdir()?;
+    unix::fs::chown(home.path(), Some(meta.uid()), Some(meta.gid()))?;
+    repo::pull(copy, Some(origin), || {
+        let mut git = Command::new("setpriv");
+        git.args([
+            "--reuid",
+            &uid,
+            "--regid",
+            &gid,
+            "--clear-groups",
+            "--",
+            "git",
+        ])
+        .env("HOME", home.path());
+        if let Some(token) = token {
+            git.env("GH_TOKEN", token);
+        }
+        Cmd::from(git)
+    })
 }

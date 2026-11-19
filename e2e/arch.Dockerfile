@@ -19,7 +19,7 @@ RUN cd /crates/hello && git init -q -b main && git add -A \
  && git checkout -qb loud && sed -i 's/"hello"/"HELLO"/' src/main.rs \
  && git -c user.name=Me -c user.email=me@example.com commit -qam loud && git checkout -q main
 
-COPY bin/systemctl bin/loginctl bin/fake-aur /usr/local/bin/
+COPY bin/systemctl bin/loginctl bin/yay /usr/local/bin/
 RUN touch /var/log/systemctl.log && chmod 666 /var/log/systemctl.log
 
 FROM machine

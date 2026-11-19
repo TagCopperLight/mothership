@@ -1,4 +1,4 @@
-use super::{Archive, Backup, Distro, Origin, Package};
+use super::{Archive, Backup, Distro, Origin, Package, aur};
 use crate::{
     cmd::{self, As},
     fleet::Fleet,
@@ -98,12 +98,14 @@ pub fn cannot_install(fleet: &Fleet, name: &str) -> Result<Option<String>> {
     if in_repos()?.contains(name) {
         return Ok(None);
     }
-    let why = match fleet.system.aur_helper.as_deref() {
+    let why = match fleet.system.aur_helper {
         None => "system.toml sets no aur_helper".to_owned(),
-        Some(helper) => match cmd::stdout(As::User(fleet.admin()), helper, &["-Si", name]) {
-            Ok(_) => return Ok(None),
-            Err(e) => format!("{e:#}"),
-        },
+        Some(helper) => {
+            match cmd::stdout(As::User(fleet.admin()), helper.command(), &["-Si", name]) {
+                Ok(_) => return Ok(None),
+                Err(e) => format!("{e:#}"),
+            }
+        }
     };
     Ok(Some(format!(
         "It is in neither pacman's repos nor the AUR: {why}"
@@ -130,9 +132,9 @@ pub fn bootstrap(names: &[&str]) -> Result<()> {
 }
 
 pub fn install(fleet: &Fleet, names: &[&str]) -> Result<()> {
-    let install = split_install(names, &in_repos()?, fleet.system.aur_helper.as_deref())?;
+    let install = split_install(names, &in_repos()?, fleet.system.aur_helper)?;
     if let Some((helper, _)) = &install.aur
-        && !cmd::found(As::User(fleet.admin()), helper)
+        && !helper.installed(fleet.admin())
     {
         bail!(
             "system.toml names {helper} as the AUR helper, but {} has no {helper}",
@@ -146,7 +148,7 @@ pub fn install(fleet: &Fleet, names: &[&str]) -> Result<()> {
     if let Some((helper, aur)) = &install.aur {
         cmd::run(
             As::User(fleet.admin()),
-            helper,
+            helper.command(),
             &[&["-S", "--needed"], &aur[..]].concat(),
         )?;
     }
@@ -156,13 +158,13 @@ pub fn install(fleet: &Fleet, names: &[&str]) -> Result<()> {
 #[derive(Debug, PartialEq)]
 struct Install<'a> {
     repo: Vec<&'a str>,
-    aur: Option<(&'a str, Vec<&'a str>)>,
+    aur: Option<(aur::Helper, Vec<&'a str>)>,
 }
 
 fn split_install<'a>(
     names: &[&'a str],
     in_repos: &BTreeSet<String>,
-    helper: Option<&'a str>,
+    helper: Option<aur::Helper>,
 ) -> Result<Install<'a>> {
     let (repo, aur): (Vec<&str>, Vec<&str>) =
         names.iter().partition(|name| in_repos.contains(**name));
