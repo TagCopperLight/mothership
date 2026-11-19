@@ -1,4 +1,4 @@
-use crate::{fleet::Fleet, item::Item, walk};
+use crate::{file, fleet::Fleet, item::Item};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -29,7 +29,7 @@ pub fn now() -> Result<u64> {
 impl Later {
     pub fn load() -> Result<Self> {
         Ok(Later {
-            items: walk::read_json(Path::new(PATH))?,
+            items: file::read_json(Path::new(PATH))?,
         })
     }
 
@@ -61,7 +61,7 @@ impl Later {
 
     pub fn save(mut self, fleet: &Fleet, current: &[&Item]) -> Result<()> {
         self.keep_only(fleet, current);
-        walk::write_json(Path::new(PATH), &self.items)
+        file::write_json(Path::new(PATH), &self.items)
     }
 
     fn keep_only(&mut self, fleet: &Fleet, current: &[&Item]) {

@@ -12,7 +12,7 @@ pub mod tools;
 pub use print::{Columns, heading, line, print_groups, print_section};
 
 use crate::{
-    chezmoi,
+    chezmoi, file,
     fleet::{Fleet, Member},
     item::{Change, Item, Section},
     kind::Kind,
@@ -22,7 +22,6 @@ use crate::{
     record::Record,
     revert,
     style::{Paint, Style},
-    walk,
 };
 use anyhow::Result;
 use print::{owner, summary};
@@ -192,13 +191,13 @@ impl<'a> Ships<'a> {
 
     pub fn path(&self, path: &Path, member: Option<&Member>) -> Result<bool> {
         let resolved = match (path.parent(), path.file_name()) {
-            (Some(dir), Some(name)) => match walk::if_found(fs::canonicalize(dir))? {
+            (Some(dir), Some(name)) => match file::if_found(fs::canonicalize(dir))? {
                 Some(dir) => dir.join(name),
                 None => return Ok(false),
             },
             _ => return Ok(false),
         };
-        if let Ok(rel) = resolved.strip_prefix(walk::ETC)
+        if let Ok(rel) = resolved.strip_prefix(file::ETC)
             && self.fleet.etc.contains(rel)
         {
             return Ok(true);

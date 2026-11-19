@@ -4,6 +4,7 @@ use crate::kind::Kind;
 use crate::{
     cmd::{self, As},
     edit::{Add, Key},
+    file,
     fleet::{GitTool, Manager, Member, Tool, Tools},
     revert::{self, ToolChange},
     user::User,
@@ -204,7 +205,7 @@ fn uv_tools(dir: &Path) -> Result<BTreeMap<String, Source>> {
     let mut tools = BTreeMap::new();
     for tool in walk::children(dir)? {
         let receipt = tool.join("uv-receipt.toml");
-        let Some(bytes) = walk::read(&receipt)? else {
+        let Some(bytes) = file::read(&receipt)? else {
             continue;
         };
         let (name, source) = uv_receipt(&String::from_utf8_lossy(&bytes))
@@ -249,7 +250,7 @@ fn uv_receipt(text: &str) -> Result<(String, Source)> {
 }
 
 fn bun_globals(path: &Path) -> Result<BTreeMap<String, Source>> {
-    let Some(bytes) = walk::read(path)? else {
+    let Some(bytes) = file::read(path)? else {
         return Ok(BTreeMap::new());
     };
     let manifest: serde_json::Value =

@@ -1,4 +1,5 @@
 use crate::{
+    file,
     fleet::{Fleet, Tools},
     hash,
     package::Db,
@@ -37,11 +38,11 @@ struct UserRecord {
 
 impl Record {
     pub fn load() -> Result<Self> {
-        walk::read_json(Path::new(PATH))
+        file::read_json(Path::new(PATH))
     }
 
     pub fn save(&self) -> Result<()> {
-        walk::write_json(Path::new(PATH), self)
+        file::write_json(Path::new(PATH), self)
     }
 
     pub fn fleet_changed(&self, revert: &Revert, user: Option<&str>, db: &Db) -> Result<bool> {
@@ -190,7 +191,7 @@ fn wanted(fleet: &Fleet, rel: &Path) -> Result<Option<String>> {
 }
 
 fn hash(path: &Path) -> Result<Option<String>> {
-    let meta = walk::if_found(fs::symlink_metadata(path))
+    let meta = file::if_found(fs::symlink_metadata(path))
         .with_context(|| format!("reading {}", path.display()))?;
     let bytes = match meta {
         Some(meta) if meta.is_symlink() => {

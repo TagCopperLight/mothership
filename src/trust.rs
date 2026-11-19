@@ -1,4 +1,5 @@
 use crate::{
+    file,
     fleet::{self, Fleet},
     homes,
     secrets::{
@@ -239,10 +240,10 @@ fn rewrite(
     let mut rewritten = Vec::new();
     for (shown, file, bytes, recipients) in sealed {
         let mode = fs::metadata(&file)?.permissions().mode() & 0o7777;
-        walk::write(&file, &bytes, mode).with_context(|| format!("writing {}", file.display()))?;
+        file::write(&file, &bytes, mode).with_context(|| format!("writing {}", file.display()))?;
         rewritten.push((shown, recipients));
     }
-    walk::write(&target.list, format(list).as_bytes(), 0o644)
+    file::write(&target.list, format(list).as_bytes(), 0o644)
         .with_context(|| format!("writing {}", target.list.display()))?;
     Ok(rewritten)
 }
@@ -274,7 +275,7 @@ fn secrets_of(fleet: &Fleet, target: &Target) -> Result<BTreeMap<String, Source>
         Scope::Root => {
             for file in fleet::etc_files(&type_dir)? {
                 if file.storage == Storage::Encrypted {
-                    let path = Path::new(walk::ETC).join(&file.rel);
+                    let path = Path::new(file::ETC).join(&file.rel);
                     all.insert(path.display().to_string(), Source::List(file.source));
                 }
             }

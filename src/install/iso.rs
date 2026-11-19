@@ -8,10 +8,10 @@ use super::{
 };
 use crate::{
     cmd::{self, As, Cmd},
+    file,
     fleet::{self, Fleet},
     package::Distro,
     prompt::Prompt,
-    walk,
 };
 use anyhow::Result;
 use std::{
@@ -67,13 +67,13 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
         cmd::root("pacstrap", &args)
     })?;
     let root = Path::new(disk::ROOT);
-    walk::write(
+    file::write(
         &root.join("etc/hostname"),
         format!("{hostname}\n").as_bytes(),
         0o644,
     )?;
     let localtime = root.join("etc/localtime");
-    walk::link(&localtime, &answers::zoneinfo(&timezone))?;
+    file::link(&localtime, &answers::zoneinfo(&timezone))?;
     machine.save(root)?;
     let token = match private {
         true => Some(
@@ -83,7 +83,7 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
         ),
         false => None,
     };
-    let copy = walk::under(root, fleet::DIR);
+    let copy = file::under(root, fleet::DIR);
     if copy.exists() {
         let origin = repo::origin(dir, || As::Root.command::<&str>("git", &[]))?;
         pull_as_owner(&origin, &copy, token.as_deref())?;
@@ -97,7 +97,7 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
         cmd::root("cp", &["-a", FLEET, &partial.to_string_lossy()])?;
         fs::rename(&partial, &copy)?;
     }
-    let binary = walk::under(root, BINARY);
+    let binary = file::under(root, BINARY);
     fs::copy(env::current_exe()?, &binary)?;
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))?;
 

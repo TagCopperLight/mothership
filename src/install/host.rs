@@ -1,4 +1,4 @@
-use crate::{cmd, walk};
+use crate::{cmd, file};
 use anyhow::{Context, Result};
 use std::{fs, path::Path};
 
@@ -29,7 +29,7 @@ pub fn rename(new: &str) -> Result<()> {
         })
         .collect();
     if renamed.join("\n") != hosts.trim_end_matches('\n') {
-        walk::write(
+        file::write(
             Path::new(HOSTS),
             (renamed.join("\n") + "\n").as_bytes(),
             0o644,

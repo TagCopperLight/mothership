@@ -1,4 +1,4 @@
-use crate::{user::User, walk};
+use crate::{file, user::User};
 use age::{
     armor::{ArmoredReader, ArmoredWriter, Format},
     secrecy::ExposeSecret,
@@ -77,7 +77,7 @@ pub fn parse_key(text: &[u8], shown: &Path) -> Result<x25519::Identity> {
 
 pub fn root_key() -> Result<Option<x25519::Identity>> {
     let path = Path::new(ROOT_KEY);
-    let Some(meta) = walk::if_found(fs::symlink_metadata(path))
+    let Some(meta) = file::if_found(fs::symlink_metadata(path))
         .with_context(|| format!("reading {ROOT_KEY}"))?
     else {
         return Ok(None);
@@ -87,7 +87,7 @@ pub fn root_key() -> Result<Option<x25519::Identity>> {
             "{ROOT_KEY} must be a file only root can read: `chown root: {ROOT_KEY} && chmod 600 {ROOT_KEY}`"
         );
     }
-    let bytes = walk::read(path)?.with_context(|| format!("{ROOT_KEY} vanished"))?;
+    let bytes = file::read(path)?.with_context(|| format!("{ROOT_KEY} vanished"))?;
     parse_key(&bytes, path).map(Some)
 }
 
@@ -167,7 +167,7 @@ pub fn holds(list: &Path, public: &str) -> Result<bool> {
 }
 
 pub fn read(path: &Path) -> Result<Vec<Recipient>> {
-    match walk::read_if_any(path)? {
+    match file::read_if_any(path)? {
         Some(text) => parse(&text).with_context(|| format!("parsing {}", path.display())),
         None => Ok(Vec::new()),
     }

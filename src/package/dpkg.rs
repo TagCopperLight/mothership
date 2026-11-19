@@ -1,7 +1,7 @@
 use super::{Archive, Backup, Db, Distro, Origin, Package};
 use crate::{
     cmd::{self, As},
-    parallel,
+    file, parallel,
     systemd::{self, SYSTEM_DIRS, USER_DIRS},
     walk,
 };
@@ -37,11 +37,11 @@ const BOOT_FOLDERS: [&str; 7] = [
 
 pub fn load() -> Result<Vec<Package>> {
     let status = fs::read_to_string(STATUS).with_context(|| format!("reading {STATUS}"))?;
-    let auto = walk::read_if_any(Path::new(EXTENDED_STATES))?
+    let auto = file::read_if_any(Path::new(EXTENDED_STATES))?
         .map(|text| auto_installed(&text))
         .transpose()?
         .unwrap_or_default();
-    let diversions = walk::read_if_any(Path::new(DIVERSIONS))?
+    let diversions = file::read_if_any(Path::new(DIVERSIONS))?
         .map(|text| Diversions::parse(&text))
         .transpose()
         .with_context(|| format!("reading {DIVERSIONS}"))?
@@ -63,8 +63,8 @@ pub fn load() -> Result<Vec<Package>> {
 
 fn claim_written(packages: &mut [Package]) -> Result<()> {
     if let (Some(registry), Some(hashes)) = (
-        walk::read_if_any(Path::new(UCF_REGISTRY))?,
-        walk::read_if_any(Path::new(UCF_HASHES))?,
+        file::read_if_any(Path::new(UCF_REGISTRY))?,
+        file::read_if_any(Path::new(UCF_HASHES))?,
     ) {
         for (name, backup) in ucf(&registry, &hashes).context("reading ucf's records")? {
             if let Some(package) = packages.iter_mut().find(|p| p.name == name) {
@@ -87,7 +87,7 @@ fn claim_written(packages: &mut [Package]) -> Result<()> {
             continue;
         };
         let master = Path::new("/etc/alternatives").join(name);
-        let Some(target) = walk::if_found(fs::read_link(&master))
+        let Some(target) = file::if_found(fs::read_link(&master))
             .with_context(|| format!("reading {}", master.display()))?
         else {
             continue;
@@ -97,7 +97,7 @@ fn claim_written(packages: &mut [Package]) -> Result<()> {
             .chain(names.iter().map(|n| Path::new("/etc/alternatives").join(n)));
         claims.extend(links.map(|link| (target.clone(), link)));
     }
-    for dir in walk::children(Path::new(walk::ETC))? {
+    for dir in walk::children(Path::new(file::ETC))? {
         let is_rc = dir
             .file_name()
             .and_then(|n| n.to_str())
@@ -293,7 +293,7 @@ impl Resolve {
             Some((dir, name)) => self.dir(dir)?.join(name),
             None => path.to_path_buf(),
         };
-        let is_dir = walk::if_found(fs::symlink_metadata(path))
+        let is_dir = file::if_found(fs::symlink_metadata(path))
             .with_context(|| format!("reading {}", path.display()))?
             .is_some_and(|meta| meta.is_dir());
         let text = resolved.to_string_lossy();
@@ -306,7 +306,7 @@ impl Resolve {
 
     fn dir(&mut self, dir: &Path) -> Result<&PathBuf> {
         if !self.dirs.contains_key(dir) {
-            let resolved = walk::if_found(fs::canonicalize(dir))
+            let resolved = file::if_found(fs::canonicalize(dir))
                 .with_context(|| format!("reading {}", dir.display()))?
                 .unwrap_or_else(|| dir.to_path_buf());
             self.dirs.insert(dir.to_path_buf(), resolved);
@@ -461,7 +461,7 @@ fn remove(db: &Db, names: &BTreeSet<String>) -> Result<()> {
 }
 
 fn unedited(backup: &Backup) -> Result<bool> {
-    let bytes = walk::if_found(fs::read(&backup.path))
+    let bytes = file::if_found(fs::read(&backup.path))
         .with_context(|| format!("reading {}", backup.path.display()))?;
     Ok(bytes.is_some_and(|bytes| crate::hash::md5(&bytes) == backup.md5))
 }
@@ -478,7 +478,7 @@ pub fn keep_only(
         return Ok(());
     }
     let states = tempfile::NamedTempFile::new()?;
-    if let Some(text) = walk::read_if_any(Path::new(EXTENDED_STATES))? {
+    if let Some(text) = file::read_if_any(Path::new(EXTENDED_STATES))? {
         fs::write(states.path(), text)?;
     }
     let option = format!("Dir::State::extended_states={}", states.path().display());

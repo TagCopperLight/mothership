@@ -1,4 +1,4 @@
-use crate::walk;
+use crate::file;
 use anyhow::{Context, Result, bail};
 use std::{
     fs, io,
@@ -80,11 +80,11 @@ impl User {
     }
 
     pub fn read(&self, path: &Path) -> Result<Option<Vec<u8>>> {
-        self.with_rights(|| walk::read(path))
+        self.with_rights(|| file::read(path))
     }
 
     pub fn write(&self, path: &Path, bytes: &[u8]) -> Result<()> {
-        self.with_rights(|| walk::write(path, bytes, 0o600))
+        self.with_rights(|| file::write(path, bytes, 0o600))
     }
 
     pub fn expand(&self, path: &str) -> PathBuf {

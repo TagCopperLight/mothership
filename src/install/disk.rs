@@ -1,8 +1,8 @@
 use super::answers::Flags;
 use crate::{
     cmd::{self, As},
+    file,
     prompt::{Choice, Prompt},
-    walk,
 };
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -190,7 +190,7 @@ impl Iso {
 
 fn canonical(path: &str) -> Result<String> {
     let found =
-        walk::if_found(fs::canonicalize(path)).with_context(|| format!("finding {path}"))?;
+        file::if_found(fs::canonicalize(path)).with_context(|| format!("finding {path}"))?;
     Ok(match found {
         Some(found) => found.to_string_lossy().into_owned(),
         None => path.to_owned(),
@@ -326,7 +326,7 @@ pub fn prepare(disk: &Disk, prompt: &mut Prompt) -> Result<()> {
     cmd::root("mkfs.ext4", &["-q", &mapped])?;
     cmd::root("mount", &[&mapped, ROOT])?;
     for (device, at) in mounts {
-        let dir = walk::under(Path::new(ROOT), at);
+        let dir = file::under(Path::new(ROOT), at);
         fs::create_dir_all(&dir)?;
         cmd::root("mount", &[device.as_ref(), dir.as_os_str()])?;
     }

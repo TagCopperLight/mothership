@@ -1,6 +1,7 @@
 use crate::{
     chezmoi,
     cmd::{self, As},
+    file,
     hardware::{self, Hardware},
     homes,
     ignore::{Ignore, Paths},
@@ -120,8 +121,8 @@ impl Machine {
     }
 
     pub fn save(&self, root: &Path) -> Result<()> {
-        let path = walk::under(root, MACHINE);
-        walk::write(&path, toml::to_string(self)?.as_bytes(), 0o644)
+        let path = file::under(root, MACHINE);
+        file::write(&path, toml::to_string(self)?.as_bytes(), 0o644)
             .with_context(|| format!("writing {}", path.display()))
     }
 }

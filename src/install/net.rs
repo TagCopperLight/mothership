@@ -1,4 +1,4 @@
-use crate::{package::Distro, walk};
+use crate::{file, package::Distro, walk};
 use anyhow::{Context, Result, bail};
 use std::{
     net::{TcpStream, ToSocketAddrs},
@@ -122,7 +122,7 @@ impl Needs {
 }
 
 fn first_pacman_server() -> Result<Option<String>> {
-    let text = walk::read_if_any(Path::new(MIRRORLIST))?.unwrap_or_default();
+    let text = file::read_if_any(Path::new(MIRRORLIST))?.unwrap_or_default();
     Ok(text.lines().find_map(|line| {
         let (key, value) = line.split_once('=')?;
         (key.trim() == "Server").then(|| value.trim().to_owned())
@@ -136,7 +136,7 @@ fn first_apt_uri() -> Result<Option<String>> {
         files.extend(walk::files(dir)?.into_iter().map(|f| dir.join(f)));
     }
     for file in files {
-        let Some(text) = walk::read_if_any(&file)? else {
+        let Some(text) = file::read_if_any(&file)? else {
             continue;
         };
         if let Some(uri) = text.lines().find_map(apt_uri) {

@@ -1,4 +1,4 @@
-use crate::walk;
+use crate::{file, walk};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Deserializer, de};
 use std::{collections::BTreeSet, fs, path::Path};
@@ -82,7 +82,7 @@ fn battery(root: &Path) -> Result<bool> {
         if read(&supply.join("type"))? != "Battery" {
             continue;
         }
-        match walk::read_if_any(&supply.join("scope"))? {
+        match file::read_if_any(&supply.join("scope"))? {
             Some(scope) if scope.trim() == "Device" => continue,
             _ => return Ok(true),
         }

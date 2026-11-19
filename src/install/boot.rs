@@ -1,8 +1,8 @@
 use super::disk;
 use crate::{
     cmd::{self, As},
+    file,
     fleet::Fleet,
-    walk,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -52,7 +52,7 @@ fn unit() -> String {
 
 fn efi_var(name: &str) -> Result<Option<u8>> {
     let path = format!("/sys/firmware/efi/efivars/{name}-{EFI_GLOBAL}");
-    let bytes = walk::if_found(fs::read(&path)).with_context(|| format!("reading {path}"))?;
+    let bytes = file::if_found(fs::read(&path)).with_context(|| format!("reading {path}"))?;
     Ok(bytes.and_then(|bytes| bytes.get(4).copied()))
 }
 
@@ -66,7 +66,7 @@ pub fn check_firmware() -> Result<()> {
              the ISO again"
         );
     }
-    let version = walk::read_if_any(Path::new("/sys/class/tpm/tpm0/tpm_version_major"))?;
+    let version = file::read_if_any(Path::new("/sys/class/tpm/tpm0/tpm_version_major"))?;
     if version.as_deref().map(str::trim) != Some("2") {
         bail!("the machine has no TPM 2.0 to unlock the disk");
     }
@@ -188,7 +188,7 @@ pub fn setup() -> Result<()> {
         cmd::root("sbctl", &["sign", "--save", &uki])?;
     }
 
-    walk::write(
+    file::write(
         &Path::new(SERVICE_DIR).join(SERVICE),
         unit().as_bytes(),
         0o644,

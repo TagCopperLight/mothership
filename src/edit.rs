@@ -1,5 +1,5 @@
 use crate::{
-    chezmoi,
+    chezmoi, file,
     fleet::{self, Fleet, Manager, Member, Mode, Table, Tool},
     homes,
     kind::Level,
@@ -260,7 +260,7 @@ impl Add {
                 root.run(&own_list(fleet, member)?, &empty, &args)?
             }
             Add::CopyEtc { rel, storage } => {
-                copy_etc(fleet, rel, &Path::new(walk::ETC).join(rel), *storage)?
+                copy_etc(fleet, rel, &Path::new(file::ETC).join(rel), *storage)?
             }
             Add::RemoveEtc(rel) => remove_etc(fleet, rel)?,
             Add::Pref {
@@ -341,7 +341,7 @@ fn update_shared(
         &[OsStr::new("re-add"), path.as_os_str()],
     )?;
     fs::rename(source, &shared)?;
-    walk::link(source, &link)
+    file::link(source, &link)
 }
 
 fn chezmoi_add(
@@ -372,7 +372,7 @@ fn chezmoi_add(
 }
 
 fn append_line(path: &Path, line: &str) -> Result<()> {
-    let mut text = walk::read_if_any(path)?.unwrap_or_default();
+    let mut text = file::read_if_any(path)?.unwrap_or_default();
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
@@ -595,7 +595,7 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage) -> Result<
         if storage == Storage::Encrypted {
             bail!("{} is a link, which holds no secret", path.display());
         }
-        walk::link(dest, &fs::read_link(path)?)?;
+        file::link(dest, &fs::read_link(path)?)?;
     } else if meta.is_dir() {
         bail!(
             "{} is a folder: copy the files you want one by one",
@@ -641,7 +641,7 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage) -> Result<
             Ok(())
         })?;
     }
-    if walk::remove_if_found(other)? && storage == Storage::Encrypted {
+    if file::remove_if_found(other)? && storage == Storage::Encrypted {
         println!("  git history keeps the version in clear, so change it.");
     }
     Ok(())

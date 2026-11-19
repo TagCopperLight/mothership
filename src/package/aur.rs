@@ -1,7 +1,7 @@
 use crate::{
     cmd::{self, As},
+    file,
     user::User,
-    walk,
 };
 use anyhow::Result;
 use serde::Deserialize;
@@ -75,7 +75,7 @@ extern "C" fn remove_and_leave(signal: libc::c_int) {
 
 impl NoPassword {
     pub fn remove_leftover() -> Result<()> {
-        walk::remove_if_found(no_password_path())?;
+        file::remove_if_found(no_password_path())?;
         Ok(())
     }
 
@@ -84,7 +84,7 @@ impl NoPassword {
         let previous = LEAVING.map(|signal| unsafe { libc::signal(signal, handler) });
         let granted = NoPassword(previous);
         let rule = format!("{} ALL=(root) NOPASSWD: /usr/bin/pacman\n", admin.name);
-        walk::write(no_password_path(), rule.as_bytes(), 0o440)?;
+        file::write(no_password_path(), rule.as_bytes(), 0o440)?;
         Ok(granted)
     }
 }

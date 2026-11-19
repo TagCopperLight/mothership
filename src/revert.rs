@@ -1,9 +1,10 @@
 use crate::{
     chezmoi,
     cmd::{self, As},
+    file,
     fleet::{Fleet, Manager, Member, Mode, Tool},
     package::{Archive, Distro},
-    tools, walk,
+    tools,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -305,17 +306,17 @@ fn change_etc(fleet: &Fleet, change: &Etc) -> Result<()> {
     let path = change.path();
     let run = || match change {
         Etc::Write(_) => {
-            let rel = path.strip_prefix(walk::ETC)?;
+            let rel = path.strip_prefix(file::ETC)?;
             let source = fleet.etc_source(rel);
             if fs::symlink_metadata(&source)?.is_symlink() {
-                walk::link(path, &fs::read_link(&source)?)
+                file::link(path, &fs::read_link(&source)?)
             } else {
-                walk::write(path, &fleet.etc_contents(rel)?, fleet.etc_mode(rel)?.0)
+                file::write(path, &fleet.etc_contents(rel)?, fleet.etc_mode(rel)?.0)
             }
         }
         Etc::Restore { archive, .. } => {
             let mode = Mode(fs::metadata(path)?.permissions().mode() & 0o7777);
-            walk::write(path, &archive.shipped(path)?, mode.0)
+            file::write(path, &archive.shipped(path)?, mode.0)
         }
         Etc::Delete(_) if path.is_dir() => Ok(fs::remove_dir_all(path)?),
         Etc::Delete(_) => Ok(fs::remove_file(path)?),

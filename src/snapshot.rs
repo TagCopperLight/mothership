@@ -1,4 +1,4 @@
-use crate::{hash::Fields, user::User, walk};
+use crate::{file, hash::Fields, user::User};
 use anyhow::{Context, Result, bail};
 use std::{
     fs::{self, File},
@@ -102,7 +102,7 @@ fn send(home: &Path, target: &Path, tx: &mpsc::SyncSender<Entry>) -> Result<()> 
 }
 
 fn copy(path: &Path, rel: &Path, tx: &mpsc::SyncSender<Entry>) -> Result<()> {
-    let Some(meta) = walk::if_found(fs::symlink_metadata(path))
+    let Some(meta) = file::if_found(fs::symlink_metadata(path))
         .with_context(|| format!("reading {}", path.display()))?
     else {
         return Ok(());

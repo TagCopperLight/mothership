@@ -1,4 +1,4 @@
-use crate::walk;
+use crate::{file, walk};
 use anyhow::{Context, Result, bail};
 use std::{
     collections::BTreeSet,
@@ -127,7 +127,7 @@ pub fn real_name(unit: &str, unit_dirs: &[PathBuf]) -> Result<String> {
 fn first_present(unit: &str, unit_dirs: &[PathBuf]) -> Result<Option<PathBuf>> {
     for dir in unit_dirs {
         let path = dir.join(unit);
-        let found = walk::if_found(fs::symlink_metadata(&path))
+        let found = file::if_found(fs::symlink_metadata(&path))
             .with_context(|| format!("reading {}", path.display()))?;
         if found.is_some() {
             return Ok(Some(path));
@@ -146,7 +146,7 @@ pub fn install_values(unit: &str, unit_dirs: &[PathBuf], key: &str) -> Result<Ve
     let Some(path) = unit_file(unit, unit_dirs) else {
         return Ok(Vec::new());
     };
-    let bytes = walk::read(&path)?.with_context(|| format!("{} vanished", path.display()))?;
+    let bytes = file::read(&path)?.with_context(|| format!("{} vanished", path.display()))?;
     let text = String::from_utf8_lossy(&bytes);
     let mut install = false;
     let mut values = Vec::new();

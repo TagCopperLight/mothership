@@ -1,4 +1,5 @@
 use crate::{
+    file,
     fleet::Fleet,
     item::{Change, Secret, Section},
     package::Db,
@@ -7,7 +8,6 @@ use crate::{
     revert::{self, Revert, Service, User},
     scan::{self, Checks},
     style::Style,
-    walk,
 };
 use anyhow::Result;
 use std::path::Path;
@@ -99,7 +99,7 @@ fn round(
     } else {
         return Ok(false);
     }
-    Record::after(&fleet, &record, Path::new(walk::ETC), &skipped)?.save()?;
+    Record::after(&fleet, &record, Path::new(file::ETC), &skipped)?.save()?;
     Ok(todo.iter().any(|item| {
         matches!(
             item.revert,

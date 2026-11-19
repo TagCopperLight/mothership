@@ -1,6 +1,6 @@
 use crate::{
+    file,
     kind::{Kind, Level},
-    walk,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
@@ -70,7 +70,7 @@ fn in_matching_folder(set: &GlobSet, subject: &str) -> bool {
 }
 
 fn lines(path: &Path) -> Result<Vec<(String, String)>> {
-    let text = walk::read_if_any(path)?.unwrap_or_default();
+    let text = file::read_if_any(path)?.unwrap_or_default();
     Ok(text
         .lines()
         .enumerate()

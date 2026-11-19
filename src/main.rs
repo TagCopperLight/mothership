@@ -2,6 +2,7 @@ mod apply;
 mod chezmoi;
 mod cmd;
 mod edit;
+mod file;
 mod fleet;
 mod hardware;
 mod hash;
