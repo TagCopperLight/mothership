@@ -2,7 +2,7 @@ use super::{Change, Item, Kind, Ships};
 use crate::{
     edit::{Add, Key},
     fleet::Member,
-    revert::Revert,
+    revert::{Account, Service},
     user, walk,
 };
 use anyhow::{Context, Result};
@@ -26,7 +26,7 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
             Item::new(Kind::Account, change, "linger", detail)
                 .noting("user services run without a login")
                 .with(Add::Linger(lingers))
-                .reverting(Revert::Linger(config.linger)),
+                .reverting(Service::Linger(config.linger)),
         );
     }
     if let Some(shell) = &config.shell
@@ -38,7 +38,7 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
             format!("shell {}", user.shell),
             format!("changed from {shell}"),
         )
-        .reverting(Revert::Shell(shell.clone()));
+        .reverting(Account::Shell(shell.clone()));
         items.push(if ships.path(Path::new(&user.shell), None)? {
             item.with(Add::Shell(user.shell.clone()))
         } else {
@@ -55,7 +55,7 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
             .filter(|g| !declared.iter().any(|d| d == *g))
             .map(|g| {
                 let item = Item::new(Kind::Account, Change::Added, format!("group {g}"), "joined")
-                    .reverting(Revert::Leave(g.to_string()));
+                    .reverting(Account::Leave(g.to_string()));
                 if created.contains(*g) {
                     item.with(Add::Declare {
                         key: Key::Groups,
@@ -76,7 +76,7 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
                         key: Key::Groups,
                         name: g.clone(),
                     })
-                    .reverting(Revert::Join(g.clone()))
+                    .reverting(Account::Join(g.clone()))
             }),
     );
     Ok(items)

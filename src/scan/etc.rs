@@ -4,7 +4,7 @@ use crate::{
     fleet::{self, Fleet},
     package::{self, Backup, Db, Origin, Package},
     preview::Preview,
-    revert::Revert,
+    revert::Etc,
     secrets, systemd, walk,
 };
 use anyhow::{Context, Result};
@@ -51,7 +51,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                         path: path.clone(),
                         encrypt: false,
                     })
-                    .reverting(Revert::WriteEtc(path.clone()))
+                    .reverting(Etc::Write(path.clone()))
                     .showing(Preview::Diff {
                         old: source,
                         new: path.clone(),
@@ -61,7 +61,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
             Compare::Missing => Some(
                 item(Change::Removed, "deleted")
                     .with(Add::RemoveEtc(path.clone()))
-                    .reverting(Revert::WriteEtc(path.clone()))
+                    .reverting(Etc::Write(path.clone()))
                     .showing(Preview::Contents(source)),
             ),
             Compare::Unreadable => Some(item(Change::Unreadable, "unreadable")),
@@ -124,7 +124,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                 path: path.clone(),
                 encrypt: false,
             })
-            .reverting(Revert::DeleteEtc(path.clone()))
+            .reverting(Etc::Delete(path.clone()))
             .showing(Preview::Contents(path.clone()))
             .guessing(path)
     }));
@@ -186,7 +186,7 @@ fn edited(package: &Package, backup: &Backup) -> Result<Option<Item>> {
     let item = match backup.origin {
         Origin::Archive if package.archive.cached() => item
             .noting(format!("owned by {}", package.name))
-            .reverting(Revert::RestoreEtc {
+            .reverting(Etc::Restore {
                 path: path.clone(),
                 archive: package.archive.clone(),
             })

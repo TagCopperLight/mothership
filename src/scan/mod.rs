@@ -17,7 +17,7 @@ use crate::{
     parallel::join,
     preview::Preview,
     record::{self, Record},
-    revert::Revert,
+    revert::{self, Revert},
     style::{self, Paint, Style},
     walk,
 };
@@ -226,8 +226,8 @@ impl Item {
         self
     }
 
-    fn reverting(mut self, revert: Revert) -> Self {
-        self.revert = Some(revert);
+    fn reverting(mut self, revert: impl Into<Revert>) -> Self {
+        self.revert = Some(revert.into());
         self
     }
 
@@ -274,14 +274,12 @@ impl Item {
 
     fn verb(&self) -> String {
         match (&self.revert, self.section) {
-            (Some(Revert::ApplyFile { .. } | Revert::WriteEtc(_)), Section::Fleet) => {
-                match self.change {
-                    Change::Added => "delete",
-                    Change::Removed => "create",
-                    _ => "update",
-                }
-                .into()
+            (Some(revert), Section::Fleet) if revert.writes_fleet_version() => match self.change {
+                Change::Added => "delete",
+                Change::Removed => "create",
+                _ => "update",
             }
+            .into(),
             (Some(revert), Section::Fleet) => revert.describe(),
             _ => self.detail.clone(),
         }
@@ -402,7 +400,7 @@ fn member(fleet: &Fleet, ships: &Ships, i: usize, which: Checks) -> Result<Vec<I
                 format!("user {}", member.name),
                 "missing",
             )
-            .reverting(Revert::CreateUser),
+            .reverting(revert::User::Create),
         ),
         Some(_) => thread::scope(|s| {
             let parts = [
@@ -436,7 +434,7 @@ fn tracked(fleet: &Fleet, member: &Member, which: Checks) -> Result<Vec<Item>> {
         return Ok(vec![
             Item::new(Kind::File, Change::Removed, "chezmoi", "not set up")
                 .noting("its config isn't the one mothership writes")
-                .reverting(Revert::InitChezmoi),
+                .reverting(revert::User::InitChezmoi),
         ]);
     }
     let chezmoi = files::Chezmoi::load(member)?;

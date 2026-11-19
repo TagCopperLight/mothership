@@ -4,7 +4,7 @@ use crate::{
     later::{self, DAY, Later},
     prompt::{self, Prompt},
     record::{self, Record},
-    revert::{self, Revert},
+    revert::{self, Etc, Machine, Revert},
     scan::{self, Columns, Item, Secret, Section},
     style::{self, Paint, Style},
     walk,
@@ -304,7 +304,7 @@ fn revert_one(
     (member, revert): revert::Owned,
     prompt: &mut Prompt,
 ) -> Result<bool> {
-    if let Revert::DeleteEtc(path) = revert
+    if let Revert::Machine(Machine::Etc(Etc::Delete(path))) = revert
         && path.is_dir()
     {
         let count = walk::files(path)?.len();

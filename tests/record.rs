@@ -2,6 +2,7 @@ use super::*;
 use crate::{
     fleet::{Manager, Tool},
     package::{self, Archive, Backup, Distro, Origin, Package},
+    revert,
 };
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -75,9 +76,9 @@ fn me(record: &mut Record) -> &mut UserRecord {
     record.users.entry("me".into()).or_default()
 }
 
-fn changed(record: &Record, revert: Revert) -> bool {
+fn changed(record: &Record, revert: impl Into<Revert>) -> bool {
     record
-        .fleet_changed(&revert, Some("me"), &no_packages())
+        .fleet_changed(&revert.into(), Some("me"), &no_packages())
         .unwrap()
 }
 
@@ -87,8 +88,8 @@ fn installs_a_newly_listed_package_but_not_one_i_removed_myself() {
     let listed = record(|r| {
         r.packages.insert("htop".into());
     });
-    assert!(changed(&empty, Revert::Install("htop".into())));
-    assert!(!changed(&listed, Revert::Install("htop".into())));
+    assert!(changed(&empty, revert::Machine::Install("htop".into())));
+    assert!(!changed(&listed, revert::Machine::Install("htop".into())));
 }
 
 #[test]
@@ -96,11 +97,14 @@ fn uninstalls_only_what_the_fleet_listed_before() {
     let listed = record(|r| {
         r.packages.insert("htop".into());
     });
-    assert!(changed(&listed, Revert::Uninstall("htop".into())));
-    assert!(!changed(&listed, Revert::Uninstall("firefox".into())));
+    assert!(changed(&listed, revert::Machine::Uninstall("htop".into())));
+    assert!(!changed(
+        &listed,
+        revert::Machine::Uninstall("firefox".into())
+    ));
     assert!(!changed(
         &Record::default(),
-        Revert::Uninstall("htop".into())
+        revert::Machine::Uninstall("htop".into())
     ));
 }
 
@@ -111,28 +115,28 @@ fn services_groups_and_shell_follow_the_same_rule() {
         me(r).groups.insert("docker".into());
         me(r).shell = Some("/usr/bin/fish".into());
     });
-    let enable = |unit: &str, user| Revert::Enable {
-        unit: unit.into(),
-        user,
-    };
-    let disable = |unit: &str, user| Revert::Disable {
-        unit: unit.into(),
-        user,
-    };
-    assert!(changed(&before, enable("new.service", false)));
-    assert!(!changed(&before, enable("sshd.service", false)));
-    assert!(changed(&before, disable("sshd.service", false)));
-    assert!(!changed(&before, disable("mine.service", false)));
-    assert!(!changed(&before, disable("sshd.service", true)));
-    assert!(changed(&before, enable("sshd.service", true)));
+    let enable = |unit: &str| revert::Machine::Unit(Unit::Enable(unit.into()));
+    let disable = |unit: &str| revert::Machine::Unit(Unit::Disable(unit.into()));
+    assert!(changed(&before, enable("new.service")));
+    assert!(!changed(&before, enable("sshd.service")));
+    assert!(changed(&before, disable("sshd.service")));
+    assert!(!changed(&before, disable("mine.service")));
+    assert!(!changed(
+        &before,
+        Service::Unit(Unit::Disable("sshd.service".into()))
+    ));
+    assert!(changed(
+        &before,
+        Service::Unit(Unit::Enable("sshd.service".into()))
+    ));
 
-    assert!(changed(&before, Revert::Join("video".into())));
-    assert!(!changed(&before, Revert::Join("docker".into())));
-    assert!(changed(&before, Revert::Leave("docker".into())));
-    assert!(!changed(&before, Revert::Leave("audio".into())));
+    assert!(changed(&before, Account::Join("video".into())));
+    assert!(!changed(&before, Account::Join("docker".into())));
+    assert!(changed(&before, Account::Leave("docker".into())));
+    assert!(!changed(&before, Account::Leave("audio".into())));
 
-    assert!(!changed(&before, Revert::Shell("/usr/bin/fish".into())));
-    assert!(changed(&before, Revert::Shell("/usr/bin/zsh".into())));
+    assert!(!changed(&before, Account::Shell("/usr/bin/fish".into())));
+    assert!(changed(&before, Account::Shell("/usr/bin/zsh".into())));
 }
 
 #[test]
@@ -146,23 +150,23 @@ fn each_user_has_a_record_of_their_own() {
             .fleet_changed(&revert, Some("dev"), &no_packages())
             .unwrap()
     };
-    assert!(changed(&before, Revert::Leave("docker".into())));
-    assert!(!other(Revert::Leave("docker".into())));
-    assert!(changed(&before, Revert::Linger(false)));
-    assert!(other(Revert::Linger(true)));
-    assert!(changed(&before, Revert::CreateUser));
-    assert!(changed(&before, Revert::InitChezmoi));
+    assert!(changed(&before, Account::Leave("docker".into())));
+    assert!(!other(Account::Leave("docker".into()).into()));
+    assert!(changed(&before, Service::Linger(false)));
+    assert!(other(Service::Linger(true).into()));
+    assert!(changed(&before, User::Create));
+    assert!(changed(&before, User::InitChezmoi));
 }
 
 #[test]
 fn writes_a_missing_file_unless_i_deleted_it() {
     let machine = Machine::new();
     let path = machine.path("new.conf");
-    assert!(changed(&Record::default(), Revert::WriteEtc(path.clone())));
+    assert!(changed(&Record::default(), Etc::Write(path.clone())));
     let written = record(|r| {
         r.etc.insert(path.clone(), md5("old"));
     });
-    assert!(!changed(&written, Revert::WriteEtc(path)));
+    assert!(!changed(&written, Etc::Write(path)));
 }
 
 #[test]
@@ -172,17 +176,17 @@ fn writes_over_a_file_only_while_it_is_as_apply_or_its_package_left_it() {
     let as_written = record(|r| {
         r.etc.insert(path.clone(), md5("old"));
     });
-    assert!(changed(&as_written, Revert::WriteEtc(path.clone())));
+    assert!(changed(&as_written, Etc::Write(path.clone())));
 
     let edited = record(|r| {
         r.etc.insert(path.clone(), md5("something else"));
     });
-    assert!(!changed(&edited, Revert::WriteEtc(path.clone())));
-    assert!(!changed(&Record::default(), Revert::WriteEtc(path.clone())));
+    assert!(!changed(&edited, Etc::Write(path.clone())));
+    assert!(!changed(&Record::default(), Etc::Write(path.clone())));
 
     let from_package = Record::default()
         .fleet_changed(
-            &Revert::WriteEtc(path.clone()),
+            &Etc::Write(path.clone()).into(),
             None,
             &shipping(&path, "old"),
         )
@@ -190,7 +194,7 @@ fn writes_over_a_file_only_while_it_is_as_apply_or_its_package_left_it() {
     assert!(from_package);
     let edited_package_file = Record::default()
         .fleet_changed(
-            &Revert::WriteEtc(path.clone()),
+            &Etc::Write(path.clone()).into(),
             None,
             &shipping(&path, "new"),
         )
@@ -208,8 +212,8 @@ fn deletes_or_restores_a_dropped_file_only_when_untouched() {
     let edited = record(|r| {
         r.etc.insert(path.clone(), md5("what apply wrote"));
     });
-    let delete = || Revert::DeleteEtc(path.clone());
-    let restore = || Revert::RestoreEtc {
+    let delete = || Etc::Delete(path.clone());
+    let restore = || Etc::Restore {
         path: path.clone(),
         archive: no_archive(),
     };
@@ -231,14 +235,14 @@ fn deletes_a_dropped_folder_only_when_apply_wrote_all_of_it() {
         r.etc.insert(a.clone(), md5("a"));
         r.etc.insert(b.clone(), md5("b"));
     });
-    assert!(changed(&both, Revert::DeleteEtc(folder.clone())));
+    assert!(changed(&both, Etc::Delete(folder.clone())));
 
     let one = record(|r| {
         r.etc.insert(a.clone(), md5("a"));
     });
-    assert!(!changed(&one, Revert::DeleteEtc(folder.clone())));
+    assert!(!changed(&one, Etc::Delete(folder.clone())));
 
-    assert!(!changed(&Record::default(), Revert::DeleteEtc(folder)));
+    assert!(!changed(&Record::default(), Etc::Delete(folder)));
 }
 
 #[test]
@@ -251,14 +255,14 @@ fn never_reads_a_folder_apply_did_not_write_into() {
     let elsewhere = record(|r| {
         r.etc.insert(machine.path("other.conf"), md5("a"));
     });
-    let result = elsewhere.fleet_changed(&Revert::DeleteEtc(folder.clone()), None, &no_packages());
+    let result = elsewhere.fleet_changed(&Etc::Delete(folder.clone()).into(), None, &no_packages());
     fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(!result.unwrap());
 }
 
 #[test]
 fn applies_chezmoi_files_unless_edited_here() {
-    let file = |edited| Revert::ApplyFile {
+    let file = |edited| User::ApplyFile {
         path: PathBuf::from("/home/me/.bashrc"),
         edited,
     };
@@ -361,19 +365,9 @@ fn what_apply_skipped_keeps_its_old_entry_so_the_next_apply_brings_it() {
             .user_services
             .insert("kept.service".into());
     });
-    let enable = Revert::Enable {
-        unit: "app.service".into(),
-        user: true,
-    };
-    let disable = Revert::Disable {
-        unit: "dropped.service".into(),
-        user: true,
-    };
-    let skipped = [
-        (Some(0), &enable),
-        (Some(0), &disable),
-        (Some(0), &Revert::Linger(true)),
-    ];
+    let enable = Service::Unit(Unit::Enable("app.service".into()));
+    let disable = Service::Unit(Unit::Disable("dropped.service".into()));
+    let skipped = [(0, &enable), (0, &disable), (0, &Service::Linger(true))];
     let machine = Machine::new();
     let after = Record::after(&fleet, &before, machine.dir.path(), &skipped).unwrap();
     let me = &after.users["me"];
@@ -406,10 +400,10 @@ fn a_revert_in_review_leaves_the_file_as_apply_wrote_it() {
     let mut edited = record(|r| {
         r.etc.insert(path.clone(), md5("older"));
     });
-    assert!(!changed(&edited, Revert::WriteEtc(path.clone())));
-    edited.reverted(&Revert::WriteEtc(path.clone())).unwrap();
+    assert!(!changed(&edited, Etc::Write(path.clone())));
+    edited.reverted(&Etc::Write(path.clone()).into()).unwrap();
     assert_eq!(edited.etc.get(&path), Some(&md5("fleet")));
-    assert!(changed(&edited, Revert::WriteEtc(path)));
+    assert!(changed(&edited, Etc::Write(path)));
 }
 
 #[test]
@@ -426,14 +420,17 @@ fn a_file_review_deleted_or_restored_leaves_the_record() {
         }
     });
     before
-        .reverted(&Revert::DeleteEtc(machine.path("unit.d")))
+        .reverted(&Etc::Delete(machine.path("unit.d")).into())
         .unwrap();
     assert_eq!(before.etc.keys().collect::<Vec<_>>(), [&c]);
     before
-        .reverted(&Revert::RestoreEtc {
-            path: c,
-            archive: no_archive(),
-        })
+        .reverted(
+            &Etc::Restore {
+                path: c,
+                archive: no_archive(),
+            }
+            .into(),
+        )
         .unwrap();
     assert!(before.etc.is_empty());
 }
@@ -448,11 +445,11 @@ fn tools_and_installers_follow_the_same_rule() {
         me(r).tools = tools(r#"cargo = ["ripgrep"]"#);
         me(r).installers.insert("bun".into());
     });
-    let install = |name: &str| Revert::InstallTool {
+    let install = |name: &str| ToolChange::Install {
         manager: Manager::Cargo,
         tool: Tool::Name(name.into()),
     };
-    let uninstall = |name: &str| Revert::UninstallTool {
+    let uninstall = |name: &str| ToolChange::Uninstall {
         manager: Manager::Cargo,
         name: name.into(),
     };
@@ -460,14 +457,14 @@ fn tools_and_installers_follow_the_same_rule() {
     assert!(!changed(&before, install("ripgrep")));
     assert!(changed(&before, uninstall("ripgrep")));
     assert!(!changed(&before, uninstall("bat")));
-    let uv = Revert::InstallTool {
+    let uv = ToolChange::Install {
         manager: Manager::Uv,
         tool: Tool::Name("ripgrep".into()),
     };
     assert!(changed(&before, uv));
 
-    assert!(changed(&before, Revert::RunInstaller("rustup".into())));
-    assert!(!changed(&before, Revert::RunInstaller("bun".into())));
+    assert!(changed(&before, User::RunInstaller("rustup".into())));
+    assert!(!changed(&before, User::RunInstaller("bun".into())));
 }
 
 #[test]
@@ -477,7 +474,7 @@ fn installs_a_missing_tool_again_when_the_fleet_changed_its_source() {
             tools(r#"cargo = [{ name = "x", git = "https://example.com/x", branch = "a" }]"#);
     });
     let moved = tools(r#"cargo = [{ name = "x", git = "https://example.com/x", branch = "b" }]"#);
-    let install = |tools: &Tools| Revert::InstallTool {
+    let install = |tools: &Tools| ToolChange::Install {
         manager: Manager::Cargo,
         tool: tools.of(Manager::Cargo)[0].clone(),
     };

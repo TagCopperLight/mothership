@@ -3,7 +3,7 @@ use crate::{
     package::Db,
     prompt::Prompt,
     record::{self, Record},
-    revert::{self, Owned, Revert},
+    revert::{self, Owned, Revert, Service, User},
     scan::{self, Change, Checks, Secret, Section},
     style::Style,
 };
@@ -31,21 +31,19 @@ fn round(approve: &mut dyn FnMut() -> Result<bool>, service_manager: bool) -> Re
 
     let (mut todo, mut edited, mut locked, mut unread, mut left) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
-    let mut skipped: Vec<Owned> = Vec::new();
+    let mut skipped: Vec<(usize, &Service)> = Vec::new();
     for item in &items {
-        match &item.revert {
-            Some(revert)
-                if item.section == Section::Fleet
-                    && !service_manager
-                    && revert.needs_service_manager() =>
+        match (&item.revert, item.member) {
+            (Some(Revert::User(User::Service(service))), Some(i))
+                if item.section == Section::Fleet && !service_manager =>
             {
-                skipped.push((item.member, revert))
+                skipped.push((i, service))
             }
             _ if item.section == Section::Fleet => todo.push(item),
             _ if scan::ignored(&fleet, item) => {}
             _ if item.secret == Secret::Locked => locked.push(item),
             _ if item.change == Change::Unreadable => unread.push(item),
-            Some(Revert::WriteEtc(_) | Revert::ApplyFile { .. }) => edited.push(item),
+            (Some(revert), _) if revert.writes_fleet_version() => edited.push(item),
             _ => left += 1,
         }
     }
@@ -87,7 +85,10 @@ fn round(approve: &mut dyn FnMut() -> Result<bool>, service_manager: bool) -> Re
         return Ok(false);
     }
     Record::after(&fleet, &record, Path::new("/etc"), &skipped)?.save(record_path)?;
-    Ok(todo
-        .iter()
-        .any(|item| matches!(item.revert, Some(Revert::CreateUser | Revert::InitChezmoi))))
+    Ok(todo.iter().any(|item| {
+        matches!(
+            item.revert,
+            Some(Revert::User(User::Create | User::InitChezmoi))
+        )
+    }))
 }

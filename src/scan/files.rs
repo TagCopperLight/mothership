@@ -5,7 +5,7 @@ use crate::{
     edit::Add,
     fleet::{Fleet, Member},
     preview::{Preview, Seen},
-    revert::Revert,
+    revert::User,
 };
 use anyhow::{Context, Result};
 use std::{collections::BTreeSet, path::PathBuf, thread};
@@ -70,7 +70,7 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
         };
         let item = Item::new(Kind::File, change, user.tilde(&path), detail)
             .with(add)
-            .reverting(Revert::ApplyFile {
+            .reverting(User::ApplyFile {
                 path: path.clone(),
                 edited,
             })

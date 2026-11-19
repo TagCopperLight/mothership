@@ -1,7 +1,7 @@
 use crate::{
     fleet::{Fleet, Tools},
     package::{self, Db},
-    revert::{Owned, Revert},
+    revert::{Account, Etc, Machine, Revert, Service, ToolChange, Unit, User},
     walk,
 };
 use anyhow::{Context, Result};
@@ -45,33 +45,45 @@ impl Record {
     }
 
     pub fn fleet_changed(&self, revert: &Revert, user: Option<&str>, db: &Db) -> Result<bool> {
+        let change = match revert {
+            Revert::Machine(change) => return self.machine_changed(change, db),
+            Revert::User(change) => change,
+        };
         let empty = UserRecord::default();
         let mine = user.and_then(|u| self.users.get(u)).unwrap_or(&empty);
-        Ok(match revert {
-            Revert::Install(name) => !self.packages.contains(name),
-            Revert::Uninstall(name) => self.packages.contains(name),
-            Revert::CreateUser | Revert::InitChezmoi => true,
-            Revert::Linger(linger) => mine.linger != *linger,
-            Revert::InstallTool { manager, tool } | Revert::ReinstallTool { manager, tool } => {
-                mine.tools.find(*manager, tool.name()) != Some(tool)
+        Ok(match change {
+            User::Create | User::InitChezmoi => true,
+            User::Service(Service::Linger(linger)) => mine.linger != *linger,
+            User::Service(Service::Unit(Unit::Enable(unit))) => !mine.user_services.contains(unit),
+            User::Service(Service::Unit(Unit::Disable(unit))) => mine.user_services.contains(unit),
+            User::Tool(
+                ToolChange::Install { manager, tool } | ToolChange::Reinstall { manager, tool },
+            ) => mine.tools.find(*manager, tool.name()) != Some(tool),
+            User::Tool(ToolChange::Uninstall { manager, name }) => {
+                mine.tools.find(*manager, name).is_some()
             }
-            Revert::UninstallTool { manager, name } => mine.tools.find(*manager, name).is_some(),
-            Revert::RunInstaller(name) => !mine.installers.contains(name),
-            Revert::Join(group) => !mine.groups.contains(group),
-            Revert::Leave(group) => mine.groups.contains(group),
-            Revert::Shell(shell) => mine.shell.as_ref() != Some(shell),
-            Revert::Enable { unit, user: false } => !self.services.contains(unit),
-            Revert::Disable { unit, user: false } => self.services.contains(unit),
-            Revert::Enable { unit, .. } => !mine.user_services.contains(unit),
-            Revert::Disable { unit, .. } => mine.user_services.contains(unit),
-            Revert::WriteEtc(path) => match hash(path)? {
+            User::RunInstaller(name) => !mine.installers.contains(name),
+            User::Account(Account::Join(group)) => !mine.groups.contains(group),
+            User::Account(Account::Leave(group)) => mine.groups.contains(group),
+            User::Account(Account::Shell(shell)) => mine.shell.as_ref() != Some(shell),
+            User::ApplyFile { edited, .. } => !edited,
+        })
+    }
+
+    fn machine_changed(&self, change: &Machine, db: &Db) -> Result<bool> {
+        Ok(match change {
+            Machine::Install(name) => !self.packages.contains(name),
+            Machine::Uninstall(name) => self.packages.contains(name),
+            Machine::Unit(Unit::Enable(unit)) => !self.services.contains(unit),
+            Machine::Unit(Unit::Disable(unit)) => self.services.contains(unit),
+            Machine::Etc(Etc::Write(path)) => match hash(path)? {
                 None => !self.etc.contains_key(path),
                 Some(actual) => {
                     self.etc.get(path) == Some(&actual) || shipped(db, path) == Some(&actual)
                 }
             },
-            Revert::RestoreEtc { path, .. } => self.unchanged(path)?,
-            Revert::DeleteEtc(path) if path.is_dir() => {
+            Machine::Etc(Etc::Restore { path, .. }) => self.unchanged(path)?,
+            Machine::Etc(Etc::Delete(path)) if path.is_dir() => {
                 self.etc.keys().any(|written| written.starts_with(path))
                     && walk::files(path)?
                         .iter()
@@ -80,21 +92,22 @@ impl Record {
                         .into_iter()
                         .all(|unchanged| unchanged)
             }
-            Revert::DeleteEtc(path) => self.unchanged(path)?,
-            Revert::ApplyFile { edited, .. } => !edited,
+            Machine::Etc(Etc::Delete(path)) => self.unchanged(path)?,
         })
     }
 
     pub fn reverted(&mut self, revert: &Revert) -> Result<()> {
-        match revert {
-            Revert::WriteEtc(path) => {
+        let Revert::Machine(Machine::Etc(change)) = revert else {
+            return Ok(());
+        };
+        match change {
+            Etc::Write(path) => {
                 let actual = hash(path)?.context("the fleet's file was just written")?;
                 self.etc.insert(path.clone(), actual);
             }
-            Revert::RestoreEtc { path, .. } | Revert::DeleteEtc(path) => {
+            Etc::Restore { path, .. } | Etc::Delete(path) => {
                 self.etc.retain(|written, _| !written.starts_with(path))
             }
-            _ => {}
         }
         Ok(())
     }
@@ -107,7 +120,7 @@ impl Record {
         fleet: &Fleet,
         before: &Record,
         etc_root: &Path,
-        skipped: &[Owned],
+        skipped: &[(usize, &Service)],
     ) -> Result<Record> {
         let mut etc = BTreeMap::new();
         for rel in &fleet.etc {
@@ -142,17 +155,16 @@ impl Record {
                     installers: config.installers.iter().map(|i| i.name.clone()).collect(),
                 };
                 let old = before.users.get(&member.name).unwrap_or(&empty);
-                for (_, revert) in skipped.iter().filter(|(owner, _)| *owner == Some(i)) {
-                    match revert {
-                        Revert::Linger(_) => record.linger = old.linger,
-                        Revert::Enable { unit, .. } | Revert::Disable { unit, .. } => {
+                for (_, service) in skipped.iter().filter(|(owner, _)| *owner == i) {
+                    match service {
+                        Service::Linger(_) => record.linger = old.linger,
+                        Service::Unit(Unit::Enable(unit) | Unit::Disable(unit)) => {
                             if old.user_services.contains(unit) {
                                 record.user_services.insert(unit.clone());
                             } else {
                                 record.user_services.remove(unit);
                             }
                         }
-                        _ => unreachable!("apply skips only what needs_service_manager names"),
                     }
                 }
                 Some((member.name.clone(), record))

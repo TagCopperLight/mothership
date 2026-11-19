@@ -4,7 +4,7 @@ use crate::{
     fleet::{Fleet, Member},
     package::Distro,
     preview::Preview,
-    revert::Revert,
+    revert::{self, Machine, Revert, Service},
     systemd::{self, USER_DIRS},
     walk,
 };
@@ -123,10 +123,7 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
             continue;
         }
         let item = Item::new(kind, Change::Added, unit, "enabled")
-            .reverting(Revert::Disable {
-                unit: unit.clone(),
-                user: kind == Kind::UserService,
-            })
+            .reverting(unit_revert(kind, revert::Unit::Disable(unit.clone())))
             .showing(Preview::Unit {
                 name: unit.clone(),
                 user: user.clone(),
@@ -150,10 +147,7 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
                         key,
                         name: unit.to_string(),
                     })
-                    .reverting(Revert::Enable {
-                        unit: unit.to_string(),
-                        user: kind == Kind::UserService,
-                    })
+                    .reverting(unit_revert(kind, revert::Unit::Enable(unit.to_string())))
             }),
     );
     Ok(items)
@@ -313,6 +307,14 @@ impl Presets {
             }
         }
         Ok(true)
+    }
+}
+
+fn unit_revert(kind: Kind, unit: revert::Unit) -> Revert {
+    if kind == Kind::UserService {
+        Service::Unit(unit).into()
+    } else {
+        Machine::Unit(unit).into()
     }
 }
 

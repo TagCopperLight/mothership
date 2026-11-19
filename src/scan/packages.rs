@@ -1,5 +1,5 @@
 use super::{Change, Item, Kind};
-use crate::{edit::Add, fleet::Fleet, package::Db, revert::Revert};
+use crate::{edit::Add, fleet::Fleet, package::Db, revert::Machine};
 use anyhow::Result;
 use std::collections::BTreeSet;
 
@@ -19,7 +19,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
             Item::new(Kind::Package, Change::Added, &p.name, "installed")
                 .noting(&p.description)
                 .with(Add::ListPackage(p.name.clone()))
-                .reverting(Revert::Uninstall(p.name.clone()))
+                .reverting(Machine::Uninstall(p.name.clone()))
         })
         .collect();
     items.extend(
@@ -32,7 +32,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                         .with(Add::UnlistPackage(name.clone()))
                 };
                 if installed_here.contains(name) {
-                    item("uninstalled").reverting(Revert::Install(name.clone()))
+                    item("uninstalled").reverting(Machine::Install(name.clone()))
                 } else {
                     item("not installed").noting("built elsewhere, nothing installs it")
                 }

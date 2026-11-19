@@ -109,7 +109,7 @@ fn in_section(mut item: Item, section: Section) -> Item {
 #[test]
 fn the_sign_shows_what_the_machine_gained_or_what_apply_brings_it() {
     let installed = Item::new(Kind::Package, Change::Added, "htop", "installed")
-        .reverting(Revert::Uninstall("htop".into()));
+        .reverting(revert::Machine::Uninstall("htop".into()));
     assert_eq!(installed.sign().0, "+");
     assert_eq!(installed.verb(), "installed");
     let dropped = in_section(installed, Section::Fleet);
@@ -120,7 +120,7 @@ fn the_sign_shows_what_the_machine_gained_or_what_apply_brings_it() {
 #[test]
 fn the_fleet_writing_a_file_says_whether_it_creates_changes_or_deletes_it() {
     let file = |change| {
-        let revert = Revert::ApplyFile {
+        let revert = revert::User::ApplyFile {
             path: "/home/me/x".into(),
             edited: false,
         };
