@@ -1,0 +1,2 @@
+# The rest of /etc/skel, which install copies into each new home.
+home ~/.bash_logout

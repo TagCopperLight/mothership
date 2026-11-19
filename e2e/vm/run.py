@@ -5,8 +5,9 @@
 """Installs fleet/ from the Arch ISO into a VM with Secure Boot in Setup Mode and a TPM, then
 checks the first start finishes the install and the second opens the disk with the TPM alone.
 
-The ISO is ~/.cache/mothership-vm/archlinux-x86_64.iso. pacman downloads from this machine's
-package cache first, then from a mirror. Needs qemu-desktop, edk2-ovmf and swtpm.
+The ISO is ~/.cache/mothership-vm/archlinux-x86_64.iso. pacman reads a mirror's package lists,
+and takes packages from this machine's package cache, or from the mirrors through a cache of its
+own in ~/.cache/mothership-vm/packages. Needs qemu-desktop, edk2-ovmf and swtpm.
 
 Usage: e2e/vm/run.py
 """
@@ -17,6 +18,10 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
+import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 
@@ -27,7 +32,9 @@ ROOT = HERE.parent.parent
 CACHE = Path.home() / ".cache/mothership-vm"
 ISO = CACHE / "archlinux-x86_64.iso"
 OVMF = Path("/usr/share/edk2/x64")
-MIRROR = "https://mirror.xtom.com.hk/archlinux/$repo/os/$arch"
+# Mirrors in the order the package server tries them, and the packages it got from them.
+MIRRORS = ["https://mirror.xtom.com.hk/archlinux", "https://mirrors.aliyun.com/archlinux"]
+PACKAGES = CACHE / "packages"
 PASSPHRASE = "disk-passphrase"
 PASSWORD = "tester-password"
 # qemu's user network reaches the machine running it there.
@@ -43,18 +50,16 @@ def main() -> int:
         tmp = Path(tmp)
         port = serve(site(tmp / "site"))
         boot_files = iso_boot_files(tmp)
-        tpm = start_tpm(tmp)
-        try:
-            shutil.copy(OVMF / "OVMF_VARS.4m.fd", tmp / "vars.fd")
-            subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", str(tmp / "disk.qcow2"), "40G"],
-                           check=True)
-            log = open(CACHE / "run.log", "w")
-            install(qemu(tmp, boot_files), port, log)
-            first_start(qemu(tmp), log)
-            tpm_start(qemu(tmp), log)
-        finally:
-            tpm.terminate()
-            tpm.wait(timeout=10)
+        shutil.copy(OVMF / "OVMF_VARS.4m.fd", tmp / "vars.fd")
+        subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", str(tmp / "disk.qcow2"), "40G"],
+                       check=True)
+        with open(CACHE / "run.log", "w") as log:
+            with tpm(tmp):
+                install(qemu(tmp, boot_files), port, log)
+            with tpm(tmp):
+                first_start(qemu(tmp), log)
+            with tpm(tmp):
+                tpm_start(qemu(tmp), log)
     print("The VM installs, finishes at its first start, and opens its disk with the TPM.")
     return 0
 
@@ -71,19 +76,67 @@ def site(dir: Path) -> Path:
     subprocess.run(["git", "clone", "-q", "--bare", str(work), str(dir / "fleet.git")], check=True)
     subprocess.run(["git", "update-server-info"], cwd=dir / "fleet.git", check=True)
     shutil.copy(ROOT / "target/release/mothership", dir / "mothership")
+    PACKAGES.mkdir(exist_ok=True)
     for repo in ["core", "extra"]:
         packages = dir / repo / "os/x86_64"
         packages.mkdir(parents=True)
-        (packages / f"{repo}.db").symlink_to(f"/var/lib/pacman/sync/{repo}.db")
+        # The first mirror's list, since mirrors delete the packages an older list names.
+        url = f"{MIRRORS[0]}/{repo}/os/x86_64/{repo}.db"
+        with urllib.request.urlopen(url, timeout=60) as db:
+            (packages / f"{repo}.db").write_bytes(db.read())
         for package in Path("/var/cache/pacman/pkg").iterdir():
             if not package.name.endswith(".part"):
                 (packages / package.name).symlink_to(package)
     return dir
 
 
+class Handler(http.server.SimpleHTTPRequestHandler):
+    """Serves the site, and a package it lacks from PACKAGES, downloading it there first.
+    It streams the download, since pacman gives up on a server that sends nothing for 10 s."""
+
+    def log_message(self, *args) -> None:
+        pass
+
+    def do_GET(self) -> None:
+        parts = self.path.lstrip("/").split("/")
+        local = Path(self.translate_path(self.path))
+        if len(parts) != 4 or parts[1:3] != ["os", "x86_64"] or local.exists():
+            return super().do_GET()
+        cached = PACKAGES / parts[3]
+        if cached.exists():
+            return self.send(cached)
+        for mirror in MIRRORS:
+            try:
+                upstream = urllib.request.urlopen(f"{mirror}{self.path}", timeout=30)
+            except OSError:
+                continue
+            with upstream, tempfile.NamedTemporaryFile(dir=PACKAGES, delete=False) as part:
+                self.send_response(200)
+                # Without a length, the response ends when the connection closes.
+                if length := upstream.headers["Content-Length"]:
+                    self.send_header("Content-Length", length)
+                self.end_headers()
+                try:
+                    while chunk := upstream.read(1 << 16):
+                        part.write(chunk)
+                        self.wfile.write(chunk)
+                except OSError:
+                    Path(part.name).unlink()
+                    raise
+            Path(part.name).rename(cached)
+            return
+        self.send_error(404)
+
+    def send(self, path: Path) -> None:
+        self.send_response(200)
+        self.send_header("Content-Length", str(path.stat().st_size))
+        self.end_headers()
+        with open(path, "rb") as file:
+            shutil.copyfileobj(file, self.wfile)
+
+
 def serve(dir: Path) -> int:
-    handler = partial(http.server.SimpleHTTPRequestHandler, directory=str(dir))
-    handler.log_message = lambda *args: None
+    handler = partial(Handler, directory=str(dir))
     # qemu's user network reaches the host's loopback, so nothing else on the network can.
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -97,11 +150,25 @@ def iso_boot_files(tmp: Path) -> tuple[Path, Path]:
     return tmp / members[0], tmp / members[1]
 
 
-def start_tpm(tmp: Path) -> subprocess.Popen:
-    (tmp / "tpm").mkdir()
-    return subprocess.Popen(
+@contextmanager
+def tpm(tmp: Path) -> Iterator[None]:
+    """swtpm stops when the VM powers off, so each start runs its own on the same state."""
+    (tmp / "tpm").mkdir(exist_ok=True)
+    socket = tmp / "swtpm.sock"
+    process = subprocess.Popen(
         ["swtpm", "socket", "--tpm2", "--tpmstate", f"dir={tmp / 'tpm'}",
-         "--ctrl", f"type=unixio,path={tmp / 'swtpm.sock'}"])
+         "--ctrl", f"type=unixio,path={socket}"])
+    try:
+        for _ in range(100):
+            if socket.exists():
+                break
+            time.sleep(0.1)
+        else:
+            sys.exit("swtpm didn't start")
+        yield
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
 
 
 def qemu(tmp: Path, boot_files=None) -> list[str]:
@@ -124,6 +191,7 @@ def qemu(tmp: Path, boot_files=None) -> list[str]:
 
 
 def spawn(args: list[str], log) -> pexpect.spawn:
+    """The VM, which leaving its `with` block stops."""
     vm = pexpect.spawn(args[0], args[1:], encoding="utf-8", codec_errors="replace", timeout=600)
     vm.logfile_read = log
     return vm
@@ -137,75 +205,82 @@ def own_prompt(vm: pexpect.spawn) -> None:
     vm.expect("VM# ")
 
 
+def wait(vm: pexpect.spawn, text: str, timeout: int = 600) -> None:
+    """Waits for text from install, or stops at once when it fails."""
+    if vm.expect([text, r"\nError: [^\r\n]+\r\n"], timeout=timeout) == 1:
+        sys.exit(f"install failed: {vm.after.strip()}")
+
+
 def shell(vm: pexpect.spawn, command: str, timeout: int = 600) -> None:
     vm.sendline(command)
     vm.expect("VM# ", timeout=timeout)
 
 
 def install(args: list[str], port: int, log) -> None:
-    vm = spawn(args, log)
-    vm.expect("archiso login:", timeout=300)
-    vm.sendline("root")
-    vm.expect("# ")
-    own_prompt(vm)
-    site = f"http://{HOST}:{port}"
-    shell(vm, f"printf 'Server = {site}/$repo/os/$arch\\nServer = {MIRROR}\\n' > /etc/pacman.d/mirrorlist")
-    shell(vm, f"curl -fsS -o /root/mothership {site}/mothership && chmod +x /root/mothership")
-    vm.sendline(f"/root/mothership install --fleet {site}/fleet.git --type vm --option encrypted"
-                " --hostname vmtest --timezone Europe/Paris --disk /dev/vda --layout wipe")
-    vm.expect("Type vda to go on:")
-    vm.sendline("vda")
-    for question in ["Disk passphrase:", "Again:"]:
-        vm.expect(question)
-        vm.sendline(PASSPHRASE)
-    vm.expect("tester's password:", timeout=INSTALL_TIMEOUT)
-    for question in ["New password:", "Retype new password:"]:
-        vm.expect(question)
-        vm.sendline(PASSWORD)
-    vm.expect("r type the recovery key")
-    vm.send("r")
-    vm.expect("Recovery key:")
-    secret = next(line for line in (HERE / "recovery.txt").read_text().splitlines()
-                  if line.startswith("AGE-SECRET-KEY-"))
-    vm.sendline(secret)
-    vm.expect("Secure Boot holds this machine's keys now.", timeout=INSTALL_TIMEOUT)
-    vm.expect("The system is installed.", timeout=300)
-    vm.expect("VM# ")
-    vm.sendline("poweroff")
-    vm.expect(pexpect.EOF, timeout=120)
+    with spawn(args, log) as vm:
+        vm.expect("archiso login:", timeout=300)
+        vm.sendline("root")
+        vm.expect("# ")
+        own_prompt(vm)
+        site = f"http://{HOST}:{port}"
+        shell(vm, f"echo 'Server = {site}/$repo/os/$arch' > /etc/pacman.d/mirrorlist")
+        shell(vm, f"curl -fsS -o /root/mothership {site}/mothership && chmod +x /root/mothership")
+        vm.sendline(f"/root/mothership install --fleet {site}/fleet.git --type vm --option encrypted"
+                    " --hostname vmtest --timezone Europe/Paris --disk /dev/vda --layout wipe")
+        wait(vm, "Type vda to go on:")
+        vm.sendline("vda")
+        for question in ["Disk passphrase:", "Again:"]:
+            wait(vm, question)
+            vm.sendline(PASSPHRASE)
+        wait(vm, "tester's password:", timeout=INSTALL_TIMEOUT)
+        for question in ["New password:", "Retype new password:"]:
+            wait(vm, question)
+            vm.sendline(PASSWORD)
+        wait(vm, "r type the recovery key")
+        vm.send("r")
+        wait(vm, "Recovery key:")
+        secret = next(line for line in (HERE / "recovery.txt").read_text().splitlines()
+                      if line.startswith("AGE-SECRET-KEY-"))
+        vm.sendline(secret)
+        wait(vm, "Secure Boot holds this machine's keys now.", timeout=INSTALL_TIMEOUT)
+        wait(vm, "The system is installed.", timeout=300)
+        vm.expect("VM# ")
+        vm.sendline("poweroff")
+        vm.expect(pexpect.EOF, timeout=120)
 
 
 def first_start(args: list[str], log) -> None:
-    vm = spawn(args, log)
-    vm.expect("[Pp]assphrase for", timeout=300)
-    vm.sendline(PASSPHRASE)
-    vm.expect("Type the passphrase once more:", timeout=1200)
-    vm.expect("[Pp]assphrase", timeout=120)
-    vm.sendline(PASSPHRASE)
-    vm.expect("Nothing differs from the vm type", timeout=600)
-    login(vm)
-    shell(vm, "cat ~/.secret && sudo -S cat /etc/secret.conf <<< " + PASSWORD)
-    if "tester's secret" not in vm.before or "root-only secret" not in vm.before:
-        sys.exit("the secrets didn't open")
-    shell(vm, "sudo systemd-cryptenroll /dev/vda2")
-    if "tpm2" not in vm.before:
-        sys.exit("the TPM holds no key for the disk")
-    vm.sendline("sudo poweroff")
-    vm.expect(pexpect.EOF, timeout=120)
+    with spawn(args, log) as vm:
+        vm.expect("[Pp]assphrase for", timeout=300)
+        vm.sendline(PASSPHRASE)
+        wait(vm, "Type the passphrase once more:", timeout=1200)
+        wait(vm, "[Pp]assphrase", timeout=120)
+        vm.sendline(PASSPHRASE)
+        wait(vm, "Nothing differs from the vm type")
+        vm.expect("vmtest login:", timeout=300)
+        login(vm)
+        shell(vm, "cat ~/.secret && sudo -S cat /etc/secret.conf <<< " + PASSWORD)
+        if "tester's secret" not in vm.before or "root-only secret" not in vm.before:
+            sys.exit("the secrets didn't open")
+        shell(vm, "sudo systemd-cryptenroll /dev/vda2")
+        if "tpm2" not in vm.before:
+            sys.exit("the TPM holds no key for the disk")
+        vm.sendline("sudo poweroff")
+        vm.expect(pexpect.EOF, timeout=120)
 
 
 def tpm_start(args: list[str], log) -> None:
-    vm = spawn(args, log)
-    found = vm.expect(["vmtest login:", "[Pp]assphrase for"], timeout=300)
-    if found == 1:
-        sys.exit("the disk asked for its passphrase: the TPM didn't open it")
-    login(vm)
-    vm.sendline("sudo poweroff")
-    vm.expect(pexpect.EOF, timeout=120)
+    with spawn(args, log) as vm:
+        found = vm.expect(["vmtest login:", "[Pp]assphrase for"], timeout=300)
+        if found == 1:
+            sys.exit("the disk asked for its passphrase: the TPM didn't open it")
+        login(vm)
+        vm.sendline(f"sudo -S poweroff <<< {PASSWORD}")
+        vm.expect(pexpect.EOF, timeout=120)
 
 
 def login(vm: pexpect.spawn) -> None:
-    vm.expect("vmtest login:", timeout=300)
+    """Logs in at the login prompt the caller waited for."""
     vm.sendline("tester")
     vm.expect("Password:")
     vm.sendline(PASSWORD)

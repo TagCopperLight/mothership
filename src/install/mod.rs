@@ -83,19 +83,20 @@ const GH_LOGIN: [&str; 4] = ["auth", "login", "--hostname", "github.com"];
 pub fn run(args: &[String]) -> Result<()> {
     let flags = Flags::parse(args)?;
     let mut prompt = Prompt::new();
-    if Path::new(ARCHISO).exists() {
+    // arch-chroot shares the ISO's /run with the new system, so ARCHISO shows there too.
+    let chroot = env::var_os(FROM_ISO).is_some();
+    if !chroot && Path::new(ARCHISO).exists() {
         return iso::run(&flags, &mut prompt);
     }
     if let Some(flag) = flags.only_on_the_iso() {
         bail!("{flag} only means something on the Arch ISO");
     }
-    here(&flags, &mut prompt)
+    here(&flags, &mut prompt, chroot)
 }
 
 /// On the machine's own system: a server, the new disk from the ISO, or its first start.
-fn here(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
+fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     let distro = Distro::here()?;
-    let chroot = env::var_os(FROM_ISO).is_some();
     let no_password = no_password_path();
     // An earlier run that was killed with no chance to clean up left it behind.
     if no_password.exists() {
