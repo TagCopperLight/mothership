@@ -7,10 +7,9 @@ use crate::{cmd, fleet::Fleet};
 use anyhow::{Context, Result, bail};
 use md5::{Digest, Md5};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
-    thread,
 };
 
 const OS_RELEASE: &str = "/etc/os-release";
@@ -77,45 +76,54 @@ impl Distro {
     }
 
     pub fn uninstall(self, fleet: &Fleet, names: &[&str]) -> Result<()> {
-        let wanted: BTreeSet<&str> = fleet
-            .system
-            .packages
-            .iter()
-            .chain(&fleet.system.built_packages)
-            .map(String::as_str)
-            .collect();
-        let installed = Db::load()?;
-        let keep: Vec<&str> = installed
+        let db = Db::load()?;
+        let listed = fleet.listed_packages();
+        let keep: Vec<&str> = db
             .packages
             .iter()
             .map(|package| package.name.as_str())
-            .filter(|name| wanted.contains(name))
+            .filter(|name| listed.contains(*name))
             .collect();
-        match self {
+        let removed = match self {
             Distro::Arch => {
                 if !keep.is_empty() {
                     cmd::root("pacman", &[&["-D", "--asexplicit"], &keep[..]].concat())?;
                 }
-                pacman::uninstall(names)
+                pacman::uninstall(names)?
             }
             Distro::Debian => {
                 if !keep.is_empty() {
                     cmd::root("apt-mark", &[&["manual"], &keep[..]].concat())?;
                 }
-                dpkg::uninstall(names)
+                dpkg::uninstall(&db, names)?
             }
+        };
+        for name in names.iter().filter(|name| !removed.contains(**name)) {
+            println!("{}", stays(name, &db.needed_by(name)));
         }
+        Ok(())
+    }
+}
+
+fn stays(name: &str, users: &[&str]) -> String {
+    if users.is_empty() {
+        format!("{name} stays installed, as a dependency of another package")
+    } else {
+        format!("{name} stays installed, as {} needs it", users.join(", "))
     }
 }
 
 pub struct Db {
+    pub distro: Distro,
     pub packages: Vec<Package>,
+    index: HashMap<String, usize>,
 }
 
 pub struct Package {
     pub name: String,
     pub description: String,
     pub explicit: bool,
+    pub required: bool,
     pub files: Vec<String>,
     pub backups: Vec<Backup>,
     pub depends: Vec<String>,
@@ -149,53 +157,99 @@ impl Archive {
             Distro::Debian => dpkg::shipped(&self.path, member),
         }
     }
+
+    pub fn cached(&self) -> bool {
+        self.path.exists()
+    }
 }
 
 impl Db {
     pub fn load() -> Result<Self> {
-        let packages = match Distro::here()? {
+        let distro = Distro::here()?;
+        let packages = match distro {
             Distro::Arch => pacman::load()?,
             Distro::Debian => dpkg::load()?,
         };
-        Ok(Db { packages })
+        Ok(Db::new(distro, packages))
+    }
+
+    pub fn new(distro: Distro, packages: Vec<Package>) -> Self {
+        let mut index = HashMap::new();
+        for (i, package) in packages.iter().enumerate() {
+            for name in &package.provides {
+                index.entry(name.clone()).or_insert(i);
+            }
+        }
+        for (i, package) in packages.iter().enumerate() {
+            index.insert(package.name.clone(), i);
+        }
+        Db {
+            distro,
+            packages,
+            index,
+        }
+    }
+
+    pub fn resolve(&self, name: &str) -> Option<&Package> {
+        self.index.get(name).map(|&i| &self.packages[i])
     }
 
     pub fn with_depends(&self, names: &BTreeSet<String>) -> BTreeSet<String> {
         let mut found = BTreeSet::new();
         let mut todo: Vec<&str> = names.iter().map(String::as_str).collect();
         while let Some(name) = todo.pop() {
-            let Some(package) = self.packages.iter().find(|p| p.name == name).or_else(|| {
-                self.packages
-                    .iter()
-                    .find(|p| p.provides.iter().any(|n| n == name))
-            }) else {
-                continue;
-            };
-            if found.insert(package.name.clone()) {
+            if let Some(package) = self.resolve(name)
+                && found.insert(package.name.clone())
+            {
                 todo.extend(package.depends.iter().map(String::as_str));
             }
         }
         found
     }
-}
 
-fn in_parallel<T: Sync, U: Send>(
-    items: &[T],
-    load: impl Fn(&T) -> Result<U> + Sync,
-) -> Result<Vec<U>> {
-    let threads = thread::available_parallelism().map_or(4, usize::from);
-    let load = &load;
-    thread::scope(|s| {
-        let parts: Vec<_> = items
-            .chunks(items.len().div_ceil(threads).max(1))
-            .map(|chunk| s.spawn(move || chunk.iter().map(load).collect::<Result<Vec<_>>>()))
+    pub fn needing(&self, needed: &BTreeSet<String>) -> BTreeSet<String> {
+        let users = self.users();
+        let mut seen = vec![false; self.packages.len()];
+        let mut todo: Vec<usize> = needed
+            .iter()
+            .filter_map(|name| self.index.get(name).copied())
             .collect();
-        let parts = parts
-            .into_iter()
-            .map(|part| part.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(parts.into_iter().flatten().collect())
-    })
+        while let Some(i) = todo.pop() {
+            if !std::mem::replace(&mut seen[i], true) {
+                todo.extend(&users[i]);
+            }
+        }
+        seen.iter()
+            .zip(&self.packages)
+            .filter(|(seen, _)| **seen)
+            .map(|(_, package)| package.name.clone())
+            .collect()
+    }
+
+    fn needed_by(&self, name: &str) -> Vec<&str> {
+        let Some(&i) = self.index.get(name) else {
+            return Vec::new();
+        };
+        self.users()[i]
+            .iter()
+            .map(|&user| self.packages[user].name.as_str())
+            .collect()
+    }
+
+    fn users(&self) -> Vec<Vec<usize>> {
+        let mut users = vec![Vec::new(); self.packages.len()];
+        for (i, package) in self.packages.iter().enumerate() {
+            for depend in &package.depends {
+                if let Some(&j) = self.index.get(depend)
+                    && j != i
+                    && users[j].last() != Some(&i)
+                {
+                    users[j].push(i);
+                }
+            }
+        }
+        users
+    }
 }
 
 pub fn md5(bytes: &[u8]) -> String {

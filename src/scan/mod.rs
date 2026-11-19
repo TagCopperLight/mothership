@@ -13,7 +13,8 @@ use crate::{
     fleet::{Fleet, Member},
     ignore::{Level, Paths},
     later::{self, Later},
-    package::{Db, Distro},
+    package::Db,
+    parallel::join,
     preview::Preview,
     record::{self, Record},
     revert::Revert,
@@ -22,12 +23,12 @@ use crate::{
 };
 use anyhow::Result;
 use std::{
-    collections::BTreeSet,
+    collections::HashSet,
     fs,
     io::ErrorKind,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    thread::{self, ScopedJoinHandle},
+    thread,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -324,7 +325,6 @@ pub struct Report {
 }
 
 pub fn collect() -> Result<Report> {
-    Distro::here()?;
     let (fleet, db) = thread::scope(|s| {
         let fleet = s.spawn(Fleet::load);
         let db = s.spawn(Db::load);
@@ -364,7 +364,7 @@ pub enum Checks {
 }
 
 pub fn checks(fleet: &Fleet, db: &Db, record: &Record, which: Checks) -> Result<Vec<Item>> {
-    let ships = Ships::new(fleet, db)?;
+    let ships = Ships::new(fleet, db);
     let mut items = thread::scope(|s| {
         let ships = &ships;
         let mut handles = vec![
@@ -447,16 +447,20 @@ fn tracked(fleet: &Fleet, member: &Member, which: Checks) -> Result<Vec<Item>> {
 pub struct Ships<'a> {
     fleet: &'a Fleet,
     db: &'a Db,
-    listed: BTreeSet<String>,
+    files: HashSet<&'a str>,
 }
 
 impl<'a> Ships<'a> {
-    pub fn new(fleet: &'a Fleet, db: &'a Db) -> Result<Self> {
-        Ok(Ships {
-            fleet,
-            db,
-            listed: db.with_depends(&fleet.packages()),
-        })
+    pub fn new(fleet: &'a Fleet, db: &'a Db) -> Self {
+        let listed = db.with_depends(&fleet.listed_packages());
+        let files = db
+            .packages
+            .iter()
+            .filter(|package| listed.contains(&package.name))
+            .flat_map(|package| &package.files)
+            .map(String::as_str)
+            .collect();
+        Ships { fleet, db, files }
     }
 
     pub fn path(&self, path: &Path, member: Option<&Member>) -> Result<bool> {
@@ -478,20 +482,8 @@ impl<'a> Ships<'a> {
         {
             return Ok(chezmoi::managed(user, "files,symlinks")?.contains(&resolved));
         }
-        let file = resolved.to_string_lossy();
-        Ok(self
-            .db
-            .packages
-            .iter()
-            .filter(|package| self.listed.contains(&package.name))
-            .any(|package| package.files.iter().any(|f| *f == file)))
+        Ok(self.files.contains(resolved.to_string_lossy().as_ref()))
     }
-}
-
-fn join<T>(handle: ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
-    handle
-        .join()
-        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 pub fn run() -> Result<()> {

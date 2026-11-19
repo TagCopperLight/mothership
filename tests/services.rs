@@ -35,29 +35,6 @@ fn presets(text: &str) -> Presets {
 }
 
 #[test]
-fn an_enabled_instance_keeps_its_name_and_a_mask_enables_nothing() {
-    let dir = tempfile::tempdir().unwrap();
-    let wants = dir.path().join("getty.target.wants");
-    fs::create_dir(&wants).unwrap();
-    std::os::unix::fs::symlink("/usr/lib/getty@.service", wants.join("getty@tty1.service"))
-        .unwrap();
-    std::os::unix::fs::symlink("/dev/null", dir.path().join("a.service")).unwrap();
-    let units = enabled(&[&dir.path().to_path_buf()]).unwrap();
-    assert_eq!(units, BTreeSet::from(["getty@tty1.service".to_owned()]));
-}
-
-#[test]
-fn an_instance_takes_its_templates_file() {
-    let dir = tempfile::tempdir().unwrap();
-    unit(dir.path(), "getty@.service", "[Install]\n");
-    let dirs = [dir.path().to_path_buf()];
-    assert_eq!(
-        unit_file("getty@tty1.service", &dirs),
-        Some(dir.path().join("getty@.service"))
-    );
-}
-
-#[test]
 fn a_template_preset_enables_its_default_instance_or_the_listed_ones() {
     let dir = tempfile::tempdir().unwrap();
     unit(
@@ -83,4 +60,30 @@ fn on_debian_the_units_a_package_enabled_are_its_defaults() {
     let units = packaged_units(dir.path()).unwrap();
     let expected = ["apparmor.service", "ssh.service"].map(str::to_owned);
     assert_eq!(units, BTreeSet::from(expected));
+}
+
+#[test]
+fn ignore_rules_enable_nothing_and_braces_are_literal_as_in_fnmatch() {
+    let rules = presets(
+        "# comment\n; comment\n\nignore a.service\nenable {b,c}.service\nenable d*\ndisable *\n",
+    );
+    let enables = |name| rules.enables(name, &[]).unwrap();
+    assert!(!enables("a.service"));
+    assert!(!enables("b.service"));
+    assert!(enables("{b,c}.service"));
+    assert!(enables("d/e.service"));
+}
+
+#[test]
+fn a_preset_line_with_an_unknown_verb_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("90-test.preset"), "allow a.service\n").unwrap();
+    let error = Presets::load(&[dir.path().to_str().unwrap()])
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .ends_with("90-test.preset:1: expected enable, disable or ignore")
+    );
 }

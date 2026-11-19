@@ -5,13 +5,16 @@ use std::collections::BTreeSet;
 
 pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     let installed_here = fleet.packages();
-    let mut listed = installed_here.clone();
-    listed.extend(fleet.system.built_packages.iter().cloned());
-    let installed: BTreeSet<&String> = db.packages.iter().map(|p| &p.name).collect();
+    let listed = fleet.listed_packages();
+    let covered: BTreeSet<&str> = listed
+        .iter()
+        .filter_map(|name| db.resolve(name))
+        .map(|package| package.name.as_str())
+        .collect();
     let mut items: Vec<Item> = db
         .packages
         .iter()
-        .filter(|p| p.explicit && !listed.contains(&p.name))
+        .filter(|p| p.explicit && !covered.contains(p.name.as_str()))
         .map(|p| {
             Item::new(Kind::Package, Change::Added, &p.name, "installed")
                 .noting(&p.description)
@@ -22,7 +25,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     items.extend(
         listed
             .iter()
-            .filter(|name| !installed.contains(name))
+            .filter(|name| db.resolve(name).is_none())
             .map(|name| {
                 let item = |detail| {
                     Item::new(Kind::Package, Change::Removed, name, detail)

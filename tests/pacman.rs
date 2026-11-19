@@ -37,3 +37,18 @@ fn aur_packages_without_a_helper_fail_before_anything_installs() {
         "yay not in pacman's repos, and system.toml sets no aur_helper"
     );
 }
+
+#[test]
+fn a_package_entry_missing_its_version_or_a_backup_hash_fails() {
+    let desc = "%NAME%\nvim\n\n%VERSION%\n9.1-1\n\n%ARCH%\nx86_64\n";
+    let files = "%FILES%\nusr/bin/vim\n\n%BACKUP%\netc/vimrc\t0123\n";
+    let package = parse(desc, files).unwrap();
+    assert_eq!(
+        package.archive.path,
+        Path::new(CACHE).join("vim-9.1-1-x86_64.pkg.tar.zst")
+    );
+    assert_eq!(package.backups[0].path, Path::new("/etc/vimrc"));
+    let no_version = desc.replace("%VERSION%\n9.1-1\n\n", "");
+    assert!(parse(&no_version, files).is_err());
+    assert!(parse(desc, "%BACKUP%\netc/vimrc\n").is_err());
+}

@@ -5,6 +5,7 @@ fn package(name: &str, depends: &[&str], provides: &[&str]) -> Package {
         name: name.into(),
         description: String::new(),
         explicit: false,
+        required: false,
         files: Vec::new(),
         backups: Vec::new(),
         depends: depends.iter().map(|d| d.to_string()).collect(),
@@ -18,14 +19,15 @@ fn package(name: &str, depends: &[&str], provides: &[&str]) -> Package {
 
 #[test]
 fn follows_dependencies_through_what_packages_provide() {
-    let db = Db {
-        packages: vec![
+    let db = Db::new(
+        Distro::Arch,
+        vec![
             package("base", &["systemd", "sh"], &[]),
             package("systemd", &[], &[]),
             package("bash", &[], &["sh"]),
             package("firefox", &[], &[]),
         ],
-    };
+    );
     let listed = BTreeSet::from(["base".to_owned()]);
     let found: Vec<String> = db.with_depends(&listed).into_iter().collect();
     assert_eq!(found, ["base", "bash", "systemd"]);
@@ -41,4 +43,26 @@ fn knows_the_family_from_os_release() {
     assert_eq!(Distro::of(debian).unwrap(), Distro::Debian);
     assert_eq!(Distro::of(ubuntu).unwrap(), Distro::Debian);
     assert!(Distro::of(fedora).is_err());
+}
+
+#[test]
+fn finds_every_package_that_leads_to_a_needed_one() {
+    let db = Db::new(
+        Distro::Debian,
+        vec![
+            package("linux-image-amd64", &["linux-image-6.12"], &[]),
+            package("linux-image-6.12", &[], &[]),
+            package("task-laptop", &["linux-image-amd64", "sh"], &[]),
+            package("bash", &[], &["sh"]),
+            package("htop", &[], &[]),
+        ],
+    );
+    let needed = BTreeSet::from(["linux-image-6.12".to_owned()]);
+    let found: Vec<String> = db.needing(&needed).into_iter().collect();
+    assert_eq!(
+        found,
+        ["linux-image-6.12", "linux-image-amd64", "task-laptop"]
+    );
+    assert_eq!(db.needed_by("sh"), ["task-laptop"]);
+    assert_eq!(db.resolve("sh").unwrap().name, "bash");
 }

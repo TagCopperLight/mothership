@@ -1,9 +1,9 @@
-use super::{Change, Item, Kind, services};
+use super::{Change, Item, Kind};
 use crate::{
     edit::Add,
     fleet::{Fleet, Manager, Member},
     preview::{Preview, Seen},
-    secrets, walk,
+    secrets, systemd, walk,
 };
 use anyhow::Result;
 use std::{
@@ -45,7 +45,7 @@ pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<I
             && !path
                 .file_name()
                 .is_some_and(|name| name.to_string_lossy().starts_with('.'));
-        visible || services::is_enablement(path)
+        visible || systemd::is_enablement(path)
     };
     let ignored = |path: &Path| member.ignore.matches_subject(Kind::Home, &user.tilde(path));
     let walk =

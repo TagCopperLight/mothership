@@ -41,17 +41,17 @@ fn no_archive() -> Archive {
 }
 
 fn no_packages() -> Db {
-    Db {
-        packages: Vec::new(),
-    }
+    Db::new(Distro::Arch, Vec::new())
 }
 
 fn shipping(path: &Path, text: &str) -> Db {
-    Db {
-        packages: vec![Package {
+    Db::new(
+        Distro::Arch,
+        vec![Package {
             name: "pkg".into(),
             description: String::new(),
             explicit: true,
+            required: false,
             files: Vec::new(),
             backups: vec![Backup {
                 path: path.to_path_buf(),
@@ -62,7 +62,7 @@ fn shipping(path: &Path, text: &str) -> Db {
             provides: Vec::new(),
             archive: no_archive(),
         }],
-    }
+    )
 }
 
 fn record(edit: impl FnOnce(&mut Record)) -> Record {

@@ -5,14 +5,14 @@ use crate::{
     package::Distro,
     preview::Preview,
     revert::Revert,
+    systemd::{self, USER_DIRS},
     walk,
 };
-use anyhow::{Context, Result};
-use globset::Glob;
+use anyhow::{Context, Result, bail};
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::CString,
     fs,
-    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -21,29 +21,30 @@ const SYSTEM_PRESETS: [&str; 3] = [
     "/run/systemd/system-preset",
     "/usr/lib/systemd/system-preset",
 ];
-const DEBIAN_SYSTEM: &str = "/var/lib/systemd/deb-systemd-helper-enabled";
-const DEBIAN_USER: &str = "/var/lib/systemd/deb-systemd-user-helper-enabled";
-const DEPENDENCY_DIRS: [&str; 3] = [".wants", ".requires", ".upholds"];
 const USER_PRESETS: [&str; 3] = [
     "/etc/systemd/user-preset",
     "/run/systemd/user-preset",
     "/usr/lib/systemd/user-preset",
 ];
+const DEBIAN_SYSTEM: &str = "/var/lib/systemd/deb-systemd-helper-enabled";
+const DEBIAN_USER: &str = "/var/lib/systemd/deb-systemd-user-helper-enabled";
+
+#[derive(Clone, Copy)]
+enum Scope {
+    System,
+    User,
+}
 
 pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
-    let system = [
-        PathBuf::from("/etc/systemd/system"),
-        PathBuf::from("/run/systemd/system"),
-        PathBuf::from("/usr/lib/systemd/system"),
-    ];
+    let dirs = systemd::paths(&systemd::SYSTEM_DIRS);
     check(
         Unit {
             kind: Kind::Service,
             key: Key::Services,
-            dirs: &system,
-            enable_dirs: &[&system[0]],
-            preset_dirs: &SYSTEM_PRESETS,
-            packaged: DEBIAN_SYSTEM,
+            dirs: &dirs,
+            own: &dirs[0],
+            shared: None,
+            defaults: &Defaults::load(ships.db.distro, Scope::System)?,
             member: None,
         },
         &fleet.system.services,
@@ -52,20 +53,16 @@ pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
 }
 
 pub fn scan_user(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
-    let user = [
-        member.user().home.join(".config/systemd/user"),
-        PathBuf::from("/etc/systemd/user"),
-        PathBuf::from("/run/systemd/user"),
-        PathBuf::from("/usr/lib/systemd/user"),
-    ];
+    let mut dirs = vec![member.user().home.join(".config/systemd/user")];
+    dirs.extend(systemd::paths(&USER_DIRS));
     check(
         Unit {
             kind: Kind::UserService,
             key: Key::UserServices,
-            dirs: &user,
-            enable_dirs: &[&user[0], &user[1]],
-            preset_dirs: &USER_PRESETS,
-            packaged: DEBIAN_USER,
+            dirs: &dirs,
+            own: &dirs[0],
+            shared: Some(&dirs[1]),
+            defaults: &Defaults::load(ships.db.distro, Scope::User)?,
             member: Some(member),
         },
         &member.config.user_services,
@@ -73,13 +70,25 @@ pub fn scan_user(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
     )
 }
 
+pub fn global_defaults(distro: Distro) -> Result<Vec<PathBuf>> {
+    let dirs = systemd::paths(&USER_DIRS);
+    let defaults = Defaults::load(distro, Scope::User)?;
+    let mut links = Vec::new();
+    for enablement in systemd::enablements(&[&dirs[0]])? {
+        if defaults.enables(&enablement.unit, &dirs)? {
+            links.push(enablement.link);
+        }
+    }
+    Ok(links)
+}
+
 struct Unit<'a> {
     kind: Kind,
     key: Key,
     dirs: &'a [PathBuf],
-    enable_dirs: &'a [&'a PathBuf],
-    preset_dirs: &'a [&'a str],
-    packaged: &'a str,
+    own: &'a PathBuf,
+    shared: Option<&'a PathBuf>,
+    defaults: &'a Defaults,
     member: Option<&'a Member>,
 }
 
@@ -87,22 +96,27 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
     let Unit {
         kind,
         key,
-        dirs: unit_dirs,
-        enable_dirs,
-        preset_dirs,
-        packaged,
+        dirs,
+        own,
+        shared,
+        defaults,
         member,
     } = scope;
     let user = member.map(|m| m.user().name.clone());
-    let enabled = enabled(enable_dirs)?;
-    let presets = match Distro::here()? {
-        Distro::Arch => Defaults::Presets(Presets::load(preset_dirs)?),
-        Distro::Debian => Defaults::Packaged(packaged_units(Path::new(packaged))?),
-    };
-    let covered = with_also(declared, unit_dirs)?;
+    let enabled = systemd::enabled(&[own], dirs)?;
+    let mut running = enabled.clone();
+    if let Some(shared) = shared {
+        running.extend(systemd::enabled(&[shared], dirs)?);
+    }
+    let declared: Vec<(&String, String)> = declared
+        .iter()
+        .map(|unit| Ok((unit, systemd::real_name(unit, dirs)?)))
+        .collect::<Result<_>>()?;
+    let real: Vec<String> = declared.iter().map(|(_, real)| real.clone()).collect();
+    let covered = with_also(&real, dirs)?;
     let mut items = Vec::new();
     for unit in enabled.iter().filter(|unit| !covered.contains(*unit)) {
-        if presets.enables(unit, unit_dirs)? {
+        if defaults.enables(unit, dirs)? {
             continue;
         }
         let item = Item::new(kind, Change::Added, unit, "enabled")
@@ -114,7 +128,7 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
                 name: unit.clone(),
                 user: user.clone(),
             });
-        let file = unit_file(unit, unit_dirs);
+        let file = systemd::unit_file(unit, dirs);
         items.push(match file {
             Some(file) if ships.path(&file, member)? => item.with(Add::Declare {
                 key,
@@ -126,15 +140,15 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
     items.extend(
         declared
             .iter()
-            .filter(|unit| !enabled.contains(*unit))
-            .map(|unit| {
-                Item::new(kind, Change::Removed, unit, "disabled")
+            .filter(|(_, real)| !running.contains(real))
+            .map(|(unit, _)| {
+                Item::new(kind, Change::Removed, *unit, "disabled")
                     .with(Add::Undeclare {
                         key,
-                        name: unit.clone(),
+                        name: unit.to_string(),
                     })
                     .reverting(Revert::Enable {
-                        unit: unit.clone(),
+                        unit: unit.to_string(),
                         user: kind == Kind::UserService,
                     })
             }),
@@ -155,96 +169,11 @@ fn with_also(declared: &[String], unit_dirs: &[PathBuf]) -> Result<BTreeSet<Stri
     Ok(covered)
 }
 
-fn unit_file(unit: &str, unit_dirs: &[PathBuf]) -> Option<PathBuf> {
-    let template = instance(unit).map(|(template, _)| template);
-    [Some(unit.to_owned()), template]
-        .into_iter()
-        .flatten()
-        .flat_map(|name| unit_dirs.iter().map(move |d| d.join(&name)))
-        .find(|p| p.exists())
-}
-
 fn also(unit: &str, unit_dirs: &[PathBuf]) -> Result<Vec<String>> {
-    Ok(install_values(unit, unit_dirs, "Also")?
+    Ok(systemd::install_values(unit, unit_dirs, "Also")?
         .iter()
         .flat_map(|names| names.split_whitespace().map(str::to_owned))
         .collect())
-}
-
-fn install_values(unit: &str, unit_dirs: &[PathBuf], key: &str) -> Result<Vec<String>> {
-    let Some(path) = unit_file(unit, unit_dirs) else {
-        return Ok(Vec::new());
-    };
-    let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let mut install = false;
-    let mut values = Vec::new();
-    for line in text.lines().map(str::trim) {
-        if line.starts_with('[') {
-            install = line == "[Install]";
-        } else if install
-            && let Some((name, value)) = line.split_once('=')
-            && name.trim() == key
-        {
-            values.push(value.trim().to_owned());
-        }
-    }
-    Ok(values)
-}
-
-fn instance(unit: &str) -> Option<(String, &str)> {
-    let (name, rest) = unit.split_once('@')?;
-    let (instance, suffix) = rest.rsplit_once('.')?;
-    (!instance.is_empty()).then(|| (format!("{name}@.{suffix}"), instance))
-}
-
-fn enabled(unit_dirs: &[&PathBuf]) -> Result<BTreeSet<String>> {
-    let mut units = BTreeSet::new();
-    for dir in unit_dirs {
-        let entries = match fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            Err(e) => return Err(e).with_context(|| format!("reading {}", dir.display())),
-        };
-        for entry in entries {
-            let path = entry?.path();
-            if is_dependency_dir(&path) {
-                for link in fs::read_dir(&path)? {
-                    let link = link?.path();
-                    if target(&link)?.is_some() {
-                        units.insert(file_name(&link));
-                    }
-                }
-            } else if let Some(unit) = target(&path)?
-                && path.file_name().is_some_and(|name| *name != *unit)
-            {
-                units.insert(unit);
-            }
-        }
-    }
-    Ok(units)
-}
-
-fn target(link: &Path) -> Result<Option<String>> {
-    if !link.is_symlink() {
-        return Ok(None);
-    }
-    let target = fs::read_link(link).with_context(|| format!("reading {}", link.display()))?;
-    Ok((!is_mask(&target)).then(|| file_name(&target)))
-}
-
-fn is_mask(target: &Path) -> bool {
-    target == Path::new("/dev/null")
-}
-
-fn file_name(path: &Path) -> String {
-    path.file_name()
-        .expect("a unit path names a file")
-        .to_string_lossy()
-        .into_owned()
-}
-
-fn is_dependency_dir(path: &Path) -> bool {
-    path.is_dir() && DEPENDENCY_DIRS.iter().any(|s| file_name(path).ends_with(s))
 }
 
 enum Defaults {
@@ -253,6 +182,19 @@ enum Defaults {
 }
 
 impl Defaults {
+    fn load(distro: Distro, scope: Scope) -> Result<Self> {
+        Ok(match (distro, scope) {
+            (Distro::Arch, Scope::System) => Defaults::Presets(Presets::load(&SYSTEM_PRESETS)?),
+            (Distro::Arch, Scope::User) => Defaults::Presets(Presets::load(&USER_PRESETS)?),
+            (Distro::Debian, Scope::System) => {
+                Defaults::Packaged(packaged_units(Path::new(DEBIAN_SYSTEM))?)
+            }
+            (Distro::Debian, Scope::User) => {
+                Defaults::Packaged(packaged_units(Path::new(DEBIAN_USER))?)
+            }
+        })
+    }
+
     fn enables(&self, unit: &str, unit_dirs: &[PathBuf]) -> Result<bool> {
         match self {
             Defaults::Presets(presets) => presets.enables(unit, unit_dirs),
@@ -267,10 +209,11 @@ fn packaged_units(dir: &Path) -> Result<BTreeSet<String>> {
     }
     Ok(walk::files(dir)?
         .iter()
-        .map(|rel| {
-            let name = file_name(rel);
+        .filter_map(|rel| rel.file_name())
+        .map(|name| {
+            let name = name.to_string_lossy();
             name.strip_suffix(".dsh-also")
-                .map_or(name.clone(), str::to_owned)
+                .map_or(name.to_string(), str::to_owned)
         })
         .collect())
 }
@@ -279,87 +222,95 @@ struct Presets {
     rules: Vec<Rule>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Verb {
+    Enable,
+    Disable,
+    Ignore,
+}
+
 struct Rule {
-    enable: bool,
-    glob: globset::GlobMatcher,
+    verb: Verb,
+    pattern: CString,
     instances: Vec<String>,
+}
+
+impl Rule {
+    fn matches(&self, name: &str) -> bool {
+        let Ok(name) = CString::new(name) else {
+            return false;
+        };
+        unsafe { libc::fnmatch(self.pattern.as_ptr(), name.as_ptr(), libc::FNM_NOESCAPE) == 0 }
+    }
 }
 
 impl Presets {
     fn load(dirs: &[&str]) -> Result<Self> {
         let mut files: BTreeMap<String, PathBuf> = BTreeMap::new();
         for dir in dirs.iter().rev() {
-            let entries = match fs::read_dir(dir) {
-                Ok(entries) => entries,
-                Err(e) if e.kind() == ErrorKind::NotFound => continue,
-                Err(e) => return Err(e).with_context(|| format!("reading {dir}")),
-            };
-            for entry in entries {
-                let path = entry?.path();
-                if path.extension().is_some_and(|e| e == "preset") {
-                    let name = path.file_name().expect("has a name").to_string_lossy();
-                    files.insert(name.into_owned(), path);
+            for path in walk::children(Path::new(dir))? {
+                if path.extension().is_some_and(|e| e == "preset")
+                    && let Some(name) = path.file_name()
+                {
+                    files.insert(name.to_string_lossy().into_owned(), path);
                 }
             }
         }
         let mut rules = Vec::new();
         for path in files.values() {
-            for line in fs::read_to_string(path)?.lines() {
-                let mut words = line.split_whitespace();
-                let enable = match words.next() {
-                    Some("enable") => true,
-                    Some("disable") => false,
-                    _ => continue,
-                };
-                if let Some(pattern) = words.next() {
-                    let glob = Glob::new(pattern)
-                        .with_context(|| format!("{}: {pattern}", path.display()))?;
-                    rules.push(Rule {
-                        enable,
-                        glob: glob.compile_matcher(),
-                        instances: words.map(str::to_owned).collect(),
-                    });
+            let text =
+                fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+            for (number, line) in text.lines().enumerate() {
+                let at = || format!("{}:{}", path.display(), number + 1);
+                let line = line.trim();
+                if line.is_empty() || line.starts_with(['#', ';']) {
+                    continue;
                 }
+                let mut words = line.split_whitespace();
+                let verb = match words.next() {
+                    Some("enable") => Verb::Enable,
+                    Some("disable") => Verb::Disable,
+                    Some("ignore") => Verb::Ignore,
+                    _ => bail!("{}: expected enable, disable or ignore", at()),
+                };
+                let Some(pattern) = words.next() else {
+                    bail!("{}: {line} names no unit", at());
+                };
+                rules.push(Rule {
+                    verb,
+                    pattern: CString::new(pattern).with_context(at)?,
+                    instances: words.map(str::to_owned).collect(),
+                });
             }
         }
         Ok(Presets { rules })
     }
 
     fn enables(&self, unit: &str, unit_dirs: &[PathBuf]) -> Result<bool> {
-        let template = instance(unit);
+        let template = systemd::instance(unit);
         for rule in &self.rules {
-            if rule.glob.is_match(unit) {
-                return Ok(rule.enable);
+            if rule.matches(unit) {
+                return Ok(rule.verb == Verb::Enable);
             }
             let Some((template, instance)) = &template else {
                 continue;
             };
-            if !rule.glob.is_match(template) {
+            if !rule.matches(template) {
                 continue;
             }
             let named = if rule.instances.is_empty() {
-                install_values(template, unit_dirs, "DefaultInstance")?
+                systemd::install_values(template, unit_dirs, "DefaultInstance")?
                     .iter()
                     .any(|default| default == instance)
             } else {
                 rule.instances.iter().any(|listed| listed == instance)
             };
             if named {
-                return Ok(rule.enable);
+                return Ok(rule.verb == Verb::Enable);
             }
         }
         Ok(true)
     }
-}
-
-pub fn is_enablement(path: &Path) -> bool {
-    let in_unit_dir = path.parent().is_some_and(|dir| {
-        dir == Path::new("/etc/systemd/system")
-            || dir == Path::new("/etc/systemd/user")
-            || dir.ends_with(".config/systemd/user")
-    });
-    let is_link = fs::read_link(path).is_ok_and(|target| !is_mask(&target));
-    in_unit_dir && (DEPENDENCY_DIRS.iter().any(|s| file_name(path).ends_with(s)) || is_link)
 }
 
 #[cfg(test)]

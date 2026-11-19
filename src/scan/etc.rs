@@ -5,7 +5,7 @@ use crate::{
     package::{self, Backup, Db, Origin, Package},
     preview::Preview,
     revert::Revert,
-    secrets, walk,
+    secrets, systemd, walk,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -102,6 +102,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     known.extend(ACCOUNT_FILES.iter().map(PathBuf::from));
     known.insert(PathBuf::from(fleet::MACHINE));
     known.insert(PathBuf::from(secrets::ROOT_KEY));
+    known.extend(services::global_defaults(db.distro)?);
     let known_dirs = owned_dirs
         .into_iter()
         .map(|dir| PathBuf::from(dir.trim_end_matches('/')))
@@ -110,7 +111,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         Path::new("/etc"),
         &known,
         &known_dirs,
-        &services::is_enablement,
+        &systemd::is_enablement,
         &|path: &Path| {
             fleet
                 .ignore
@@ -182,7 +183,7 @@ fn edited(package: &Package, backup: &Backup) -> Result<Option<Item>> {
         encrypt: false,
     });
     let item = match backup.origin {
-        Origin::Archive => item
+        Origin::Archive if package.archive.cached() => item
             .noting(format!("owned by {}", package.name))
             .reverting(Revert::RestoreEtc {
                 path: path.clone(),
@@ -192,6 +193,12 @@ fn edited(package: &Package, backup: &Backup) -> Result<Option<Item>> {
                 path: path.clone(),
                 archive: package.archive.clone(),
             }),
+        Origin::Archive => item
+            .noting(format!(
+                "owned by {}, whose archive isn't in the package cache to restore it from",
+                package.name
+            ))
+            .showing(Preview::Contents(path.clone())),
         Origin::Script => item
             .noting(format!("written by {}'s install script", package.name))
             .showing(Preview::Contents(path.clone())),

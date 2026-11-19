@@ -136,6 +136,26 @@ pub fn files(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(found)
 }
 
+pub fn children(dir: &Path) -> Result<Vec<PathBuf>> {
+    let entries = match fs::read_dir(dir) {
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        entries => entries.with_context(|| format!("reading {}", dir.display()))?,
+    };
+    let mut paths = entries
+        .map(|entry| Ok(entry?.path()))
+        .collect::<Result<Vec<_>>>()?;
+    paths.sort();
+    Ok(paths)
+}
+
+pub fn read_if_any(path: &Path) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
 #[cfg(test)]
 #[path = "../tests/walk.rs"]
 mod tests;

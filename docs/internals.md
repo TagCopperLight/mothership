@@ -25,13 +25,17 @@
 - apt installs Recommends and keeps them installed, so they count as dependencies.
 - An epoch keeps its colon in the name of the archive apt downloaded.
 - `apt-cache madison` lists only what the sources offer. `apt-cache pkgnames` also counts installed packages.
+- `apt-get purge` runs the packages' purge scripts, which delete state such as openssh-server's host keys. Uninstall runs `apt-get remove`, then deletes the unedited config files itself.
+- dpkg takes a missing config file for one the admin deleted, and doesn't bring it back on a reinstall without `--force-confmiss`.
+- A diverted file holds the diverting package's version, and the package it came from installed its own at the diversion's target.
 
 ## Services
 
 - `systemctl list-unit-files` takes half a second, so scan reads the unit folders.
 - A link in a `.wants` folder is named after the unit it enables: for a template, the instance (`getty@tty1.service`).
 - A link named like its target is `systemctl link`, not an alias. A link to `/dev/null` is a mask, which the `/etc` check reports.
-- Presets: the first rule that names a unit decides. A rule on a template enables the instances it lists, or the template's `DefaultInstance`.
+- Presets: the first rule that names a unit decides. A rule on a template enables the instances it lists, or the template's `DefaultInstance`. systemd matches the patterns with `fnmatch`, which has no `{a,b}`.
+- A link in `/etc/systemd/user` enables a unit for every user, so scan reports it as an `/etc` file.
 - `systemctl --user --machine user@` needs the user's manager, which only runs after a login or with linger, so apply starts `user@<uid>.service` first.
 
 ## chezmoi

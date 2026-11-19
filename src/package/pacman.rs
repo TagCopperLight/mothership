@@ -1,7 +1,8 @@
-use super::{Archive, Backup, Distro, Origin, Package, in_parallel};
+use super::{Archive, Backup, Distro, Origin, Package};
 use crate::{
     cmd::{self, As},
     fleet::Fleet,
+    parallel,
 };
 use anyhow::{Context, Result, bail};
 use std::{collections::BTreeSet, fs, path::Path, process::Command};
@@ -18,7 +19,7 @@ pub fn load() -> Result<Vec<Package>> {
         }
     }
     dirs.sort();
-    in_parallel(&dirs, |dir| package(dir))
+    parallel::map(&dirs, |dir| package(dir))
 }
 
 fn package(dir: &Path) -> Result<Package> {
@@ -28,23 +29,41 @@ fn package(dir: &Path) -> Result<Package> {
     };
     let desc = read("desc")?;
     let files = read("files")?;
-    let field = |name| section(&desc, name).next().unwrap_or_default().to_owned();
-    let name = field("NAME");
-    let archive = format!("{name}-{}-{}.pkg.tar.zst", field("VERSION"), field("ARCH"));
-    Ok(Package {
-        description: field("DESC"),
-        explicit: section(&desc, "REASON").next() != Some("1"),
-        files: section(&files, "FILES").map(|f| format!("/{f}")).collect(),
-        depends: names(&desc, "DEPENDS"),
-        provides: names(&desc, "PROVIDES"),
-        backups: section(&files, "BACKUP")
-            .filter_map(|line| line.split_once('\t'))
-            .map(|(path, md5)| Backup {
+    parse(&desc, &files).with_context(|| format!("reading {}", dir.display()))
+}
+
+fn parse(desc: &str, files: &str) -> Result<Package> {
+    let field = |name| {
+        section(desc, name)
+            .next()
+            .with_context(|| format!("desc has no %{name}%"))
+    };
+    let name = field("NAME")?.to_owned();
+    let archive = format!(
+        "{name}-{}-{}.pkg.tar.zst",
+        field("VERSION")?,
+        field("ARCH")?
+    );
+    let backups = section(files, "BACKUP")
+        .map(|line| {
+            let (path, md5) = line
+                .split_once('\t')
+                .with_context(|| format!("a %BACKUP% line has no hash: {line}"))?;
+            Ok(Backup {
                 path: Path::new("/").join(path),
                 md5: md5.to_owned(),
                 origin: Origin::Archive,
             })
-            .collect(),
+        })
+        .collect::<Result<_>>()?;
+    Ok(Package {
+        description: section(desc, "DESC").next().unwrap_or_default().to_owned(),
+        explicit: section(desc, "REASON").next() != Some("1"),
+        required: false,
+        files: section(files, "FILES").map(|f| format!("/{f}")).collect(),
+        depends: names(desc, "DEPENDS"),
+        provides: names(desc, "PROVIDES"),
+        backups,
         archive: Archive {
             path: Path::new(CACHE).join(archive),
             distro: Distro::Arch,
@@ -162,7 +181,7 @@ fn split_install<'a>(
     })
 }
 
-pub fn uninstall(names: &[&str]) -> Result<()> {
+pub fn uninstall(names: &[&str]) -> Result<BTreeSet<String>> {
     cmd::root("pacman", &[&["-D", "--asdeps"], names].concat())?;
     let out = Command::new("pacman")
         .arg("-Qdtq")
@@ -183,7 +202,7 @@ pub fn uninstall(names: &[&str]) -> Result<()> {
     if !unneeded.is_empty() {
         cmd::root("pacman", &[&["-Rs", "--noconfirm"], &unneeded[..]].concat())?;
     }
-    Ok(())
+    Ok(unneeded.into_iter().map(str::to_owned).collect())
 }
 
 #[cfg(test)]

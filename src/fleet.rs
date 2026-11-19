@@ -443,6 +443,15 @@ impl Fleet {
         self.system.packages.iter().cloned().collect()
     }
 
+    pub fn listed_packages(&self) -> BTreeSet<String> {
+        self.system
+            .packages
+            .iter()
+            .chain(&self.system.built_packages)
+            .cloned()
+            .collect()
+    }
+
     pub fn unsaved(&self) -> Result<Vec<String>> {
         let dir = self.dir.to_string_lossy();
         let args = ["-C", &dir, "status", "--porcelain=v2", "--branch"];

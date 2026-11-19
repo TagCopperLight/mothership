@@ -90,8 +90,9 @@ $ grep built_packages /var/lib/mothership/fleet/types/server/system.toml
 built_packages = ["omega"]
 ```
 
-The fleet drops `alpha` and `gamma`. Apply removes `gamma` with its config file, and keeps
-`alpha`, which `epsilon` needs, as a dependency.
+The fleet drops `alpha` and `gamma`. Apply removes `gamma` and deletes its unedited config
+file, without running its purge script, and keeps `alpha`, which `epsilon` needs, as a
+dependency.
 
 ```console
 $ sudo apt-get install -y epsilon > /dev/null 2>&1
@@ -112,10 +113,19 @@ alpha ii
 epsilon ii
 $ apt-mark showauto alpha
 alpha
-$ dpkg-query -W gamma
-dpkg-query: no packages found matching gamma
-[exit 1]
+$ dpkg-query -W -f '${db:Status-Abbrev}\n' gamma
+rc
 $ ls /etc/gamma.conf
 ls: cannot access '/etc/gamma.conf': No such file or directory
 [exit 2]
+```
+
+When the fleet lists `gamma` again, apply brings its config file back with it.
+
+```console
+$ cd /var/lib/mothership/fleet &&
+> git -c user.name=Me -c user.email=me@example.com revert --no-edit HEAD > /dev/null
+$ echo y | sudo mothership apply > /dev/null
+$ cat /etc/gamma.conf
+volume = 5
 ```
