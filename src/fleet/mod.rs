@@ -49,6 +49,7 @@ pub struct Fleet {
     pub members: Vec<Member>,
     admin: User,
     keys: Keys,
+    root_keys: Keys,
     etc_open: bool,
 }
 
@@ -109,18 +110,43 @@ const IGNORE: &str = "ignore.txt";
 const NOT_SECRET: &str = "not-secret.txt";
 pub const USERS: &str = "users";
 
+pub fn admin() -> Result<User> {
+    let meta = fs::metadata(DIR)
+        .with_context(|| format!("reading {DIR}: clone the fleet there as its admin"))?;
+    user::by_uid(meta.uid())
+}
+
+pub fn require_admin_sudo() -> Result<()> {
+    require_sudo(&admin()?)
+}
+
+pub fn require_sudo(admin: &User) -> Result<()> {
+    cmd::bytes(
+        As::Root,
+        "sudo",
+        &["-n", "-l", "-U", &admin.name, "/bin/sh"],
+    )
+    .map(drop)
+    .with_context(|| {
+        format!(
+            "{} can't use sudo, so they must not own the fleet root applies",
+            admin.name
+        )
+    })
+}
+
 impl Fleet {
     pub fn load() -> Result<Self> {
         let machine = Machine::load()?;
         let dir = PathBuf::from(DIR);
-        let meta = fs::metadata(&dir)
-            .with_context(|| format!("reading {DIR}: clone the fleet there as its admin"))?;
-        let admin = user::by_uid(meta.uid())?;
+        let admin = admin()?;
         let repo = Repo::for_machine(dir, &machine)?;
         let mut keys = Keys::default();
+        let mut root_keys = Keys::default();
         let etc_open = match secrets::root_key()? {
             Some(key) => {
                 let open = secrets::holds(&repo.recipients(), &secrets::public(&key))?;
+                root_keys.push(key.clone());
                 keys.push(key);
                 open
             }
@@ -159,6 +185,7 @@ impl Fleet {
             repo,
             admin,
             keys,
+            root_keys,
             etc_open,
             members,
         })
@@ -185,7 +212,7 @@ impl Fleet {
     pub fn etc_contents(&self, rel: &Path) -> Result<Vec<u8>> {
         let source = self.etc_source(rel);
         if self.secret_etc.contains(rel) {
-            return self.keys.decrypt(&source);
+            return self.root_keys.decrypt(&source);
         }
         fs::read(&source).with_context(|| format!("reading {}", source.display()))
     }
@@ -548,6 +575,7 @@ impl Fleet {
             repo,
             admin: user.clone(),
             keys: Keys::default(),
+            root_keys: Keys::default(),
             etc_open: false,
             members,
         }

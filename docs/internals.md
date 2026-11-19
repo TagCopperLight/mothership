@@ -59,6 +59,7 @@
 
 ## Code
 
+- The fleet folder's owner is the admin, so every command asks `sudo -l -U` whether they can run a shell as root. On a fresh Arch install their sudoers file comes from the fleet's first apply, so install asks after its apply.
 - `tests/` holds unit tests that each module includes with `#[path]`, not standalone test crates, so Cargo's `autotests` is off.
 - Root reads a user's files with that user's rights: a thread sets its filesystem uid, gid and groups (they are per thread in Linux, and `setfsuid` drops the file capabilities), so a link a user swaps in leads only where the user could read anyway.
 - chezmoi runs as root only on such a copy of the home, bound over the home in a private mount namespace (`unshare`), so it can't follow a user's links. Docker needs `--cap-add SYS_ADMIN` for that.

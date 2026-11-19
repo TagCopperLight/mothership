@@ -100,6 +100,9 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         Command::Scan => None,
         _ => Some(lock()?),
     };
+    if !matches!(command, Command::Install) {
+        fleet::require_admin_sudo()?;
+    }
     match (command, rest) {
         (Command::Scan, []) => scan::run(),
         (Command::Review, []) => review::run(),

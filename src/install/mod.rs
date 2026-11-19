@@ -89,6 +89,7 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
         })
     })?;
     drop(sudo);
+    fleet::require_admin_sudo()?;
     if distro == Distro::Debian {
         let listed = Fleet::load()?.listed_packages();
         package::keep_only(listed, &mut || match flags.remove_unlisted {
@@ -117,6 +118,7 @@ fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<()
         })?,
     };
     let admin = user::by_name(&name)?.with_context(|| format!("there is no user {name}"))?;
+    fleet::require_sudo(&admin)?;
     bootstrap::git(distro)?;
     bootstrap::chezmoi(distro)?;
     let dir = Path::new(fleet::DIR);

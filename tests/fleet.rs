@@ -130,3 +130,39 @@ fn each_folder_under_users_is_a_user_of_the_type() {
     .unwrap();
     refused(&dir, &[], &cpu, "home lines go in a user's ignore.txt");
 }
+
+#[test]
+fn etc_secrets_open_with_root_key_only() {
+    let dir = checkout("");
+    let list = dir.path().join("list.txt");
+    let (root, user) = (
+        secrets::make_key(&dir.path().join("root.txt")).unwrap(),
+        secrets::make_key(&dir.path().join("user.txt")).unwrap(),
+    );
+    fs::write(
+        &list,
+        format!(
+            "# root\n{}\n\n# user\n{}\n",
+            secrets::public(&root),
+            secrets::public(&user)
+        ),
+    )
+    .unwrap();
+    let etc = dir.path().join("types/workstation/etc");
+    fs::write(
+        etc.join("wifi.conf.age"),
+        secrets::encrypt(&list, b"psk=1").unwrap(),
+    )
+    .unwrap();
+    let mut fleet = Fleet::of(
+        load(&dir, &[], &[]).unwrap(),
+        &user::by_uid(unsafe { libc::geteuid() }).unwrap(),
+    );
+    fleet.keys.push(user);
+    assert!(fleet.etc_contents(Path::new("wifi.conf")).is_err());
+    fleet.root_keys.push(root);
+    assert_eq!(
+        fleet.etc_contents(Path::new("wifi.conf")).unwrap(),
+        b"psk=1"
+    );
+}
