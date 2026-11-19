@@ -13,7 +13,7 @@ use std::{
 };
 
 pub const DAY: u64 = 24 * 60 * 60;
-const LATER: u64 = 7 * DAY;
+pub const LATER: u64 = 7 * DAY;
 const PATH: &str = "/var/lib/mothership/later.json";
 
 #[derive(Serialize, Deserialize, Clone, Copy)]

@@ -30,37 +30,64 @@ const USAGE: &str = "usage: mothership scan | review | apply | key \
                      [--hostname <name>] [--admin <user>] [--timezone <zone>] [--disk <disk>] \
                      [--layout wipe|beside]";
 
+#[derive(Clone, Copy)]
+enum Command {
+    Scan,
+    Review,
+    Apply,
+    Key,
+    Trust,
+    Retire,
+    Install,
+}
+
+impl Command {
+    fn parse(name: &str) -> Option<Command> {
+        Some(match name {
+            "scan" => Command::Scan,
+            "review" => Command::Review,
+            "apply" => Command::Apply,
+            "key" => Command::Key,
+            "trust" => Command::Trust,
+            "retire" => Command::Retire,
+            "install" => Command::Install,
+            _ => return None,
+        })
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     // Rust ignores SIGPIPE, so `mothership scan | head` would panic on the closed pipe.
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if !matches!(
-        args.first().map(String::as_str),
-        Some("scan" | "review" | "apply" | "key" | "trust" | "retire" | "install")
-    ) {
-        eprintln!("{USAGE}");
-        std::process::exit(2);
-    }
+    let Some((command, rest)) = args
+        .split_first()
+        .and_then(|(name, rest)| Some((Command::parse(name)?, rest)))
+    else {
+        usage()
+    };
     if !user::is_root() {
         bail!("mothership reads every user's home: run it with sudo");
     }
-    match args.as_slice() {
-        [command] if command == "scan" => scan::run(),
-        [command] if command == "review" => review::run(),
-        [command] if command == "apply" => apply::run(),
-        [command, flags @ ..] if command == "install" => install::run(flags),
-        [command] if command == "key" => secrets::key(&Fleet::load()?),
-        [command, target, name, key] if command == "trust" => {
+    match (command, rest) {
+        (Command::Scan, []) => scan::run(),
+        (Command::Review, []) => review::run(),
+        (Command::Apply, []) => apply::run(),
+        (Command::Install, flags) => install::run(flags),
+        (Command::Key, []) => secrets::key(&Fleet::load()?),
+        (Command::Trust, [target, name, key]) => {
             edit_fleet(|fleet| secrets::trust(fleet, target, name, key))
         }
-        [command, target, name] if command == "retire" => {
+        (Command::Retire, [target, name]) => {
             edit_fleet(|fleet| secrets::retire(fleet, target, name))
         }
-        _ => {
-            eprintln!("{USAGE}");
-            std::process::exit(2);
-        }
+        _ => usage(),
     }
+}
+
+fn usage() -> ! {
+    eprintln!("{USAGE}");
+    std::process::exit(2)
 }
 
 fn edit_fleet(command: impl FnOnce(&Fleet) -> anyhow::Result<()>) -> anyhow::Result<()> {

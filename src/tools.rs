@@ -29,9 +29,13 @@ pub fn run_installer(user: &User, installer: &Installer) -> Result<()> {
     cmd::run(As::User(user), "sh", &["-c", &installer.run])
 }
 
+/// bun's installer puts it in the home, out of the PATH a login shell may set.
+const BUN: &str = ".bun/bin/bun";
+pub const BUN_GLOBALS: &str = ".bun/install/global/package.json";
+
 pub fn has(user: &User, manager: Manager) -> bool {
     match manager {
-        Manager::Bun => user.home.join(".bun/bin/bun").exists(),
+        Manager::Bun => user.home.join(BUN).exists(),
         _ => cmd::found(As::User(user), manager.name()),
     }
 }
@@ -58,12 +62,8 @@ fn spec(manager: Manager, tool: &Tool) -> Vec<String> {
     }
 }
 
-/// bun's installer puts it in the home, out of the PATH a login shell may set.
 fn bun(user: &User) -> String {
-    user.home
-        .join(".bun/bin/bun")
-        .to_string_lossy()
-        .into_owned()
+    user.home.join(BUN).to_string_lossy().into_owned()
 }
 
 #[cfg(test)]

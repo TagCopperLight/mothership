@@ -65,7 +65,14 @@ fn a_virtual_display_needs_nothing() {
 }
 
 #[test]
-fn an_unknown_cpu_vendor_stops_detection() {
+fn a_cpu_from_another_vendor_needs_nothing() {
     let root = Root::new("CentaurHauls");
-    assert!(detect(root.0.path()).is_err());
+    assert_eq!(root.detect(), []);
+}
+
+#[test]
+fn an_arm_cpu_needs_nothing() {
+    let root = Root::new("GenuineIntel");
+    root.write("proc/cpuinfo", "processor\t: 0\nCPU implementer\t: 0x41");
+    assert_eq!(root.detect(), []);
 }

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Deserializer, de};
 use std::{collections::BTreeSet, fs, io::ErrorKind, path::Path};
 
@@ -48,7 +48,7 @@ impl<'de> Deserialize<'de> for Hardware {
 }
 
 pub fn detect(root: &Path) -> Result<BTreeSet<Hardware>> {
-    let mut found = BTreeSet::from([cpu(root)?]);
+    let mut found: BTreeSet<Hardware> = cpu(root)?.into_iter().collect();
     found.extend(gpus(root)?);
     if battery(root)? {
         found.insert(Hardware::Battery);
@@ -62,19 +62,19 @@ pub fn detect(root: &Path) -> Result<BTreeSet<Hardware>> {
     Ok(found)
 }
 
-fn cpu(root: &Path) -> Result<Hardware> {
+/// Only Intel and AMD CPUs need microcode from the fleet. ARM kernels name no vendor.
+fn cpu(root: &Path) -> Result<Option<Hardware>> {
     let path = root.join("proc/cpuinfo");
     let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let vendor = text
         .lines()
         .find_map(|line| line.strip_prefix("vendor_id"))
         .and_then(|rest| rest.split(':').nth(1))
-        .map(str::trim)
-        .context("/proc/cpuinfo names no CPU vendor")?;
+        .map(str::trim);
     Ok(match vendor {
-        "GenuineIntel" => Hardware::CpuIntel,
-        "AuthenticAMD" => Hardware::CpuAmd,
-        other => bail!("unknown CPU vendor {other}"),
+        Some("GenuineIntel") => Some(Hardware::CpuIntel),
+        Some("AuthenticAMD") => Some(Hardware::CpuAmd),
+        _ => None,
     })
 }
 

@@ -8,7 +8,7 @@ use crate::{
     user::User,
 };
 use anyhow::Result;
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{collections::BTreeMap, fs, io::ErrorKind, path::PathBuf};
 
 pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
     let mut items = dconf(member.user())?;
@@ -52,7 +52,11 @@ fn dconf(user: &User) -> Result<Vec<Item>> {
 /// user.js wins at every start, so a pref changed in the app that user.js also sets is lost.
 fn prefs(user_js: &PathBuf) -> Result<Vec<Item>> {
     let wanted = parse(&fs::read_to_string(user_js)?);
-    let actual = parse(&fs::read_to_string(user_js.with_file_name("prefs.js"))?);
+    // The browser writes prefs.js at its first start.
+    let actual = match fs::read_to_string(user_js.with_file_name("prefs.js")) {
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        text => parse(&text?),
+    };
     Ok(actual
         .iter()
         .filter_map(|(key, value)| {
@@ -85,3 +89,7 @@ fn parse(text: &str) -> BTreeMap<String, String> {
         .map(|(key, value)| (key.to_owned(), value.to_owned()))
         .collect()
 }
+
+#[cfg(test)]
+#[path = "../../tests/settings.rs"]
+mod tests;

@@ -56,7 +56,8 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                     .showing(Preview::Diff {
                         old: source,
                         new: path.clone(),
-                    }),
+                    })
+                    .guessing(&path),
             ),
             Compare::Missing => Some(
                 item(Change::Removed, "deleted")
@@ -148,7 +149,8 @@ enum Compare {
 fn compare(fleet: &Fleet, rel: &Path, path: &Path) -> Result<Compare> {
     let source = fleet.etc_source(rel);
     let same = if fs::symlink_metadata(&source)?.is_symlink() {
-        fs::read_link(path).map(|target| target == fs::read_link(&source).unwrap_or_default())
+        let wanted = fs::read_link(&source)?;
+        fs::read_link(path).map(|target| target == wanted)
     } else {
         let wanted = fleet.etc_contents(rel)?;
         fs::read(path).map(|bytes| bytes == wanted)

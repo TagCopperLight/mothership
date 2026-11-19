@@ -15,8 +15,19 @@ pub fn scan(member: &Member) -> Result<Vec<Item>> {
     let mut items: Vec<Item> = thread::scope(|s| {
         let handles: Vec<_> = Manager::ALL
             .into_iter()
-            .filter(|&manager| uses(user, tools, manager))
-            .map(|manager| s.spawn(move || Ok(compare(tools, manager, &installed(user, manager)?))))
+            .filter_map(|manager| {
+                let has = crate::tools::has(user, manager);
+                (has || !tools.of(manager).is_empty()).then(|| {
+                    // Without its manager, none of the fleet's tools is installed.
+                    s.spawn(move || {
+                        let installed = match has {
+                            true => installed(user, manager)?,
+                            false => BTreeMap::new(),
+                        };
+                        Ok(compare(tools, manager, &installed))
+                    })
+                })
+            })
             .collect();
         handles.into_iter().map(join).collect::<Result<Vec<_>>>()
     })?
@@ -62,10 +73,6 @@ fn from(tool: &Tool) -> String {
             ..
         }) => format!("{git}, branch {branch}"),
     }
-}
-
-fn uses(user: &User, tools: &Tools, manager: Manager) -> bool {
-    !tools.of(manager).is_empty() || crate::tools::has(user, manager)
 }
 
 fn compare(tools: &Tools, manager: Manager, installed: &BTreeMap<String, Source>) -> Vec<Item> {
@@ -136,7 +143,7 @@ fn installed(user: &User, manager: Manager) -> Result<BTreeMap<String, Source>> 
             &["install", "--list"],
         )?)),
         Manager::Uv => uv_tools(Path::new(cmd::stdout(who, "uv", &["tool", "dir"])?.trim())),
-        Manager::Bun => bun_globals(&user.home.join(".bun/install/global/package.json")),
+        Manager::Bun => bun_globals(&user.home.join(crate::tools::BUN_GLOBALS)),
     }
 }
 

@@ -10,7 +10,14 @@ use crate::{
     walk,
 };
 use anyhow::Result;
-use std::path::Path;
+use std::{path::Path, sync::LazyLock};
+
+static BACK_LATER: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "back in {}",
+        style::count((later::LATER / DAY) as usize, "day")
+    )
+});
 
 pub fn run() -> Result<()> {
     let report = scan::collect()?;
@@ -216,7 +223,7 @@ fn ask(report: &scan::Report) -> Result<()> {
                 Answer::Ignore => {
                     edit::ignore(fleet, member, &scan::ignore_line(item)).map(|()| Some("ignored"))
                 }
-                Answer::Later => Ok(Some("back in 7 days")),
+                Answer::Later => Ok(Some(BACK_LATER.as_str())),
                 Answer::Pass => Ok(Some("passed")),
             };
             // A failed or cancelled answer asks again about the same item.

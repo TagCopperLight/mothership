@@ -27,3 +27,49 @@ fn an_earlier_folder_hides_the_same_unit_in_a_later_one() {
     let dirs = [etc.path().to_path_buf(), lib.path().to_path_buf()];
     assert!(also("a.service", &dirs).unwrap().is_empty());
 }
+
+fn presets(text: &str) -> Presets {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("90-test.preset"), text).unwrap();
+    Presets::load(&[dir.path().to_str().unwrap()]).unwrap()
+}
+
+#[test]
+fn an_enabled_instance_keeps_its_name_and_a_mask_enables_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let wants = dir.path().join("getty.target.wants");
+    fs::create_dir(&wants).unwrap();
+    std::os::unix::fs::symlink("/usr/lib/getty@.service", wants.join("getty@tty1.service"))
+        .unwrap();
+    std::os::unix::fs::symlink("/dev/null", dir.path().join("a.service")).unwrap();
+    let units = enabled(&[&dir.path().to_path_buf()]).unwrap();
+    assert_eq!(units, BTreeSet::from(["getty@tty1.service".to_owned()]));
+}
+
+#[test]
+fn an_instance_takes_its_templates_file() {
+    let dir = tempfile::tempdir().unwrap();
+    unit(dir.path(), "getty@.service", "[Install]\n");
+    let dirs = [dir.path().to_path_buf()];
+    assert_eq!(
+        unit_file("getty@tty1.service", &dirs),
+        Some(dir.path().join("getty@.service"))
+    );
+}
+
+#[test]
+fn a_template_preset_enables_its_default_instance_or_the_listed_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    unit(
+        dir.path(),
+        "getty@.service",
+        "[Install]\nDefaultInstance=tty1\n",
+    );
+    let dirs = [dir.path().to_path_buf()];
+    let rules = presets("enable getty@.service\nenable serial@.service ttyS0\ndisable *\n");
+    let enables = |name| rules.enables(name, &dirs).unwrap();
+    assert!(enables("getty@tty1.service"));
+    assert!(!enables("getty@tty2.service"));
+    assert!(enables("serial@ttyS0.service"));
+    assert!(!enables("serial@ttyS1.service"));
+}
