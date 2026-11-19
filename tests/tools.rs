@@ -1,5 +1,6 @@
 use super::*;
 use crate::fleet::Tools;
+use strum::IntoEnumIterator;
 
 fn first(manager: Manager, text: &str) -> Tool {
     let tools: Tools = toml::from_str(text).unwrap();
@@ -8,7 +9,7 @@ fn first(manager: Manager, text: &str) -> Tool {
 
 #[test]
 fn installs_from_the_registry_by_name() {
-    for manager in Manager::ALL {
+    for manager in Manager::iter() {
         let text = format!(r#"{} = ["x"]"#, manager.name());
         assert_eq!(spec(manager, &first(manager, &text)), ["x"]);
     }

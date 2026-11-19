@@ -23,7 +23,9 @@ impl Ignore {
             let (kind, pattern) = line
                 .split_once(' ')
                 .ok_or_else(|| anyhow!("{at}: expected `<kind> <glob>`"))?;
-            let kind = Kind::parse(kind).ok_or_else(|| anyhow!("{at}: unknown kind {kind}"))?;
+            let kind: Kind = kind
+                .parse()
+                .map_err(|_| anyhow!("{at}: unknown kind {kind}"))?;
             if kind.level() != level {
                 let other = match level {
                     Level::Machine => "a user's",

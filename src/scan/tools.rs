@@ -13,13 +13,13 @@ use std::{
     path::{Path, PathBuf},
     thread,
 };
+use strum::IntoEnumIterator;
 
 pub fn scan(member: &Member) -> Result<Vec<Item>> {
     let user = member.user();
     let tools = &member.config.tools;
     let mut items: Vec<Item> = thread::scope(|s| {
-        let handles: Vec<_> = Manager::ALL
-            .into_iter()
+        let handles: Vec<_> = Manager::iter()
             .filter_map(|manager| {
                 let has = crate::tools::has(user, manager);
                 (has || !tools.of(manager).is_empty()).then(|| {

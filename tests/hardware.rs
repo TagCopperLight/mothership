@@ -76,3 +76,15 @@ fn an_arm_cpu_needs_nothing() {
     root.write("proc/cpuinfo", "processor\t: 0\nCPU implementer\t: 0x41");
     assert_eq!(root.detect(), []);
 }
+
+#[test]
+fn names_read_back_as_the_same_piece() {
+    for (piece, name) in [
+        (Hardware::CpuIntel, "cpu-intel"),
+        (Hardware::GpuNvidia, "gpu-nvidia"),
+        (Hardware::Gxfp5130, "gxfp5130"),
+    ] {
+        assert_eq!(piece.name(), name);
+        assert_eq!(name.parse::<Hardware>().unwrap(), piece);
+    }
+}

@@ -18,6 +18,7 @@ use std::{
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
 };
+use strum::{EnumIter, IntoStaticStr};
 
 pub const DIR: &str = "/var/lib/mothership/fleet";
 
@@ -180,7 +181,8 @@ impl Tools {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, IntoStaticStr, EnumIter)]
+#[strum(serialize_all = "lowercase")]
 pub enum Manager {
     Cargo,
     Uv,
@@ -188,14 +190,8 @@ pub enum Manager {
 }
 
 impl Manager {
-    pub const ALL: [Manager; 3] = [Manager::Cargo, Manager::Uv, Manager::Bun];
-
     pub fn name(self) -> &'static str {
-        match self {
-            Manager::Cargo => "cargo",
-            Manager::Uv => "uv",
-            Manager::Bun => "bun",
-        }
+        self.into()
     }
 }
 

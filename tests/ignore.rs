@@ -13,3 +13,10 @@ fn an_ignored_folder_ignores_what_it_holds_but_not_its_neighbours() {
     assert!(!ignore.matches_subject(Kind::Home, "~/.local/share"));
     assert!(!ignore.matches_subject(Kind::File, "~/.config/app"));
 }
+
+#[test]
+fn a_kind_reads_back_from_its_name() {
+    assert_eq!(Kind::UserService.name(), "user-service");
+    assert!("user-service".parse::<Kind>() == Ok(Kind::UserService));
+    assert!("userservice".parse::<Kind>().is_err());
+}

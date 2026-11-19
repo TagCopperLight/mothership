@@ -30,8 +30,10 @@ use std::{
     path::{Path, PathBuf},
     thread,
 };
+use strum::{EnumString, IntoStaticStr};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, IntoStaticStr, EnumString)]
+#[strum(serialize_all = "kebab-case")]
 pub enum Kind {
     Package,
     Tool,
@@ -46,19 +48,6 @@ pub enum Kind {
 }
 
 impl Kind {
-    const ALL: [Kind; 10] = [
-        Kind::Package,
-        Kind::Tool,
-        Kind::File,
-        Kind::Home,
-        Kind::Etc,
-        Kind::Service,
-        Kind::UserService,
-        Kind::Account,
-        Kind::Dconf,
-        Kind::Pref,
-    ];
-
     pub fn level(self) -> Level {
         match self {
             Kind::Package | Kind::Etc | Kind::Service => Level::Machine,
@@ -67,22 +56,7 @@ impl Kind {
     }
 
     pub fn name(self) -> &'static str {
-        match self {
-            Kind::Package => "package",
-            Kind::Tool => "tool",
-            Kind::File => "file",
-            Kind::Home => "home",
-            Kind::Etc => "etc",
-            Kind::Service => "service",
-            Kind::UserService => "user-service",
-            Kind::Account => "account",
-            Kind::Dconf => "dconf",
-            Kind::Pref => "pref",
-        }
-    }
-
-    pub fn parse(name: &str) -> Option<Kind> {
-        Kind::ALL.into_iter().find(|kind| kind.name() == name)
+        self.into()
     }
 
     fn area(self) -> Area {

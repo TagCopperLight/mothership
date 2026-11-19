@@ -2,8 +2,10 @@ use crate::walk;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Deserializer, de};
 use std::{collections::BTreeSet, fs, path::Path};
+use strum::{EnumString, IntoStaticStr};
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, IntoStaticStr, EnumString)]
+#[strum(serialize_all = "kebab-case")]
 pub enum Hardware {
     CpuIntel,
     CpuAmd,
@@ -15,36 +17,16 @@ pub enum Hardware {
 }
 
 impl Hardware {
-    const ALL: [Hardware; 7] = [
-        Hardware::CpuIntel,
-        Hardware::CpuAmd,
-        Hardware::GpuIntel,
-        Hardware::GpuAmd,
-        Hardware::GpuNvidia,
-        Hardware::Battery,
-        Hardware::Gxfp5130,
-    ];
-
     pub fn name(self) -> &'static str {
-        match self {
-            Hardware::CpuIntel => "cpu-intel",
-            Hardware::CpuAmd => "cpu-amd",
-            Hardware::GpuIntel => "gpu-intel",
-            Hardware::GpuAmd => "gpu-amd",
-            Hardware::GpuNvidia => "gpu-nvidia",
-            Hardware::Battery => "battery",
-            Hardware::Gxfp5130 => "gxfp5130",
-        }
+        self.into()
     }
 }
 
 impl<'de> Deserialize<'de> for Hardware {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        Hardware::ALL
-            .into_iter()
-            .find(|piece| piece.name() == name)
-            .ok_or_else(|| de::Error::custom(format!("mothership can't detect {name}")))
+        name.parse()
+            .map_err(|_| de::Error::custom(format!("mothership can't detect {name}")))
     }
 }
 
