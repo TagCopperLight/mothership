@@ -26,8 +26,6 @@ pub fn wait() {
     }
 }
 
-/// A step that fails while the network is down waits for it and runs again, so a dropped
-/// connection never stops an install. Every step it wraps can run twice.
 pub fn retry<T>(what: &str, mut step: impl FnMut() -> Result<T>) -> Result<T> {
     loop {
         match step() {

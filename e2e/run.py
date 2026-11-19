@@ -1,17 +1,7 @@
 #!/usr/bin/env python3
-"""Runs each scenario in scenarios/<system>/ in a fresh container of that system, built from
-<system>.Dockerfile, and compares what it prints.
 
-A scenario is a Markdown file. In its ```console blocks, `$ ` starts a command, `> ` continues
-it, and the lines up to the next command are what it must print, stdout and stderr together:
 
-- `...` stands for any number of lines, such as pacman's own output.
-- A line ending in ` (re)` is a regular expression.
-- Other lines match with runs of spaces counted as one, so alignment doesn't matter.
-- A last line `[exit N]` means the command must fail with code N. Otherwise it must succeed.
 
-Usage: e2e/run.py [scenario name ...]
-"""
 
 import difflib
 import os
@@ -24,7 +14,6 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 EXIT = re.compile(r"\[exit (\d+)\]")
-# Debian's C library is older than Arch's, so its binary is built on Debian.
 BINARIES = {
     "arch": ROOT / "target/debug/mothership",
     "debian": ROOT / "target/debian/debug/mothership",
@@ -66,7 +55,6 @@ def build(system: str) -> None:
         )
     else:
         subprocess.run(["cargo", "build", "--locked", "--quiet"], cwd=ROOT, check=True)
-    # The host's network, so the build resolves names the way the host does, VPN included.
     subprocess.run(["docker", "build", "--quiet", "--network", "host", "-t", image(system),
                     "-f", str(HERE / f"{system}.Dockerfile"), str(HERE)],
                    check=True, stdout=subprocess.DEVNULL)
@@ -94,7 +82,6 @@ def run(path: Path) -> bool:
     name = system(path)
     print(f"{name}/{path.stem}: ", end="", flush=True)
     container = subprocess.run(
-        # Debian's sudo warns when it can't resolve the machine's own name.
         ["docker", "run", "-d", "--rm", "--network", "none",
          "--hostname", "machine", "--add-host", "machine:127.0.0.1",
          "-v", f"{BINARIES[name]}:/usr/local/bin/mothership:ro", image(name), "sleep", "infinity"],

@@ -7,26 +7,20 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use std::{fs, path::Path, str::FromStr};
 
-/// Where the ISO mounts the new system.
 pub const ROOT: &str = "/mnt";
-/// gpt-auto opens the root partition under this name, so the ISO uses it too.
 const MAPPER: &str = "root";
 const ESP_TYPE: &str = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b";
-/// sgdisk's codes for the EFI partition, an extra boot partition (XBOOTLDR) and the x86-64 root.
 const ESP_CODE: &str = "ef00";
 const XBOOTLDR_CODE: &str = "ea00";
 const ROOT_CODE: &str = "8304";
 const GIB: u64 = 1 << 30;
 const BOOT_SIZE: u64 = GIB;
 const ROOT_MIN: u64 = 20 * GIB;
-/// The ISO mounts the drive it started from there, unless it copied itself to RAM.
 const BOOT_MOUNT: &str = "/run/archiso/bootmnt";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Layout {
-    /// The whole disk: a boot partition, then the encrypted root.
     Wipe,
-    /// The largest free space, next to Windows, whose EFI partition systemd-boot shares.
     Beside,
 }
 
@@ -69,7 +63,6 @@ pub fn choose(flags: &Flags, prompt: &mut Prompt) -> Result<Disk> {
     Ok(Disk { path, layout })
 }
 
-/// The machine's real disks, leaving out the one the ISO started from.
 fn list() -> Result<Vec<Choice>> {
     let boot_disk = match cmd::bytes(As::Root, "mountpoint", &["--quiet", BOOT_MOUNT]) {
         Ok(_) => {
@@ -113,7 +106,6 @@ fn list() -> Result<Vec<Choice>> {
         .into_iter()
         .flatten()
         .filter(|device| device["type"] == "disk")
-        // zram also shows as a disk, with no device behind it.
         .filter(|device| {
             let name = text(device, "name");
             let name = name.trim_start_matches("/dev/");
@@ -127,7 +119,6 @@ fn list() -> Result<Vec<Choice>> {
         .collect())
 }
 
-/// Partitions, encrypts and mounts the disk under ROOT, once I type its name.
 pub fn prepare(disk: &Disk, prompt: &mut Prompt) -> Result<()> {
     let name = Path::new(&disk.path)
         .file_name()
@@ -176,7 +167,6 @@ pub fn prepare(disk: &Disk, prompt: &mut Prompt) -> Result<()> {
     Ok(())
 }
 
-/// Whether an earlier run opened the disk and mounted it, which only the disk step does.
 pub fn still_open() -> Result<bool> {
     if !Path::new("/dev/mapper").join(MAPPER).exists() {
         return Ok(false);
@@ -197,7 +187,6 @@ pub fn close() -> Result<()> {
 
 type Partitions = (String, Vec<(String, &'static str)>);
 
-/// gpt-auto finds both partitions by their type, so no file names them.
 fn wipe(disk: &str) -> Result<Partitions> {
     cmd::root("sgdisk", &["--zap-all", disk])?;
     cmd::root(
@@ -216,8 +205,6 @@ fn wipe(disk: &str) -> Result<Partitions> {
     Ok((partition(disk, 2), vec![(esp, "/boot")]))
 }
 
-/// systemd-boot goes in Windows' EFI partition, which is often too small for the kernel, so
-/// the kernel goes in its own boot partition (XBOOTLDR).
 fn beside(disk: &str, prompt: &mut Prompt) -> Result<Partitions> {
     let esps = esps(disk)?;
     if esps.is_empty() {
@@ -294,7 +281,6 @@ fn numbers(disk: &str) -> Result<Vec<u64>> {
         .collect())
 }
 
-/// The kernel adds a `p` between a name that ends in a digit and the number: nvme0n1p2.
 fn partition(disk: &str, number: u64) -> String {
     if disk.ends_with(|c: char| c.is_ascii_digit()) {
         format!("{disk}p{number}")

@@ -22,7 +22,6 @@ pub struct Waiting {
     last: u64,
 }
 
-/// The items review put off, which it shows again a week later.
 pub struct Later {
     path: PathBuf,
     items: BTreeMap<String, Waiting>,
@@ -58,7 +57,6 @@ impl Later {
         self.days_left(fleet, item, now).is_none()
     }
 
-    /// Days until review shows a put-off item again, rounded up, or None when it's due.
     pub fn days_left(&self, fleet: &Fleet, item: &Item, now: u64) -> Option<u64> {
         let waiting = self.get(fleet, item)?;
         let back = waiting.last + LATER;
@@ -77,7 +75,6 @@ impl Later {
         self.items.remove(&scan::key(fleet, item));
     }
 
-    /// Keeps only the items still waiting for review.
     pub fn save(mut self, fleet: &Fleet, current: &[&Item]) -> Result<()> {
         let keys: BTreeSet<String> = current.iter().map(|i| scan::key(fleet, i)).collect();
         self.items.retain(|key, _| keys.contains(key));

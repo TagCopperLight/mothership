@@ -78,8 +78,6 @@ fn visit(dir: &Path, rules: &Rules, walk: &mut Walk) -> Result<()> {
     Ok(())
 }
 
-/// A new folder shows as one line, unless an ignore line names something inside it: the scan
-/// then opens it, so the ignore line applies and the rest still shows.
 enum Contents {
     Nothing,
     New,
@@ -139,7 +137,6 @@ pub fn files(root: &Path) -> Result<Vec<PathBuf>> {
 #[path = "../tests/walk.rs"]
 mod tests;
 
-/// Where an absolute path lands in a system mounted at `root`, such as a new disk.
 pub fn under(root: &Path, absolute: &str) -> PathBuf {
     root.join(absolute.trim_start_matches('/'))
 }

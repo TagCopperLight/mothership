@@ -15,7 +15,6 @@ use std::{
 
 const LINES: usize = 16;
 const SNIFF: usize = 8 * 1024;
-/// Under the item's subject, past its sign.
 const INDENT: &str = "      ";
 
 pub enum Preview {
@@ -56,7 +55,6 @@ impl Preview {
                     "--color=false"
                 };
                 let path = path.to_string_lossy();
-                // --reverse shows the machine's edits as additions.
                 let args = ["diff", "--reverse", "--no-pager", color, &path];
                 hunks(&cmd::stdout(As::User(user), "chezmoi", &args)?)
             }
@@ -70,7 +68,6 @@ impl Preview {
                 lines(&cmd::stdout(As::Root, "systemctl", &args)?)
             }
             Preview::Dconf { section, user } => {
-                // dump includes the folders below, which are items of their own.
                 let dump = cmd::stdout(As::User(user), "dconf", &["dump", &format!("{section}/")])?;
                 lines(&dump)
                     .into_iter()
@@ -117,7 +114,6 @@ fn diff(old: &Path, new: &Path, color: bool) -> Result<Vec<String>> {
         .args([old, new])
         .output()
         .context("running git diff")?;
-    // git diff exits with 1 when the files differ.
     if out.status.code() != Some(0) && out.status.code() != Some(1) {
         bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
     }

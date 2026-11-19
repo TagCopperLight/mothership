@@ -15,7 +15,6 @@ use std::{
 
 const OS_RELEASE: &str = "/etc/os-release";
 
-/// The family the machine's system belongs to, which decides its package manager.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Distro {
     Arch,
@@ -29,7 +28,6 @@ impl Distro {
         Distro::of(&text)
     }
 
-    /// Ubuntu names Debian in ID_LIKE.
     fn of(os_release: &str) -> Result<Distro> {
         let field = |name: &str| {
             os_release
@@ -49,7 +47,6 @@ impl Distro {
         }
     }
 
-    /// Why apply can't install a package, or nothing when it can.
     pub fn cannot_install(self, fleet: &Fleet, name: &str) -> Result<Option<String>> {
         match self {
             Distro::Arch => pacman::cannot_install(fleet, name),
@@ -57,8 +54,6 @@ impl Distro {
         }
     }
 
-    /// The package manager's own config, which says where packages come from, so apply writes
-    /// it before installing.
     pub fn configures(self, path: &Path) -> bool {
         let config: &[&str] = match self {
             Distro::Arch => &["/etc/pacman.conf", "/etc/pacman.d"],
@@ -67,7 +62,6 @@ impl Distro {
         config.iter().any(|dir| path.starts_with(dir))
     }
 
-    /// Installs what install needs before the machine has a fleet, such as git.
     pub fn bootstrap(self, names: &[&str]) -> Result<()> {
         match self {
             Distro::Arch => pacman::bootstrap(names),
@@ -82,8 +76,6 @@ impl Distro {
         }
     }
 
-    /// Removes the packages nothing else needs, with the dependencies only they needed, and
-    /// keeps the others as dependencies.
     pub fn uninstall(self, names: &[&str]) -> Result<()> {
         match self {
             Distro::Arch => pacman::uninstall(names),
@@ -92,8 +84,6 @@ impl Distro {
     }
 }
 
-/// Read directly: asking the package manager for edited config files checks every file of
-/// every package, which takes half a minute.
 pub struct Db {
     pub packages: Vec<Package>,
 }
@@ -102,7 +92,6 @@ pub struct Package {
     pub name: String,
     pub description: String,
     pub explicit: bool,
-    /// Folders end with a `/`.
     pub files: Vec<String>,
     pub backups: Vec<Backup>,
     pub depends: Vec<String>,
@@ -110,7 +99,6 @@ pub struct Package {
     pub archive: Archive,
 }
 
-/// A config file of the package, with the md5 of the version the package put there.
 pub struct Backup {
     pub path: PathBuf,
     pub md5: String,
@@ -119,13 +107,10 @@ pub struct Backup {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Origin {
-    /// The archive holds the original, so it can be restored.
     Archive,
-    /// The package's install script wrote it, and nothing keeps the original.
     Script,
 }
 
-/// Where the package manager keeps the package it installed, which holds the original config.
 #[derive(Clone)]
 pub struct Archive {
     pub path: PathBuf,
@@ -170,7 +155,6 @@ impl Db {
     }
 }
 
-/// Loads each item on its own thread share, keeping the items' order.
 fn in_parallel<T: Sync, U: Send>(
     items: &[T],
     load: impl Fn(&T) -> Result<U> + Sync,

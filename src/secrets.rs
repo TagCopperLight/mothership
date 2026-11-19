@@ -17,7 +17,6 @@ pub const RECIPIENTS: &str = "recipients.txt";
 pub const ROOT_KEY: &str = "/etc/mothership/key.txt";
 pub const SECRETS: &str = "secrets";
 pub const AGE: &str = ".age";
-/// The name of the recovery key, kept on paper, which every list holds.
 pub const RECOVERY: &str = "recovery";
 
 pub fn key_path(user: &User) -> PathBuf {
@@ -36,7 +35,6 @@ impl Keys {
         Ok(Keys(keys))
     }
 
-    /// Adds a key typed in, such as the recovery key, and returns its public half.
     pub fn add(&mut self, secret: &str) -> Result<String> {
         let key: x25519::Identity = secret
             .trim()
@@ -137,7 +135,6 @@ fn format(list: &[Recipient]) -> String {
         .join("\n")
 }
 
-/// The names of the keys in a list, which are the machines that open it, plus the recovery key.
 pub fn names(list: &Path) -> Result<Vec<String>> {
     Ok(read(list)?.into_iter().map(|r| r.name).collect())
 }
@@ -154,17 +151,14 @@ fn read(path: &Path) -> Result<Vec<Recipient>> {
     }
 }
 
-/// One of the machine's keys: root's or a user's.
 pub struct MachineKey {
     pub name: String,
     pub public: String,
-    /// What `trust` takes, such as `workstation/root`.
     pub target: String,
     pub list: PathBuf,
     pub trusted: bool,
 }
 
-/// Creates root's key and each user's when they have none.
 pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
     let mut owners = vec![("root".to_owned(), None, fleet.recipients())];
     for member in &fleet.members {
@@ -275,8 +269,6 @@ pub fn trust(fleet: &Fleet, text: &str, name: &str, key: &str) -> Result<()> {
     trust_with(fleet, fleet.keys(), text, name, key)
 }
 
-/// `keys` open the list's secrets, to encrypt them again for the new key. A name the list
-/// already holds is a machine reinstalled with a new key, which replaces its old one.
 pub fn trust_with(fleet: &Fleet, keys: &Keys, text: &str, name: &str, key: &str) -> Result<()> {
     let target = target(fleet, text)?;
     key.parse::<x25519::Recipient>()

@@ -57,7 +57,6 @@ impl Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Rust ignores SIGPIPE, so `mothership scan | head` would panic on the closed pipe.
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some((command, rest)) = args

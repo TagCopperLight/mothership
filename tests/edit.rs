@@ -99,7 +99,6 @@ impl Checkout {
 #[test]
 fn lists_a_package_last_and_leaves_the_comments_on_their_lines() {
     let checkout = Checkout::new();
-    // ListPackage asks pacman which key; the e2e scenarios cover that part.
     checkout.apply(
         Add::Declare {
             key: Key::Packages,

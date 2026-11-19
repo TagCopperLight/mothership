@@ -18,7 +18,6 @@ pub fn scan(member: &Member) -> Result<Vec<Item>> {
             .filter_map(|manager| {
                 let has = crate::tools::has(user, manager);
                 (has || !tools.of(manager).is_empty()).then(|| {
-                    // Without its manager, none of the fleet's tools is installed.
                     s.spawn(move || {
                         let installed = match has {
                             true => installed(user, manager)?,
@@ -168,8 +167,6 @@ fn cargo_list(text: &str) -> BTreeMap<String, Source> {
         .collect()
 }
 
-/// `query` is the one key that names a branch: cargo writes `?branch=`, and uv `?rev=` for the
-/// `@branch` apply gives it. Any other query, such as a tag, can't be declared.
 fn git_source(name: &str, url: &str, query: &str) -> Source {
     let branch = match url.split_once('?') {
         None => None,

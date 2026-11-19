@@ -18,9 +18,6 @@ use std::{
 
 const FLEET: &str = "/tmp/fleet";
 
-/// On the Arch ISO: asks everything, prepares the disk and installs the base system, then
-/// finishes from inside it. Every step after the disk's can run twice, so a run that stopped
-/// after it goes on from there.
 pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     let resumed = disk::still_open()?;
     if resumed {
@@ -68,8 +65,6 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     }
     unix::fs::symlink(zoneinfo(&timezone), &localtime)?;
     machine.save(root)?;
-    // The new system's copy holds what an earlier run did in it, such as keys it trusted, so
-    // it only takes what the fleet gained since.
     let copy = walk::under(root, fleet::DIR);
     if copy.exists() {
         let path = copy.to_string_lossy();
@@ -93,7 +88,6 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     let mut chroot = Command::new("arch-chroot");
     chroot.args(args).env(FROM_ISO, "1");
     if private {
-        // gh reads its own config here, with no network.
         let token = cmd::stdout(As::Root, "gh", &["auth", "token"])?;
         chroot.env(GH_TOKEN, token.trim());
     }
@@ -106,8 +100,6 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     Ok(())
 }
 
-/// The passphrase is typed again at each start, with the type's keymap: the ISO uses it too,
-/// so the same keys give the same passphrase.
 fn load_keymap(dir: &Path, machine: &Machine) -> Result<()> {
     let path = dir
         .join("types")

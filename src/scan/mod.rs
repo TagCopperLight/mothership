@@ -97,7 +97,6 @@ impl Kind {
     }
 }
 
-/// How scan groups what it finds: the way I think of a machine, not the way it checks it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Area {
     Packages,
@@ -123,10 +122,8 @@ impl Area {
     }
 }
 
-/// What differs, seen from the machine: Added means the machine has it and the fleet doesn't.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Change {
-    /// A file that looks secret, which the fleet holds in clear.
     InClear,
     Unreadable,
     Added,
@@ -134,7 +131,6 @@ pub enum Change {
     Removed,
 }
 
-/// Who moved: the fleet, which apply follows, or the machine, which waits for review.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Section {
     Attention,
@@ -176,16 +172,13 @@ pub struct Item {
     pub section: Section,
     pub member: Option<usize>,
     pub subject: String,
-    /// What happened on the machine, in a word or two: "installed", "edited", "joined".
     pub detail: String,
-    /// Facts that help decide, such as a package's description or a folder's size.
     pub note: String,
     pub secret: Secret,
     pub add: Option<Add>,
     pub no_add: Option<&'static str>,
     pub revert: Option<Revert>,
     pub preview: Preview,
-    /// Guessed only for the items shown, since searching a big ignored folder takes seconds.
     pub guess: Option<PathBuf>,
 }
 
@@ -224,8 +217,6 @@ impl Item {
         item
     }
 
-    /// Review never shows a secret's contents, since its screen can end up in logs and
-    /// transcripts, and adds it encrypted.
     fn secret(mut self, secret: Secret) -> Self {
         self.secret = secret;
         self.preview = Preview::None;
@@ -264,7 +255,6 @@ impl Item {
         self
     }
 
-    /// The sign shows what happens to the machine: what it gained, or what apply brings it.
     fn sign(&self) -> (&'static str, Paint) {
         let change = match (self.section, self.change) {
             (Section::Fleet, Change::Added) => Change::Removed,
@@ -280,10 +270,8 @@ impl Item {
         }
     }
 
-    /// On the fleet's side, what apply does to follow it.
     fn verb(&self) -> String {
         match (&self.revert, self.section) {
-            // Writing the fleet's version of a file can create it, change it or delete it.
             (Some(Revert::ApplyFile { .. } | Revert::WriteEtc(_)), Section::Fleet) => {
                 match self.change {
                     Change::Added => "delete",
@@ -309,7 +297,6 @@ pub fn key(fleet: &Fleet, item: &Item) -> String {
     }
 }
 
-/// The owner shows only on a type with several users: with one, `~` and the area say it.
 pub fn heading(fleet: &Fleet, item: &Item) -> String {
     let area = item.kind.area().title();
     match owner(fleet, item) {
@@ -322,7 +309,6 @@ fn owner(fleet: &Fleet, item: &Item) -> Option<usize> {
     item.member.filter(|_| fleet.members.len() > 1)
 }
 
-/// The fleet's changes come whatever the ignore lists say, as apply follows them.
 pub fn ignored(fleet: &Fleet, item: &Item) -> bool {
     item.section != Section::Fleet
         && match item.member {
@@ -473,8 +459,6 @@ impl<'a> Ships<'a> {
         })
     }
 
-    /// /bin is a link to /usr/bin, where packages put their files, so the folder is resolved.
-    /// A file in a user's home ships when their chezmoi writes it.
     pub fn path(&self, path: &Path, member: Option<&Member>) -> Result<bool> {
         let resolved = match (path.parent(), path.file_name()) {
             (Some(dir), Some(name)) => match fs::canonicalize(dir) {
@@ -492,7 +476,6 @@ impl<'a> Ships<'a> {
         if let Some(user) = member.and_then(|m| m.user.as_ref())
             && resolved.starts_with(&user.home)
         {
-            // Fails for a file chezmoi doesn't manage.
             return Ok(chezmoi::source_path(user, &resolved).is_ok());
         }
         let file = resolved.to_string_lossy();
@@ -517,7 +500,6 @@ pub fn run() -> Result<()> {
     let style = Style::stdout();
     let later = Later::load()?;
     let now = later::now()?;
-    // Put off applies to my changes: the fleet's come with the next apply.
     let waiting = |item: &Item| {
         (item.section != Section::Fleet)
             .then(|| later.days_left(fleet, item, now))
@@ -599,7 +581,6 @@ pub fn print_section(
     print_groups(fleet, items, style, waiting);
 }
 
-/// Items under their area's heading, in the order given.
 pub fn print_groups(
     fleet: &Fleet,
     items: &[&Item],
@@ -619,8 +600,6 @@ pub fn print_groups(
     println!();
 }
 
-/// Widths that line up the subjects and verbs of a section. A long subject pushes its own
-/// line's verb out instead of widening every line.
 #[derive(Clone, Copy)]
 pub struct Columns {
     subject: usize,
@@ -641,7 +620,6 @@ impl Columns {
     }
 }
 
-/// One item on one line, the same in scan, review and apply.
 pub fn line(item: &Item, style: Style, columns: Columns, waiting: Option<u64>) -> String {
     let (sign, paint) = item.sign();
     let verb_paint = match item.section {
@@ -649,7 +627,6 @@ pub fn line(item: &Item, style: Style, columns: Columns, waiting: Option<u64>) -
         _ => paint,
     };
     let mut extras = Vec::new();
-    // A locked item and one in clear say it in their own words.
     if matches!(item.secret, Secret::Guessed | Secret::Fleet) && item.change != Change::InClear {
         extras.push(style.paint("secret", &[Paint::Magenta, Paint::Bold]));
     }
@@ -680,7 +657,6 @@ pub fn line(item: &Item, style: Style, columns: Columns, waiting: Option<u64>) -
     }
 }
 
-/// Adds what only the shown items need, since ignored ones can be huge folders.
 fn finish(fleet: &Fleet, mut item: Item) -> Item {
     let Some(path) = item.guess.take() else {
         return item;
@@ -695,7 +671,6 @@ fn finish(fleet: &Fleet, mut item: Item) -> Item {
     looks_secret(not_secret, item, &path)
 }
 
-/// A plain file needs no note: its preview shows it.
 fn size(path: &Path) -> String {
     let described = match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_symlink() => fs::read_link(path)
@@ -710,8 +685,6 @@ fn size(path: &Path) -> String {
     described.unwrap_or_else(|e| format!("can't read it: {e:#}"))
 }
 
-/// A guess, so a secret is never added in clear by mistake: a file only its owner can read, or
-/// a folder holding one. A folder it can't open counts too. not-secret.txt clears the guess.
 fn looks_secret(not_secret: &Paths, item: Item, path: &Path) -> Item {
     if !not_secret.matches(&item.subject) && guess_secret(path) {
         item.secret(Secret::Guessed)

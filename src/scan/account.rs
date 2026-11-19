@@ -49,7 +49,6 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
             item.because("no package the fleet lists installs this shell")
         });
     }
-    // Member lists leave out my own primary group.
     let groups = fs::read_to_string("/etc/group")?;
     let actual: Vec<&str> = groups
         .lines()

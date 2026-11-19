@@ -20,9 +20,7 @@ pub struct Prompt {
 }
 
 enum Input {
-    /// A terminal answers with one key, no Enter needed.
     Keys,
-    /// Answers piped in show up nowhere else, so a transcript would lose them: they're echoed.
     Lines(Box<dyn Iterator<Item = io::Result<String>>>, bool),
 }
 
@@ -47,7 +45,6 @@ impl Prompt {
         }
     }
 
-    /// Waits for one of `keys`, and returns None when the input ends or I press Ctrl-C.
     pub fn ask(&mut self, question: &str, keys: &[char]) -> Result<Option<char>> {
         print!("{question} ");
         io::stdout().flush()?;
@@ -103,17 +100,14 @@ impl Prompt {
         Ok(self.ask(&question, &['y', 'n', '\r', '\n'])? == Some('y'))
     }
 
-    /// A typed answer, which can't be empty. The input ending stops whoever asked.
     pub fn line(&mut self, question: &str) -> Result<String> {
         self.typed(question, true)
     }
 
-    /// A typed answer the terminal doesn't show, such as a passphrase, kept as typed.
     pub fn hidden(&mut self, question: &str) -> Result<String> {
         self.typed(question, false)
     }
 
-    /// One of `choices`, by its number or its name. A single choice needs no question.
     pub fn choose(&mut self, question: &str, choices: &[Choice]) -> Result<usize> {
         match choices {
             [] => bail!("{question}: there is nothing to choose from"),
@@ -153,7 +147,6 @@ impl Prompt {
             io::stdout().flush()?;
             let answer = match &mut self.input {
                 Input::Keys if shown => read_line()?,
-                // Ctrl-C arrives as a character, so the terminal gets its echo back first.
                 Input::Keys => {
                     let answer = with_terminal(libc::ECHO | libc::ISIG, read_line)?;
                     println!();
@@ -199,7 +192,6 @@ fn read_line() -> Result<Option<String>> {
     Ok((io::stdin().lock().read_line(&mut line)? > 0).then_some(line))
 }
 
-/// Reads one key with the terminal's line editing and echo off.
 fn read_key() -> Result<Option<u8>> {
     with_terminal(libc::ICANON | libc::ECHO | libc::ISIG, || {
         let mut byte = [0u8];
@@ -207,10 +199,8 @@ fn read_key() -> Result<Option<u8>> {
     })
 }
 
-/// Runs `read` with the terminal's `off` flags cleared, then puts them back.
 fn with_terminal<T>(off: libc::tcflag_t, read: impl FnOnce() -> Result<T>) -> Result<T> {
     let fd = libc::STDIN_FILENO;
-    // SAFETY: termios is plain data, filled in by tcgetattr before use.
     let mut saved: libc::termios = unsafe { std::mem::zeroed() };
     if unsafe { libc::tcgetattr(fd, &mut saved) } != 0 {
         return Err(io::Error::last_os_error().into());

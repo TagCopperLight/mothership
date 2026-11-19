@@ -5,8 +5,6 @@ use std::{
     process::{Command, Stdio},
 };
 
-/// Who runs a program: root, or a user in their own login environment, so their PATH finds what
-/// they installed in their home.
 #[derive(Clone, Copy)]
 pub enum As<'a> {
     Root,
@@ -61,7 +59,6 @@ pub fn output(mut command: Command, program: &str, args: &[&str]) -> Result<Vec<
     Ok(out.stdout)
 }
 
-/// Whether the program is on the PATH of whoever runs it.
 pub fn found(who: As, program: &str) -> bool {
     bytes(who, "sh", &["-c", "command -v \"$1\"", "sh", program]).is_ok()
 }
@@ -74,16 +71,12 @@ pub fn root(program: &str, args: &[&str]) -> Result<()> {
     run(As::Root, program, args)
 }
 
-/// Runs a program that reads a secret on its standard input, so it never shows in `ps`.
 pub fn with_input(who: As, program: &str, args: &[&str], input: &[u8]) -> Result<()> {
     let mut child = who
         .command(program, args)
         .stdin(Stdio::piped())
         .spawn()
         .with_context(|| format!("running {program}"))?;
-    // A program that stops early closes its input, and its exit status says why. main lets
-    // SIGPIPE kill mothership, so the write ignores it.
-    // SAFETY: signal only swaps the handler, and the old one goes back right after.
     let previous = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
     let written = child.stdin.take().expect("piped above").write_all(input);
     unsafe { libc::signal(libc::SIGPIPE, previous) };

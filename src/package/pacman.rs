@@ -17,7 +17,6 @@ pub fn load() -> Result<Vec<Package>> {
             dirs.push(dir);
         }
     }
-    // The folder's order depends on the filesystem, and the scan reports in this order.
     dirs.sort();
     in_parallel(&dirs, |dir| package(dir))
 }
@@ -34,7 +33,6 @@ fn package(dir: &Path) -> Result<Package> {
     let archive = format!("{name}-{}-{}.pkg.tar.zst", field("VERSION"), field("ARCH"));
     Ok(Package {
         description: field("DESC"),
-        // pacman writes REASON only for dependencies.
         explicit: section(&desc, "REASON").next() != Some("1"),
         files: section(&files, "FILES").map(|f| format!("/{f}")).collect(),
         depends: names(&desc, "DEPENDS"),
@@ -126,7 +124,6 @@ pub fn install(fleet: &Fleet, names: &[&str]) -> Result<()> {
         let args = [&["-S", "--needed", "--noconfirm"], &install.repo[..]].concat();
         cmd::root("pacman", &args)?;
     }
-    // An AUR helper builds as a user, never as root.
     if let Some((helper, aur)) = &install.aur {
         cmd::run(
             As::User(fleet.admin()),
@@ -171,7 +168,6 @@ pub fn uninstall(names: &[&str]) -> Result<()> {
         .arg("-Qdtq")
         .output()
         .context("running pacman")?;
-    // 1 means no package is left unneeded.
     if !matches!(out.status.code(), Some(0 | 1)) {
         bail!(
             "pacman -Qdtq failed: {}",

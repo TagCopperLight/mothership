@@ -1,8 +1,5 @@
 name: Release
 
-# A new machine downloads mothership instead of building it, so each version tag publishes a
-# static binary that runs on Arch, Debian and Ubuntu alike, with its checksum. Only x86_64 for
-# now: hardware detection reads the CPU vendor, which ARM kernels don't report.
 on:
   push:
     tags: ["v*"]

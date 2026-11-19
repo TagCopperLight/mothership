@@ -62,7 +62,6 @@ pub fn detect(root: &Path) -> Result<BTreeSet<Hardware>> {
     Ok(found)
 }
 
-/// Only Intel and AMD CPUs need microcode from the fleet. ARM kernels name no vendor.
 fn cpu(root: &Path) -> Result<Option<Hardware>> {
     let path = root.join("proc/cpuinfo");
     let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
@@ -78,7 +77,6 @@ fn cpu(root: &Path) -> Result<Option<Hardware>> {
     })
 }
 
-/// Display controllers are PCI class 0x03. Virtual ones, from other vendors, need no driver.
 fn gpus(root: &Path) -> Result<BTreeSet<Hardware>> {
     let dir = root.join("sys/bus/pci/devices");
     let mut found = BTreeSet::new();
@@ -97,7 +95,6 @@ fn gpus(root: &Path) -> Result<BTreeSet<Hardware>> {
     Ok(found)
 }
 
-/// A wireless mouse or headset shows up as a battery too, with the scope `Device`.
 fn battery(root: &Path) -> Result<bool> {
     let dir = root.join("sys/class/power_supply");
     for name in entries(&dir)? {

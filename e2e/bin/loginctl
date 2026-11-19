@@ -1,5 +1,4 @@
 #!/bin/sh
-# No logind runs in the container, so linger is the file logind would keep.
 case "$1" in
   enable-linger) mkdir -p /var/lib/systemd/linger && touch "/var/lib/systemd/linger/$2" ;;
   disable-linger) rm -f "/var/lib/systemd/linger/$2" ;;

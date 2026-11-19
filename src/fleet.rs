@@ -58,8 +58,6 @@ pub struct System {
     pub built_packages: Vec<String>,
     pub aur_helper: Option<String>,
     pub services: Vec<String>,
-    /// Files in etc/ that need another mode than 644, or 755 for executables. git keeps only the
-    /// executable bit.
     pub etc_modes: BTreeMap<PathBuf, Mode>,
     hardware: BTreeMap<Hardware, Block>,
     options: BTreeMap<String, Block>,
@@ -100,7 +98,6 @@ impl Machine {
             .with_context(|| format!("parsing {MACHINE}"))
     }
 
-    /// `root` is where the machine's system sits: `/`, or the new disk during an install.
     pub fn save(&self, root: &Path) -> Result<()> {
         let path = walk::under(root, MACHINE);
         fs::create_dir_all(path.parent().expect("MACHINE has a folder"))?;
@@ -260,8 +257,6 @@ impl Fleet {
         self.local().etc_open
     }
 
-    /// Every piece of hardware the machine has needs a block, even an empty one, so that new
-    /// hardware never goes without what it needs unnoticed.
     pub fn new(
         dir: PathBuf,
         device_type: &str,
@@ -365,7 +360,6 @@ impl Fleet {
         })
     }
 
-    /// The options a machine of this type can turn on, for a machine that turns on none yet.
     pub fn options(&self) -> Vec<String> {
         self.system.options.keys().cloned().collect()
     }
@@ -424,7 +418,6 @@ impl Fleet {
         self.system.packages.iter().cloned().collect()
     }
 
-    /// What review wrote and nobody committed or pushed yet, which no other machine has.
     pub fn unsaved(&self) -> Result<Vec<String>> {
         let dir = self.dir.to_string_lossy();
         let args = ["-C", &dir, "status", "--porcelain=v2", "--branch"];
@@ -447,8 +440,6 @@ impl Fleet {
         Ok(unsaved)
     }
 
-    /// Root writes into the checkout, and the admin commits it, so whatever root wrote goes back
-    /// to the admin. git's own folder is the admin's alone.
     pub fn hand_back(&self) -> Result<()> {
         let admin = self.admin();
         let mut todo = vec![self.dir.clone()];
@@ -471,7 +462,6 @@ impl Fleet {
     }
 }
 
-/// The device types a fleet checkout describes.
 pub fn types(dir: &Path) -> Result<Vec<String>> {
     let types = dir.join("types");
     let mut names = Vec::new();

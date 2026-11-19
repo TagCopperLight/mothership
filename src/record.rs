@@ -15,9 +15,6 @@ use std::{
 
 pub const PATH: &str = "/var/lib/mothership/applied.json";
 
-/// What the fleet declared at the last apply. A difference with the machine then comes either
-/// from the fleet changing since, which apply follows, or from the machine changing since,
-/// which waits for review.
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct Record {
@@ -114,8 +111,6 @@ impl Record {
         Ok(self.etc.contains_key(path) && hash(path)?.as_ref() == self.etc.get(path))
     }
 
-    /// What the fleet says now, except for the `skipped` changes, which keep what the record
-    /// said before so the next apply still brings them.
     pub fn after(
         fleet: &Fleet,
         before: &Record,

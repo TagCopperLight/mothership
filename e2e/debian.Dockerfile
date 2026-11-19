@@ -1,13 +1,9 @@
 FROM debian:trixie AS machine
-# Debian has no chezmoi package.
 RUN apt-get update && apt-get install -y --no-install-recommends sudo git dpkg-dev curl ca-certificates ucf \
  && curl -fsSL -o /tmp/chezmoi.deb \
     https://github.com/twpayne/chezmoi/releases/download/v2.74.1/chezmoi_2.74.1_linux_amd64.deb \
  && apt-get install -y /tmp/chezmoi.deb && rm /tmp/chezmoi.deb
 
-# A local repo stands in for apt's sources, and /local holds a package built on the machine,
-# which the repo lacks. /extra is a source only the fleet adds. apt keeps what it downloads, as
-# on a real machine, so the repos use `copy:`, and the image no longer deletes them.
 COPY debian-packages /build
 RUN for group in repo local extra; do mkdir "/$group" \
     && for dir in /build/$group/*/; do dpkg-deb --root-owner-group -b "$dir" "/$group" >/dev/null; done; done \
@@ -18,8 +14,6 @@ RUN for group in repo local extra; do mkdir "/$group" \
  && echo 'deb [trusted=yes] copy:/repo ./' > /etc/apt/sources.list.d/fleettest.list \
  && apt-get update
 
-# No systemd runs in the container: systemctl only logs what it was asked, and loginctl keeps
-# linger as files.
 COPY bin/systemctl bin/loginctl bin/hostnamectl /usr/local/bin/
 RUN touch /var/log/systemctl.log && chmod 666 /var/log/systemctl.log
 

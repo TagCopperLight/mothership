@@ -26,10 +26,6 @@ pub fn source_path(user: &User, target: &std::path::Path) -> Result<PathBuf> {
     Ok(PathBuf::from(out.trim()))
 }
 
-/// Writes into the fleet for the user, who can't write the checkout: root runs chezmoi in the
-/// user's home with the user's config and state, so the user's chezmoi knows the file as one it
-/// wrote. The state goes back to the user, and `Fleet::hand_back` gives the new files to the
-/// admin.
 pub fn write_for(user: &User, args: &[&str]) -> Result<()> {
     let cache = tempfile::TempDir::new()?;
     let config_dir = user.home.join(".config/chezmoi");
@@ -54,7 +50,6 @@ struct Managed {
 
 pub fn encrypted(fleet: &Fleet, type_name: &str, user: &str) -> Result<Vec<(PathBuf, PathBuf)>> {
     let dir = tempfile::TempDir::new()?;
-    // Without encryption set, chezmoi keeps .age in the names.
     let config = dir.path().join("chezmoi.toml");
     fs::write(&config, "encryption = \"age\"\n[age]\nuseBuiltin = true\n")?;
     let data = serde_json::json!({ "profile": type_name, "user": user }).to_string();
@@ -91,8 +86,6 @@ pub fn encrypted(fleet: &Fleet, type_name: &str, user: &str) -> Result<Vec<(Path
         .collect())
 }
 
-/// Debian has no package for chezmoi: the .deb comes from its GitHub releases, checked against
-/// the release's checksums.
 pub fn download_deb(dir: &Path) -> Result<PathBuf> {
     let arch = cmd::stdout(As::Root, "dpkg", &["--print-architecture"])?;
     let suffix = format!("_linux_{}.deb", arch.trim());

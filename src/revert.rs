@@ -57,7 +57,6 @@ impl Revert {
 }
 
 impl Revert {
-    /// What only a running service manager can do: a chroot has none.
     pub fn needs_service_manager(&self) -> bool {
         matches!(
             self,
@@ -70,9 +69,6 @@ impl Revert {
 
 pub type Owned<'a> = (Option<usize>, &'a Revert);
 
-/// The machine goes first, then each user. Packages go first, after the sources they come
-/// from, since the rest may come from them, and installers before tools, since bun comes from
-/// one. User units go last, after chezmoi writes theirs.
 pub fn run(fleet: &Fleet, reverts: &[Owned]) -> Result<()> {
     let machine: Vec<&Revert> = reverts
         .iter()
@@ -197,8 +193,6 @@ fn run_member(member: &Member, reverts: &[&Revert]) -> Result<()> {
         )?;
     }
     if !units.is_empty() {
-        // --machine talks to the user's manager, which only runs once someone logs in or linger
-        // is on. At a machine's first start, nobody has logged in yet.
         cmd::root(
             "systemctl",
             &["start", &format!("user@{}.service", user.uid)],
@@ -253,7 +247,6 @@ fn change_etc(fleet: &Fleet, revert: &Revert) -> Result<()> {
     change().with_context(|| format!("changing {}", path.display()))
 }
 
-/// Written beside the file and renamed over it, so a crash never leaves half a sudoers file.
 pub fn write(path: &Path, bytes: &[u8], mode: Mode) -> Result<()> {
     let dir = path.parent().context("no parent folder")?;
     fs::create_dir_all(dir)?;

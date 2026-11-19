@@ -1,5 +1,4 @@
 #!/bin/sh
-# No systemd runs in the container, so the hostname is only the file.
 case "$1" in
   set-hostname) echo "$2" > /etc/hostname ;;
   *) echo "hostnamectl $*: not faked" >&2; exit 1 ;;

@@ -2,15 +2,8 @@
 # /// script
 # dependencies = ["pexpect"]
 # ///
-"""Installs fleet/ from the Arch ISO into a VM with Secure Boot in Setup Mode and a TPM, then
-checks the first start finishes the install and the second opens the disk with the TPM alone.
 
-The ISO is ~/.cache/mothership-vm/archlinux-x86_64.iso. pacman reads a mirror's package lists,
-and takes packages from this machine's package cache, or from the mirrors through a cache of its
-own in ~/.cache/mothership-vm/packages. Needs qemu-desktop, edk2-ovmf and swtpm.
 
-Usage: e2e/vm/run.py
-"""
 
 import http.server
 import shutil
@@ -32,12 +25,10 @@ ROOT = HERE.parent.parent
 CACHE = Path.home() / ".cache/mothership-vm"
 ISO = CACHE / "archlinux-x86_64.iso"
 OVMF = Path("/usr/share/edk2/x64")
-# Mirrors in the order the package server tries them, and the packages it got from them.
 MIRRORS = ["https://mirror.xtom.com.hk/archlinux", "https://mirrors.aliyun.com/archlinux"]
 PACKAGES = CACHE / "packages"
 PASSPHRASE = "disk-passphrase"
 PASSWORD = "tester-password"
-# qemu's user network reaches the machine running it there.
 HOST = "10.0.2.2"
 INSTALL_TIMEOUT = 3600
 
@@ -65,7 +56,6 @@ def main() -> int:
 
 
 def site(dir: Path) -> Path:
-    """The fleet as a bare repository git reads over plain HTTP, the binary, and a mirror."""
     dir.mkdir()
     work = dir.parent / "fleet"
     shutil.copytree(HERE / "fleet", work)
@@ -80,7 +70,6 @@ def site(dir: Path) -> Path:
     for repo in ["core", "extra"]:
         packages = dir / repo / "os/x86_64"
         packages.mkdir(parents=True)
-        # The first mirror's list, since mirrors delete the packages an older list names.
         url = f"{MIRRORS[0]}/{repo}/os/x86_64/{repo}.db"
         with urllib.request.urlopen(url, timeout=60) as db:
             (packages / f"{repo}.db").write_bytes(db.read())
@@ -91,8 +80,6 @@ def site(dir: Path) -> Path:
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
-    """Serves the site, and a package it lacks from PACKAGES, downloading it there first.
-    It streams the download, since pacman gives up on a server that sends nothing for 10 s."""
 
     def log_message(self, *args) -> None:
         pass
@@ -112,7 +99,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 continue
             with upstream, tempfile.NamedTemporaryFile(dir=PACKAGES, delete=False) as part:
                 self.send_response(200)
-                # Without a length, the response ends when the connection closes.
                 if length := upstream.headers["Content-Length"]:
                     self.send_header("Content-Length", length)
                 self.end_headers()
@@ -137,14 +123,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def serve(dir: Path) -> int:
     handler = partial(Handler, directory=str(dir))
-    # qemu's user network reaches the host's loopback, so nothing else on the network can.
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server.server_address[1]
 
 
 def iso_boot_files(tmp: Path) -> tuple[Path, Path]:
-    """The ISO's kernel and initramfs, started directly so its console is the serial port."""
     members = ["arch/boot/x86_64/vmlinuz-linux", "arch/boot/x86_64/initramfs-linux.img"]
     subprocess.run(["bsdtar", "-xf", str(ISO), "-C", str(tmp), *members], check=True)
     return tmp / members[0], tmp / members[1]
@@ -152,7 +136,6 @@ def iso_boot_files(tmp: Path) -> tuple[Path, Path]:
 
 @contextmanager
 def tpm(tmp: Path) -> Iterator[None]:
-    """swtpm stops when the VM powers off, so each start runs its own on the same state."""
     (tmp / "tpm").mkdir(exist_ok=True)
     socket = tmp / "swtpm.sock"
     process = subprocess.Popen(
@@ -191,22 +174,18 @@ def qemu(tmp: Path, boot_files=None) -> list[str]:
 
 
 def spawn(args: list[str], log) -> pexpect.spawn:
-    """The VM, which leaving its `with` block stops."""
     vm = pexpect.spawn(args[0], args[1:], encoding="utf-8", codec_errors="replace", timeout=600)
     vm.logfile_read = log
     return vm
 
 
 def own_prompt(vm: pexpect.spawn) -> None:
-    """bash with a prompt the harness waits for. The quotes keep the echoed command from
-    matching it."""
     vm.sendline("exec bash --norc --noprofile")
     vm.sendline("PS1='V''M# '")
     vm.expect("VM# ")
 
 
 def wait(vm: pexpect.spawn, text: str, timeout: int = 600) -> None:
-    """Waits for text from install, or stops at once when it fails."""
     if vm.expect([text, r"\nError: [^\r\n]+\r\n"], timeout=timeout) == 1:
         sys.exit(f"install failed: {vm.after.strip()}")
 
@@ -280,7 +259,6 @@ def tpm_start(args: list[str], log) -> None:
 
 
 def login(vm: pexpect.spawn) -> None:
-    """Logs in at the login prompt the caller waited for."""
     vm.sendline("tester")
     vm.expect("Password:")
     vm.sendline(PASSWORD)

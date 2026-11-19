@@ -64,7 +64,6 @@ enum Answer {
 }
 
 impl Answer {
-    /// Offered for every item, so review lists them on one line.
     const ALWAYS: [Answer; 4] = [Answer::Ignore, Answer::Later, Answer::Pass, Answer::Quit];
     const ALL: [Answer; 8] = [
         Answer::Add,
@@ -117,7 +116,6 @@ fn ask(report: &scan::Report) -> Result<()> {
     let mut later = Later::load()?;
     let mut record = Record::load(Path::new(record::PATH))?;
     let now = later::now()?;
-    // The fleet's changes are apply's to follow, not mine to sort.
     let mine: Vec<&Item> = report
         .shown
         .iter()
@@ -226,7 +224,6 @@ fn ask(report: &scan::Report) -> Result<()> {
                 Answer::Later => Ok(Some(BACK_LATER.as_str())),
                 Answer::Pass => Ok(Some("passed")),
             };
-            // A failed or cancelled answer asks again about the same item.
             let done = match outcome {
                 Ok(Some(done)) => done,
                 Ok(None) => continue,

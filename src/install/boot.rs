@@ -6,14 +6,9 @@ use std::{fs, io::ErrorKind, path::Path};
 const EFI_GLOBAL: &str = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
 const UKIS: &str = "/boot/EFI/Linux";
 const SYSTEMD_BOOT: &str = "/usr/lib/systemd/boot/efi/systemd-bootx64.efi";
-/// Runs install again at the machine's first start, on the console, before anyone logs in.
 const SERVICE: &str = "mothership-install.service";
 const SERVICE_DIR: &str = "/etc/systemd/system";
-/// The disk only opens with the kernel's command line in the UKI: without the file,
-/// mkinitcpio would copy the ISO's.
 const CMDLINE: &str = "/etc/kernel/cmdline";
-/// PCR 7 holds the Secure Boot state. PCR 15 is still zero until the initramfs opens a root,
-/// so a fake root partition someone adds can't ask the TPM for this disk's key.
 const PCRS: &str = "7+15:sha256=0000000000000000000000000000000000000000000000000000000000000000";
 
 fn unit() -> String {
@@ -37,7 +32,6 @@ fn unit() -> String {
     )
 }
 
-/// The fifth byte holds the value, after four bytes of attributes.
 fn efi_var(name: &str) -> Result<Option<u8>> {
     let path = format!("/sys/firmware/efi/efivars/{name}-{EFI_GLOBAL}");
     match fs::read(&path) {
@@ -47,7 +41,6 @@ fn efi_var(name: &str) -> Result<Option<u8>> {
     }
 }
 
-/// Checked before the disk changes, since the disk only opens with all three.
 pub fn check_firmware() -> Result<()> {
     if !Path::new("/sys/firmware/efi").exists() {
         bail!("the ISO started in BIOS mode: start it in UEFI mode");
@@ -68,8 +61,6 @@ pub fn check_firmware() -> Result<()> {
     Ok(())
 }
 
-/// In the new system, before its first start: a signed UKI, signed systemd-boot, and this
-/// machine's Secure Boot keys, with Microsoft's for Windows and the firmware's own drivers.
 pub fn setup() -> Result<()> {
     if !Path::new(CMDLINE).exists() {
         bail!("the type has no {CMDLINE}, which the encrypted disk's UKI needs");
@@ -125,8 +116,6 @@ pub fn first_start() -> bool {
     Path::new(SERVICE_DIR).join(SERVICE).exists()
 }
 
-/// The TPM opens the disk only while Secure Boot runs with this machine's keys, so it waits
-/// for a start with Secure Boot on.
 pub fn finish() -> Result<()> {
     if efi_var("SecureBoot")? != Some(1) {
         bail!("Secure Boot is off: turn it on in the firmware setup, then start the machine again");

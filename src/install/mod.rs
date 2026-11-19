@@ -19,7 +19,6 @@ use std::{
     process::Stdio,
 };
 
-/// What install would otherwise ask. The ISO asks more than a server, so it takes more.
 #[derive(Default)]
 struct Flags {
     fleet: Option<String>,
@@ -70,20 +69,15 @@ impl Flags {
     }
 }
 
-/// The Arch ISO creates it when it starts.
 const ARCHISO: &str = "/run/archiso";
-/// How the ISO hands its gh login to the new machine's admin.
 const GH_TOKEN: &str = "MOTHERSHIP_GH_TOKEN";
-/// Set by the ISO when it runs install inside the new system, before its first start.
 const FROM_ISO: &str = "MOTHERSHIP_FROM_ISO";
-/// Where the ISO puts mothership in the new system, and where its first start runs it.
 const BINARY: &str = "/usr/local/bin/mothership";
 const GH_LOGIN: [&str; 4] = ["auth", "login", "--hostname", "github.com"];
 
 pub fn run(args: &[String]) -> Result<()> {
     let flags = Flags::parse(args)?;
     let mut prompt = Prompt::new();
-    // arch-chroot shares the ISO's /run with the new system, so ARCHISO shows there too.
     let chroot = env::var_os(FROM_ISO).is_some();
     if !chroot && Path::new(ARCHISO).exists() {
         return iso::run(&flags, &mut prompt);
@@ -94,17 +88,13 @@ pub fn run(args: &[String]) -> Result<()> {
     here(&flags, &mut prompt, chroot)
 }
 
-/// On the machine's own system: a server, the new disk from the ISO, or its first start.
 fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     let distro = Distro::here()?;
     let no_password = no_password_path();
-    // An earlier run that was killed with no chance to clean up left it behind.
     if no_password.exists() {
         fs::remove_file(no_password)?;
     }
-    // The ISO hands over its gh login once, and no child sees it.
     let token = env::var(GH_TOKEN).ok();
-    // SAFETY: install starts no thread before this.
     unsafe { env::remove_var(GH_TOKEN) };
     if !Path::new(fleet::MACHINE).exists() {
         start_server(flags, prompt, distro)?;
@@ -149,7 +139,6 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     scan::run()
 }
 
-/// A server comes with its system: it only needs the fleet and its answers.
 fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<()> {
     let name = match &flags.admin {
         Some(name) => name.clone(),
@@ -184,12 +173,9 @@ fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<()
     let machine = ask_machine(flags, prompt, dir)?;
     let hostname = ask_hostname(flags, prompt)?;
     set_hostname(&hostname)?;
-    // The machine file comes last: once it's there, install skips these questions.
     machine.save(Path::new("/"))
 }
 
-/// Debian's installer names the machine in /etc/hosts too, and sudo warns on every run when
-/// that name is gone.
 fn set_hostname(new: &str) -> Result<()> {
     let old = hostname()?;
     cmd::root("hostnamectl", &["set-hostname", new])?;
@@ -255,7 +241,6 @@ fn ask_machine(flags: &Flags, prompt: &mut Prompt, dir: &Path) -> Result<Machine
     })
 }
 
-/// RFC 1123: up to 63 letters, digits and hyphens, with no hyphen at either end.
 fn valid_hostname(name: &str) -> bool {
     (1..=63).contains(&name.len())
         && !name.starts_with('-')
@@ -280,12 +265,8 @@ fn ask_hostname(flags: &Flags, prompt: &mut Prompt) -> Result<String> {
     }
 }
 
-/// Clones with gh's login when the repository is a private one on GitHub. Returns whether it
-/// is private.
 fn clone(url: &str, dir: &Path, who: As, distro: Distro) -> Result<bool> {
     let path = dir.to_string_lossy();
-    // git fails the same way for a private repository and a dropped network, so it only
-    // counts as private once the network works. Neither git nor ssh may ask anything here.
     let readable = net::retry("Reaching the fleet", || {
         let mut probe = who.command("git", &["ls-remote", url]);
         probe
@@ -328,7 +309,6 @@ fn clone(url: &str, dir: &Path, who: As, distro: Distro) -> Result<bool> {
         };
         net::retry("Installing gh", || distro.bootstrap(&[name]))?;
     }
-    // `gh auth token` reads the local login, where `gh auth status` also needs the network.
     if cmd::bytes(who, "gh", &["auth", "token"]).is_err() {
         println!("The fleet is private: log in to GitHub.");
         let args = [&GH_LOGIN[..], &["--git-protocol", "https", "--web"]].concat();
@@ -341,7 +321,6 @@ fn clone(url: &str, dir: &Path, who: As, distro: Distro) -> Result<bool> {
     Ok(true)
 }
 
-/// git with gh's login: the admin's own git config comes later, from chezmoi.
 fn git(who: As, args: &[&str]) -> Result<()> {
     let helper = [
         "-c",
@@ -352,8 +331,6 @@ fn git(who: As, args: &[&str]) -> Result<()> {
     cmd::run(who, "git", &[&helper[..], args].concat())
 }
 
-/// The fleet the ISO copied belongs to root: one of the type's users becomes its admin. The
-/// fleet goes to the admin last, since install only comes back here while root owns it.
 fn adopt(prompt: &mut Prompt, names: &[Choice], dir: &Path, token: Option<&str>) -> Result<()> {
     let name = &names[prompt.choose("Admin, who commits and pushes the fleet", names)?].name;
     let admin = user::by_name(name)?.context("install creates the type's users first")?;
@@ -381,13 +358,9 @@ fn no_password_path() -> &'static Path {
     Path::new(NO_PASSWORD.to_str().expect("the path is ASCII"))
 }
 
-/// The AUR helper builds as the admin and calls sudo, so the admin gets sudo without a
-/// password while install applies the fleet. Only `kill -9` leaves the file behind, and the
-/// next install removes it.
 struct NoPassword([libc::sighandler_t; 3]);
 
 extern "C" fn remove_and_leave(signal: libc::c_int) {
-    // SAFETY: unlink, signal and raise are async-signal-safe.
     unsafe {
         libc::unlink(NO_PASSWORD.as_ptr());
         libc::signal(signal, libc::SIG_DFL);
@@ -398,8 +371,6 @@ extern "C" fn remove_and_leave(signal: libc::c_int) {
 impl NoPassword {
     fn grant(admin: &User) -> Result<NoPassword> {
         let handler = remove_and_leave as extern "C" fn(libc::c_int) as libc::sighandler_t;
-        // SAFETY: the handler only calls async-signal-safe functions, and Drop puts the old
-        // ones back.
         let previous = LEAVING.map(|signal| unsafe { libc::signal(signal, handler) });
         let granted = NoPassword(previous);
         let rule = format!("{} ALL=(ALL:ALL) NOPASSWD: ALL\n", admin.name);
@@ -414,13 +385,11 @@ impl Drop for NoPassword {
             eprintln!("Remove {} by hand: {e}", no_password_path().display());
         }
         for (signal, previous) in LEAVING.into_iter().zip(self.0) {
-            // SAFETY: puts back the handler grant replaced.
             unsafe { libc::signal(signal, previous) };
         }
     }
 }
 
-/// The helper is an AUR package itself, so a new machine builds it with makepkg first.
 fn build_helper(admin: &User, helper: &str) -> Result<NoPassword> {
     let granted = NoPassword::grant(admin)?;
     if cmd::found(As::User(admin), helper) {
@@ -441,7 +410,6 @@ fn build_helper(admin: &User, helper: &str) -> Result<NoPassword> {
     Ok(granted)
 }
 
-/// A list's machines run `trust` for the new keys, or I type the recovery key here.
 fn trust_keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
     loop {
         let fleet = Fleet::load()?;
@@ -491,8 +459,6 @@ fn trust_keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
     }
 }
 
-/// Returns whether another machine opens the lists, which leaves only the recovery key
-/// otherwise. A list may already name this machine, from before it was reinstalled.
 fn print_trust(waiting: &[MachineKey], hostname: &str) -> Result<bool> {
     let mut by_machine: BTreeMap<String, Vec<&MachineKey>> = BTreeMap::new();
     for key in waiting {

@@ -28,7 +28,6 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                     Item::new(Kind::Package, Change::Removed, name, detail)
                         .with(Add::UnlistPackage(name.clone()))
                 };
-                // Other repos build these, so there's nothing to install them from.
                 if installed_here.contains(name) {
                     item("uninstalled").reverting(Revert::Install(name.clone()))
                 } else {

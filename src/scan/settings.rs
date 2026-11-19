@@ -48,11 +48,8 @@ fn dconf(user: &User) -> Result<Vec<Item>> {
         .collect())
 }
 
-/// Firefox-family browsers save UI changes to prefs.js, next to the user.js the fleet holds.
-/// user.js wins at every start, so a pref changed in the app that user.js also sets is lost.
 fn prefs(user_js: &PathBuf) -> Result<Vec<Item>> {
     let wanted = parse(&fs::read_to_string(user_js)?);
-    // The browser writes prefs.js at its first start.
     let actual = match fs::read_to_string(user_js.with_file_name("prefs.js")) {
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
         text => parse(&text?),

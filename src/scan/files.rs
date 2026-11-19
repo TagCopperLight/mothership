@@ -20,7 +20,6 @@ pub struct Chezmoi {
 impl Chezmoi {
     pub fn load(member: &Member) -> Result<Self> {
         let user = member.user();
-        // chezmoi fails on a file it can't decrypt.
         let status_args: &[&str] = if member.open {
             &["status"]
         } else {
@@ -54,7 +53,6 @@ pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
     for line in status.lines() {
         let codes = line.as_bytes();
         let (here, target) = (codes[0], codes[1]);
-        // R marks a script that would run, not a file.
         if here == b'R' || target == b'R' {
             continue;
         }
@@ -94,7 +92,6 @@ pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
         );
     }
 
-    // A template takes its secrets from encrypted files.
     for path in managed {
         if listed.contains(path) || encrypted.contains(path) || templates.contains(path) {
             continue;
@@ -122,8 +119,6 @@ pub fn scan(member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
     Ok(items)
 }
 
-/// chezmoi's first column says what changed here since it last wrote the file, the second what
-/// its apply would do. A file chezmoi would add is one the machine lacks.
 fn chezmoi_status(code: u8, edited: bool) -> (Change, &'static str) {
     match (code, edited) {
         (b'A', true) => (Change::Added, "created"),

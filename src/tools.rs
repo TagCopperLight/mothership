@@ -29,7 +29,6 @@ pub fn run_installer(user: &User, installer: &Installer) -> Result<()> {
     cmd::run(As::User(user), "sh", &["-c", &installer.run])
 }
 
-/// bun's installer puts it in the home, out of the PATH a login shell may set.
 const BUN: &str = ".bun/bin/bun";
 pub const BUN_GLOBALS: &str = ".bun/install/global/package.json";
 
@@ -56,7 +55,6 @@ fn spec(manager: Manager, tool: &Tool) -> Vec<String> {
         ],
         (Manager::Uv, None) => vec![format!("{name} @ git+{}", tool.git)],
         (Manager::Uv, Some(branch)) => vec![format!("{name} @ git+{}@{branch}", tool.git)],
-        // bun refuses a name before a git source, and takes the one in the package.
         (Manager::Bun, None) => vec![format!("git+{}", tool.git)],
         (Manager::Bun, Some(branch)) => vec![format!("git+{}#{branch}", tool.git)],
     }

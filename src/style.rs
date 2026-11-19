@@ -33,7 +33,6 @@ impl Paint {
 
 #[derive(Clone, Copy)]
 pub struct Style {
-    /// A terminal clips long lines and clears review's screen, with or without color.
     pub terminal: bool,
     pub color: bool,
 }
@@ -60,7 +59,6 @@ impl Style {
     }
 }
 
-/// "1 file", "3 files".
 pub fn count(n: usize, noun: &str) -> String {
     if n == 1 {
         format!("1 {noun}")
@@ -73,7 +71,6 @@ pub fn width() -> usize {
     terminal_size::terminal_size().map_or(100, |(w, _)| usize::from(w.0))
 }
 
-/// Columns the text takes on screen: a Chinese character takes two.
 pub fn visible(line: &str) -> usize {
     strip_ansi(line).width()
 }
@@ -91,7 +88,6 @@ pub fn strip_ansi(line: &str) -> String {
     out
 }
 
-/// Cuts a line to `width` visible characters, keeping its colors and ending with an ellipsis.
 pub fn clip(line: &str, width: usize) -> String {
     if visible(line) <= width {
         return line.to_owned();
@@ -125,7 +121,6 @@ pub fn clip(line: &str, width: usize) -> String {
     out
 }
 
-/// Pads to `width` visible characters, so colored text lines up like plain text.
 pub fn pad(text: &str, width: usize) -> String {
     let fill = width.saturating_sub(visible(text));
     format!("{text}{}", " ".repeat(fill))

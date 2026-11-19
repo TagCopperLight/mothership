@@ -11,7 +11,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Only dotfiles at the top of ~ count: the visible folders hold data, not config.
 pub fn scan(fleet: &Fleet, member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
     let user = member.user();
     let home = &user.home;

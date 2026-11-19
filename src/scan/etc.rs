@@ -15,7 +15,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// User and group changes rewrite these, and the account check covers them.
 const ACCOUNT_FILES: [&str; 7] = [
     "/etc/passwd",
     "/etc/group",
@@ -169,7 +168,6 @@ fn edited(package: &Package, backup: &Backup) -> Result<Option<Item>> {
     let item = |change, detail| Item::new(Kind::Etc, change, path.display().to_string(), detail);
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
-        // The package manager leaves a config file the package no longer ships, or that I deleted.
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
         Err(e) if e.kind() == ErrorKind::PermissionDenied => {
             return Ok(Some(item(Change::Unreadable, "unreadable")));

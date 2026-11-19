@@ -34,8 +34,6 @@ pub fn load() -> Result<Vec<Package>> {
     Ok(packages)
 }
 
-/// Files in /etc that install scripts and dpkg's tools write, which no package lists: config
-/// files ucf keeps, the alternatives dpkg picks itself, and the links that start init scripts.
 fn claim_written(packages: &mut [Package]) -> Result<()> {
     if let (Some(registry), Some(hashes)) = (read_if_any(UCF_REGISTRY)?, read_if_any(UCF_HASHES)?) {
         for (name, backup) in ucf(&registry, &hashes) {
@@ -92,8 +90,6 @@ fn claim_written(packages: &mut [Package]) -> Result<()> {
     Ok(())
 }
 
-/// Each config file ucf keeps, with the package that registered it and the md5 of what ucf
-/// last wrote.
 fn ucf(registry: &str, hashes: &str) -> Vec<(String, Backup)> {
     let md5s: HashMap<&str, &str> = hashes
         .lines()
@@ -120,8 +116,6 @@ fn ucf(registry: &str, hashes: &str) -> Vec<(String, Backup)> {
         .collect()
 }
 
-/// The names of an alternative's secondary links, when dpkg picks it by priority. One set by
-/// hand reads `manual`, and the scan reports it.
 fn picked_by_dpkg(state: &str) -> Option<Vec<&str>> {
     let mut lines = state.lines();
     if lines.next()? != "auto" {
@@ -148,12 +142,10 @@ fn package(stanza: &Stanza, auto: &BTreeSet<(String, String)>) -> Result<Package
     let name = stanza.field("Package").to_owned();
     let arch = stanza.field("Architecture");
     let version = stanza.field("Version");
-    // Recommends count, since apt installs them and keeps them installed.
     let depends = ["Pre-Depends", "Depends", "Recommends"]
         .iter()
         .flat_map(|field| names(stanza.field(field)))
         .collect();
-    // dpkg writes `newconffile` for a config file it has no hash of yet.
     let backups = stanza
         .field("Conffiles")
         .lines()
@@ -167,7 +159,6 @@ fn package(stanza: &Stanza, auto: &BTreeSet<(String, String)>) -> Result<Package
             })
         })
         .collect();
-    // A version's epoch keeps its colon in the name of the archive apt downloaded.
     let archive = format!("{name}_{}_{arch}.deb", version.replace(':', "%3a"));
     Ok(Package {
         description: stanza
@@ -189,7 +180,6 @@ fn package(stanza: &Stanza, auto: &BTreeSet<(String, String)>) -> Result<Package
     })
 }
 
-/// Packages of several architectures keep their list under `name:arch`.
 fn files(name: &str, arch: &str) -> Result<Vec<String>> {
     let list = [format!("{name}:{arch}.list"), format!("{name}.list")]
         .into_iter()
@@ -204,8 +194,6 @@ fn files(name: &str, arch: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-/// Resolved like the paths a scan asks about, since some packages still list files under /bin
-/// or /lib, which link into /usr. dpkg doesn't mark folders, so the disk says which are.
 fn listed(path: &Path) -> String {
     let resolved = path
         .parent()
@@ -221,7 +209,6 @@ fn listed(path: &Path) -> String {
     }
 }
 
-/// A field's value, its continuation lines included.
 struct Stanza<'a> {
     fields: Vec<(&'a str, String)>,
 }
@@ -257,7 +244,6 @@ fn stanzas(text: &str) -> impl Iterator<Item = Stanza<'_>> {
         })
 }
 
-/// `a (>= 1), b:any | c` lists a, b and c: the scan follows whichever is installed.
 fn names(field: &str) -> Vec<String> {
     field
         .split([',', '|'])
@@ -281,14 +267,11 @@ fn auto_installed(text: &str) -> BTreeSet<(String, String)> {
         .collect()
 }
 
-/// apt records an `all` package under the machine's own architecture.
 fn is_auto(auto: &BTreeSet<(String, String)>, name: &str, arch: &str) -> bool {
     auto.iter()
         .any(|(n, a)| n == name && (a == arch || arch == "all"))
 }
 
-/// madison lists only the versions apt's sources offer, where `apt-cache pkgnames` also
-/// counts the installed ones.
 pub fn cannot_install(name: &str) -> Result<Option<String>> {
     let offered = cmd::stdout(As::Root, "apt-cache", &["madison", name])?;
     Ok(offered
@@ -325,14 +308,11 @@ pub fn shipped(archive: &Path, member: &Path) -> Result<Vec<u8>> {
     Ok(tar.stdout)
 }
 
-/// apt reads its sources again first, since apply may have just written one.
 pub fn install(names: &[&str]) -> Result<()> {
     apt_get(&["update"])?;
     apt_get(&[&["install", "-y"], names].concat())
 }
 
-/// What apt's autoremove would remove after marking the packages as dependencies, minus what
-/// it would have removed anyway.
 pub fn uninstall(names: &[&str]) -> Result<()> {
     let before = autoremovable()?;
     cmd::root("apt-mark", &[&["auto"], names].concat())?;
@@ -344,8 +324,6 @@ pub fn uninstall(names: &[&str]) -> Result<()> {
     apt_get(&[&["purge", "-y"], &unneeded[..]].concat())
 }
 
-/// Debian's installer marks the whole base system as installed by hand. Only the type's packages
-/// stay so, and apt removes what nothing else needs once I agree to the list.
 pub fn keep_only(fleet: &Fleet, prompt: &mut Prompt) -> Result<()> {
     let keep: BTreeSet<&str> = fleet
         .system

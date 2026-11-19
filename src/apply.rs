@@ -16,8 +16,6 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-/// For install, which already has the go-ahead. Without a service manager, it leaves what
-/// needs one to the next apply.
 pub fn unasked(service_manager: bool) -> Result<()> {
     while round(&mut || Ok(true), service_manager)? {}
     Ok(())

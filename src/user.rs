@@ -50,7 +50,6 @@ impl User {
     }
 }
 
-/// Creates a user the type lists and the machine lacks, with no password.
 pub fn create(member: &Member) -> Result<()> {
     let mut args = vec!["--create-home"];
     if let Some(shell) = &member.config.shell {
@@ -61,7 +60,6 @@ pub fn create(member: &Member) -> Result<()> {
 }
 
 pub fn is_root() -> bool {
-    // SAFETY: geteuid has no preconditions and can't fail.
     unsafe { libc::geteuid() == 0 }
 }
 
@@ -73,7 +71,6 @@ pub fn by_uid(uid: u32) -> Result<User> {
     find(|user| user.uid == uid)?.with_context(|| format!("no user has uid {uid}"))
 }
 
-/// Read directly: getent also asks systemd, which stalls while it lists unit files.
 fn find(wanted: impl Fn(&User) -> bool) -> Result<Option<User>> {
     let passwd = fs::read_to_string("/etc/passwd")?;
     for line in passwd.lines() {

@@ -19,7 +19,6 @@ const SYSTEM_PRESETS: [&str; 3] = [
     "/run/systemd/system-preset",
     "/usr/lib/systemd/system-preset",
 ];
-/// A unit enabled through another lists its link in a folder named after that one.
 const DEPENDENCY_DIRS: [&str; 3] = [".wants", ".requires", ".upholds"];
 const USER_PRESETS: [&str; 3] = [
     "/etc/systemd/user-preset",
@@ -77,9 +76,6 @@ struct Unit<'a> {
     member: Option<&'a Member>,
 }
 
-/// Units a package enables by default (its preset) don't count, nor the ones enabling a declared
-/// unit brings along. `systemctl list-unit-files` says the same, but systemd takes half a second
-/// to answer.
 fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
     let Unit {
         kind,
@@ -135,7 +131,6 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
     Ok(items)
 }
 
-/// `systemctl enable` also enables the units in `Also=`, and theirs in turn.
 fn with_also(declared: &[String], unit_dirs: &[PathBuf]) -> Result<BTreeSet<String>> {
     let mut covered: BTreeSet<String> = declared.iter().cloned().collect();
     let mut todo = declared.to_vec();
@@ -149,7 +144,6 @@ fn with_also(declared: &[String], unit_dirs: &[PathBuf]) -> Result<BTreeSet<Stri
     Ok(covered)
 }
 
-/// An instance has no file of its own: its template's applies.
 fn unit_file(unit: &str, unit_dirs: &[PathBuf]) -> Option<PathBuf> {
     let template = instance(unit).map(|(template, _)| template);
     [Some(unit.to_owned()), template]
@@ -166,7 +160,6 @@ fn also(unit: &str, unit_dirs: &[PathBuf]) -> Result<Vec<String>> {
         .collect())
 }
 
-/// The values of a key in the unit file's `[Install]` section.
 fn install_values(unit: &str, unit_dirs: &[PathBuf], key: &str) -> Result<Vec<String>> {
     let Some(path) = unit_file(unit, unit_dirs) else {
         return Ok(Vec::new());
@@ -187,7 +180,6 @@ fn install_values(unit: &str, unit_dirs: &[PathBuf], key: &str) -> Result<Vec<St
     Ok(values)
 }
 
-/// `getty@tty1.service` is the instance `tty1` of the template `getty@.service`.
 fn instance(unit: &str) -> Option<(String, &str)> {
     let (name, rest) = unit.split_once('@')?;
     let (instance, suffix) = rest.rsplit_once('.')?;
@@ -205,25 +197,22 @@ fn enabled(unit_dirs: &[&PathBuf]) -> Result<BTreeSet<String>> {
         for entry in entries {
             let path = entry?.path();
             if is_dependency_dir(&path) {
-                // The link's name is the unit, which for a template names the instance.
                 for link in fs::read_dir(&path)? {
                     let link = link?.path();
                     if target(&link)?.is_some() {
                         units.insert(file_name(&link));
                     }
                 }
-            } else if let Some(unit) = target(&path)? {
-                // A link named like its target is `systemctl link`, not an alias.
-                if path.file_name().is_some_and(|name| *name != *unit) {
-                    units.insert(unit);
-                }
+            } else if let Some(unit) = target(&path)?
+                && path.file_name().is_some_and(|name| *name != *unit)
+            {
+                units.insert(unit);
             }
         }
     }
     Ok(units)
 }
 
-/// The unit a link enables. A link to /dev/null masks the unit, which the /etc check reports.
 fn target(link: &Path) -> Result<Option<String>> {
     if !link.is_symlink() {
         return Ok(None);
@@ -254,7 +243,6 @@ struct Presets {
 struct Rule {
     enable: bool,
     glob: globset::GlobMatcher,
-    /// The instances a rule on a template enables, after its name.
     instances: Vec<String>,
 }
 
@@ -298,8 +286,6 @@ impl Presets {
         Ok(Presets { rules })
     }
 
-    /// Like systemd, the first rule that names the unit decides. A rule on a template names
-    /// the instances it lists, or the template's `DefaultInstance` when it lists none.
     fn enables(&self, unit: &str, unit_dirs: &[PathBuf]) -> Result<bool> {
         let template = instance(unit);
         for rule in &self.rules {

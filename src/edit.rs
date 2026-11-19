@@ -240,8 +240,6 @@ fn encrypted_suffix(encrypt: bool) -> &'static str {
     if encrypt { ", encrypted" } else { "" }
 }
 
-/// chezmoi encrypts for the user's recipients, and turns a file it has in clear into an
-/// encrypted one. The user's key must be among them, or the user couldn't open it.
 fn chezmoi_add(member: &Member, path: &Path, encrypt: bool) -> Result<()> {
     let path = path.to_string_lossy();
     if !encrypt {
@@ -280,8 +278,6 @@ pub fn not_secret(fleet: &Fleet, member: Option<&Member>, subject: &str) -> Resu
     append_line(&path, &globset::escape(subject))
 }
 
-/// A package apply can't install was built here, and only `built_packages`, which apply never
-/// installs, can hold it.
 fn package_key(fleet: &Fleet, name: &str) -> Result<Key> {
     let Some(why) = Distro::here()?.cannot_install(fleet, name)? else {
         return Ok(Key::Packages);
@@ -404,10 +400,7 @@ fn find_array<'a>(
     item.as_array_mut()
 }
 
-/// toml_edit keeps the comment at the end of an item's line before the next item, or in the
-/// array's trailing part after the last one. push and remove keep each comment on its line.
 fn push(array: &mut Array, entry: Value) {
-    // A one-line array has no newline to copy.
     let indent = array
         .iter()
         .last()
