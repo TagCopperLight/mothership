@@ -1,11 +1,14 @@
 use super::*;
 use crate::{
-    fleet::{Fleet, System, UserConfig},
+    fleet::{Fleet, Mode, System, UserConfig},
     hardware::Hardware,
     ignore::Ignore,
     kind::Level,
 };
-use std::{collections::BTreeSet, os::unix};
+use std::{
+    collections::BTreeSet,
+    os::unix::{self, fs::PermissionsExt},
+};
 use tempfile::TempDir;
 
 const SYSTEM: &str = r#"# What a workstation has outside $HOME.
@@ -320,14 +323,14 @@ fn copies_files_and_symlinks_into_etc() {
     let etc = checkout.fleet.type_dir.join("etc");
 
     let fleet = &checkout.fleet;
-    copy_etc(
+    etc::copy(
         fleet,
         Path::new("sub/locale.conf"),
         &machine.join("locale.conf"),
         Storage::Clear,
     )
     .unwrap();
-    copy_etc(
+    etc::copy(
         fleet,
         Path::new("resolv.conf"),
         &machine.join("resolv.conf"),
@@ -342,7 +345,7 @@ fn copies_files_and_symlinks_into_etc() {
         fs::read_link(etc.join("resolv.conf")).unwrap(),
         Path::new("/run/resolv.conf")
     );
-    assert!(copy_etc(fleet, Path::new("machine"), &machine, Storage::Clear).is_err());
+    assert!(etc::copy(fleet, Path::new("machine"), &machine, Storage::Clear).is_err());
     assert!(!checkout.system().contains("etc_modes"));
 }
 
@@ -353,7 +356,7 @@ fn copying_keeps_a_mode_git_cannot_in_etc_modes() {
     fs::write(&machine, "%wheel ALL=(ALL:ALL) ALL\n").unwrap();
     fs::set_permissions(&machine, fs::Permissions::from_mode(0o640)).unwrap();
     let rel = Path::new("sudoers.d/wheel");
-    copy_etc(&checkout.fleet, rel, &machine, Storage::Clear).unwrap();
+    etc::copy(&checkout.fleet, rel, &machine, Storage::Clear).unwrap();
     assert!(
         checkout
             .system()
@@ -364,7 +367,7 @@ fn copying_keeps_a_mode_git_cannot_in_etc_modes() {
     assert_eq!(mode, 0o644);
 
     fs::set_permissions(&machine, fs::Permissions::from_mode(0o644)).unwrap();
-    copy_etc(&checkout.fleet, rel, &machine, Storage::Clear).unwrap();
+    etc::copy(&checkout.fleet, rel, &machine, Storage::Clear).unwrap();
     assert!(!checkout.system().contains("sudoers.d/wheel"));
 }
 
@@ -384,7 +387,7 @@ fn removing_from_etc_drops_the_folders_left_empty() {
     fs::create_dir_all(etc.join("a/b")).unwrap();
     fs::write(etc.join("a/b/file"), "").unwrap();
     fs::write(etc.join("kept"), "").unwrap();
-    remove_etc(&checkout.fleet, Path::new("a/b/file")).unwrap();
+    etc::remove(&checkout.fleet, Path::new("a/b/file")).unwrap();
     assert!(!etc.join("a").exists());
     assert!(etc.join("kept").exists());
 }
@@ -392,7 +395,7 @@ fn removing_from_etc_drops_the_folders_left_empty() {
 #[test]
 fn removing_a_blocks_file_drops_it_from_the_block() {
     let checkout = Checkout::new();
-    remove_etc(&checkout.fleet, Path::new("battery.conf")).unwrap();
+    etc::remove(&checkout.fleet, Path::new("battery.conf")).unwrap();
     assert!(checkout.system().contains("[hardware.battery]\npackages = [\"power-profiles-daemon\"]\nservices = [\"power-profiles-daemon.service\"]\netc = []\n"));
 }
 
@@ -402,7 +405,7 @@ fn copying_over_the_file_of_an_option_off_here_fails() {
     let machine = checkout.dir.path().join("dual");
     fs::write(&machine, "mine").unwrap();
     assert!(
-        copy_etc(
+        etc::copy(
             &checkout.fleet,
             Path::new("grub.d/dual"),
             &machine,
@@ -411,19 +414,6 @@ fn copying_over_the_file_of_an_option_off_here_fails() {
         .is_err()
     );
     assert_eq!(checkout.read("types/workstation/etc/grub.d/dual"), "");
-}
-
-#[test]
-fn writes_prefs_into_user_js() {
-    let checkout = Checkout::new();
-    let user_js = checkout.dir.path().join("user.js");
-    fs::write(&user_js, "user_pref(\"a\",1);\nuser_pref(\"ab\", 2);\n").unwrap();
-    set_pref(&user_js, "a", "3").unwrap();
-    set_pref(&user_js, "c", "\"text\"").unwrap();
-    assert_eq!(
-        fs::read_to_string(&user_js).unwrap(),
-        "user_pref(\"a\", 3);\nuser_pref(\"ab\", 2);\nuser_pref(\"c\", \"text\");\n"
-    );
 }
 
 #[test]
