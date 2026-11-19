@@ -6,7 +6,7 @@ use crate::{
     fleet::{Fleet, Member},
     package::Distro,
     preview::Preview,
-    revert::{self, Machine, Revert, Service},
+    revert::{self, Machine, Revert, User},
     systemd::{self, USER_DIRS},
     walk,
 };
@@ -319,7 +319,7 @@ impl Presets {
 
 fn unit_revert(kind: Kind, unit: revert::Unit) -> Revert {
     if kind == Kind::UserService {
-        Service::Unit(unit).into()
+        User::Unit(unit).into()
     } else {
         Machine::Unit(unit).into()
     }

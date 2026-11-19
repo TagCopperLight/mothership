@@ -1,5 +1,5 @@
 use super::*;
-use crate::{item::Item, revert, secrets::Storage};
+use crate::{item::Item, revert, secrets::Storage, support::in_section};
 
 #[test]
 fn a_fleet_secret_is_not_guessed_again() {
@@ -26,11 +26,6 @@ fn a_secret_is_added_encrypted() {
             ..
         })
     ));
-}
-
-fn in_section(mut item: Item, section: Section) -> Item {
-    item.section = section;
-    item
 }
 
 #[test]

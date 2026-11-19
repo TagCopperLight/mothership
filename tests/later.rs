@@ -1,27 +1,14 @@
 use super::*;
 use crate::{item::Change, kind::Kind};
-use std::fs;
 
 fn item(subject: &str) -> Item {
     Item::new(Kind::Package, Change::Added, subject, "installed")
 }
 
-fn fleet(dir: &Path) -> Fleet {
-    let type_dir = dir.join("types/workstation");
-    fs::create_dir_all(type_dir.join("etc")).unwrap();
-    fs::write(type_dir.join(crate::fleet::SYSTEM_TOML), "").unwrap();
-    let repo = crate::fleet::Repo::new(dir.to_path_buf(), "workstation", &[], &Default::default())
-        .unwrap();
-    Fleet::of(
-        repo,
-        &crate::user::by_uid(unsafe { libc::geteuid() }).unwrap(),
-    )
-}
-
 #[test]
 fn put_off_items_come_back_after_a_week_and_keep_their_first_date() {
     let dir = tempfile::TempDir::new().unwrap();
-    let fleet = fleet(dir.path());
+    let fleet = crate::support::empty_fleet(dir.path());
     let mut later = Later::default();
     let htop = item("htop");
     later.put_off(&fleet, &htop, 0);
@@ -36,7 +23,7 @@ fn put_off_items_come_back_after_a_week_and_keep_their_first_date() {
 #[test]
 fn days_left_round_up() {
     let dir = tempfile::TempDir::new().unwrap();
-    let fleet = fleet(dir.path());
+    let fleet = crate::support::empty_fleet(dir.path());
     let mut later = Later::default();
     let htop = item("htop");
     later.put_off(&fleet, &htop, 0);
@@ -48,7 +35,7 @@ fn days_left_round_up() {
 #[test]
 fn saving_drops_items_the_scan_no_longer_finds() {
     let dir = tempfile::TempDir::new().unwrap();
-    let fleet = fleet(dir.path());
+    let fleet = crate::support::empty_fleet(dir.path());
     let mut later = Later::default();
     later.put_off(&fleet, &item("htop"), 0);
     later.put_off(&fleet, &item("gone"), 0);

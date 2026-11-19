@@ -6,7 +6,7 @@ use crate::{
     edit::{Add, Key},
     file,
     fleet::{GitTool, Manager, Member, Tool, Tools},
-    revert::{self, ToolChange},
+    revert,
     user::User,
     walk,
 };
@@ -100,14 +100,14 @@ fn compare(tools: &Tools, manager: Manager, installed: &BTreeMap<String, Source>
         let item = match tools.find(manager, name) {
             None => Item::new(Kind::Tool, Change::Added, subject(name), "installed")
                 .noting(format!("from {machine}"))
-                .reverting(ToolChange::Uninstall {
+                .reverting(revert::User::UninstallTool {
                     manager,
                     name: name.clone(),
                 }),
             Some(tool) if *source == Source::Declarable(tool.clone()) => continue,
             Some(tool) => Item::new(Kind::Tool, Change::Edited, subject(name), "other source")
                 .noting(format!("from {machine}, the fleet says {}", from(tool)))
-                .reverting(ToolChange::Reinstall {
+                .reverting(revert::User::ReinstallTool {
                     manager,
                     tool: tool.clone(),
                 }),
@@ -132,7 +132,7 @@ fn compare(tools: &Tools, manager: Manager, installed: &BTreeMap<String, Source>
                     key: Key::Tools(manager),
                     name: tool.name().to_owned(),
                 })
-                .reverting(ToolChange::Install {
+                .reverting(revert::User::InstallTool {
                     manager,
                     tool: tool.clone(),
                 })

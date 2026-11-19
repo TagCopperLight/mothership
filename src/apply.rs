@@ -5,7 +5,7 @@ use crate::{
     package::Db,
     prompt::Prompt,
     record::Record,
-    revert::{self, Machine, Revert, Service, User},
+    revert::{self, Machine, Revert, User},
     scan::{self, Checks},
     style::Style,
 };
@@ -47,13 +47,15 @@ fn round(
         Vec::new(),
         0,
     );
-    let mut skipped: Vec<(usize, &Service)> = Vec::new();
+    let mut skipped: Vec<(usize, &User)> = Vec::new();
     for item in &items {
         match (&item.revert, item.member) {
-            (Some(Revert::User(User::Service(service))), Some(i))
-                if item.section == Section::Fleet && service_manager == ServiceManager::Missing =>
+            (Some(Revert::User(change)), Some(i))
+                if item.section == Section::Fleet
+                    && service_manager == ServiceManager::Missing
+                    && change.needs_service_manager() =>
             {
-                skipped.push((i, service))
+                skipped.push((i, change))
             }
             (Some(revert), member) if item.section == Section::Fleet => {
                 todo.push(item);

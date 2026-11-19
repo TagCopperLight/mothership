@@ -156,7 +156,7 @@ fn etc_secrets_open_with_root_key_only() {
     .unwrap();
     let mut fleet = Fleet::of(
         load(&dir, &[], &[]).unwrap(),
-        &user::by_uid(unsafe { libc::geteuid() }).unwrap(),
+        &crate::support::current_user(),
     );
     fleet.keys.push(user);
     assert!(fleet.etc_contents(Path::new("wifi.conf")).is_err());

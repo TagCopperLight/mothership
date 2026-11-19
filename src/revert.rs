@@ -39,29 +39,17 @@ pub enum Unit {
 }
 
 pub enum User {
-    InitChezmoi,
-    Account(Account),
-    Service(Service),
-    RunInstaller(String),
-    Tool(ToolChange),
-    ApplyFile { path: PathBuf, edited: bool },
-}
-
-pub enum Account {
     Shell(String),
     Join(String),
     Leave(String),
-}
-
-pub enum Service {
     Linger(bool),
     Unit(Unit),
-}
-
-pub enum ToolChange {
-    Install { manager: Manager, tool: Tool },
-    Reinstall { manager: Manager, tool: Tool },
-    Uninstall { manager: Manager, name: String },
+    InstallTool { manager: Manager, tool: Tool },
+    ReinstallTool { manager: Manager, tool: Tool },
+    UninstallTool { manager: Manager, name: String },
+    RunInstaller(String),
+    InitChezmoi,
+    ApplyFile { path: PathBuf, edited: bool },
 }
 
 impl From<Machine> for Revert {
@@ -82,24 +70,6 @@ impl From<Etc> for Revert {
     }
 }
 
-impl From<Account> for Revert {
-    fn from(change: Account) -> Self {
-        Revert::User(User::Account(change))
-    }
-}
-
-impl From<Service> for Revert {
-    fn from(change: Service) -> Self {
-        Revert::User(User::Service(change))
-    }
-}
-
-impl From<ToolChange> for Revert {
-    fn from(change: ToolChange) -> Self {
-        Revert::User(User::Tool(change))
-    }
-}
-
 impl Revert {
     pub fn describe(&self) -> String {
         match self {
@@ -109,23 +79,20 @@ impl Revert {
                 "restore the package's version".into()
             }
             Revert::Machine(Machine::Etc(Etc::Delete(_))) => "delete".into(),
-            Revert::Machine(Machine::Unit(unit))
-            | Revert::User(User::Service(Service::Unit(unit))) => unit.describe().into(),
+            Revert::Machine(Machine::Unit(unit)) | Revert::User(User::Unit(unit)) => {
+                unit.describe().into()
+            }
             Revert::Machine(Machine::CreateUser { .. }) => "create it".into(),
             Revert::User(User::InitChezmoi) => "write its config".into(),
-            Revert::User(User::Service(Service::Linger(true))) => "turn it on".into(),
-            Revert::User(User::Service(Service::Linger(false))) => "turn it off".into(),
-            Revert::User(User::Account(Account::Shell(shell))) => {
-                format!("make {shell} the login shell")
-            }
-            Revert::User(User::Account(Account::Join(_))) => "join".into(),
-            Revert::User(User::Account(Account::Leave(_))) => "leave".into(),
+            Revert::User(User::Linger(true)) => "turn it on".into(),
+            Revert::User(User::Linger(false)) => "turn it off".into(),
+            Revert::User(User::Shell(shell)) => format!("make {shell} the login shell"),
+            Revert::User(User::Join(_)) => "join".into(),
+            Revert::User(User::Leave(_)) => "leave".into(),
             Revert::User(User::RunInstaller(_)) => "run its installer".into(),
-            Revert::User(User::Tool(ToolChange::Install { .. })) => "install".into(),
-            Revert::User(User::Tool(ToolChange::Reinstall { .. })) => {
-                "reinstall from the fleet's source".into()
-            }
-            Revert::User(User::Tool(ToolChange::Uninstall { .. })) => "uninstall".into(),
+            Revert::User(User::InstallTool { .. }) => "install".into(),
+            Revert::User(User::ReinstallTool { .. }) => "reinstall from the fleet's source".into(),
+            Revert::User(User::UninstallTool { .. }) => "uninstall".into(),
             Revert::Machine(Machine::Etc(Etc::Write(_))) | Revert::User(User::ApplyFile { .. }) => {
                 "write the fleet's version".into()
             }
@@ -137,6 +104,12 @@ impl Revert {
             self,
             Revert::Machine(Machine::Etc(Etc::Write(_))) | Revert::User(User::ApplyFile { .. })
         )
+    }
+}
+
+impl User {
+    pub fn needs_service_manager(&self) -> bool {
+        matches!(self, User::Linger(_) | User::Unit(_))
     }
 }
 
@@ -219,31 +192,31 @@ fn run_machine(fleet: &Fleet, changes: &[&Machine]) -> Result<()> {
 }
 
 fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
+    let user = member.user();
+    let name = &user.name;
     let (mut account, mut linger, mut installers, mut tools) =
         (Vec::new(), None, Vec::new(), Vec::new());
     let (mut files, mut units, mut init) = (Vec::new(), Vec::new(), false);
     for change in changes.iter().copied() {
         match change {
             User::InitChezmoi => init = true,
-            User::Account(change) => account.push(change),
-            User::Service(Service::Linger(on)) => linger = Some(*on),
-            User::Service(Service::Unit(unit)) => units.push(unit),
+            User::Shell(shell) => account.push(("usermod", vec!["--shell", shell, name])),
+            User::Join(group) => account.push(("gpasswd", vec!["--add", name, "--", group])),
+            User::Leave(group) => account.push(("gpasswd", vec!["--delete", name, "--", group])),
+            User::Linger(on) => linger = Some(*on),
+            User::Unit(unit) => units.push(unit),
             User::RunInstaller(name) => installers.push(name),
-            User::Tool(change) => tools.push(change),
+            User::InstallTool { .. } | User::ReinstallTool { .. } | User::UninstallTool { .. } => {
+                tools.push(change)
+            }
             User::ApplyFile { path, .. } => files.push(path.as_os_str()),
         }
     }
-    let user = member.user();
-    let name = &user.name;
     if init {
         chezmoi::init(member.user(), &member.chezmoi_config(fleet))?;
     }
-    for change in account {
-        match change {
-            Account::Shell(shell) => cmd::root("usermod", &["--shell", shell, name])?,
-            Account::Join(group) => cmd::root("gpasswd", &["--add", name, "--", group])?,
-            Account::Leave(group) => cmd::root("gpasswd", &["--delete", name, "--", group])?,
-        }
+    for (program, args) in account {
+        cmd::root(program, &args)?;
     }
     match linger {
         Some(true) => cmd::root("loginctl", &["enable-linger", name])?,
@@ -261,12 +234,13 @@ fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
     }
     for change in tools {
         match change {
-            ToolChange::Install { manager, tool } => tools::install(user, *manager, tool)?,
-            ToolChange::Reinstall { manager, tool } => {
+            User::InstallTool { manager, tool } => tools::install(user, *manager, tool)?,
+            User::ReinstallTool { manager, tool } => {
                 tools::uninstall(user, *manager, tool.name())?;
                 tools::install(user, *manager, tool)?;
             }
-            ToolChange::Uninstall { manager, name } => tools::uninstall(user, *manager, name)?,
+            User::UninstallTool { manager, name } => tools::uninstall(user, *manager, name)?,
+            _ => unreachable!("only tool changes are collected"),
         }
     }
     if !files.is_empty() {

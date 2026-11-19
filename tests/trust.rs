@@ -72,10 +72,7 @@ fn fleet_with(dir: &Path, list: &str, secrets: &[(&str, &[u8], &Path)]) -> Fleet
     }
     let repo = crate::fleet::Repo::new(dir.to_path_buf(), "workstation", &[], &Default::default())
         .unwrap();
-    Fleet::of(
-        repo,
-        &crate::user::by_uid(unsafe { libc::geteuid() }).unwrap(),
-    )
+    Fleet::of(repo, &crate::support::current_user())
 }
 
 #[test]

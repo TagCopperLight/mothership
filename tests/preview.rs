@@ -72,7 +72,7 @@ fn a_user_unit_is_read_from_its_file() {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("app.service");
     fs::write(&path, "[Service]\nExecStart=/bin/true\n").unwrap();
-    let user = crate::user::by_uid(unsafe { libc::geteuid() }).unwrap();
+    let user = crate::support::current_user();
     let shown = Preview::AsUser { path, user };
     assert_eq!(
         shown.render(&Seen::default()).unwrap(),

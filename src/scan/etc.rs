@@ -65,7 +65,6 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                     .reverting(Etc::Write(path.clone()))
                     .showing(fleet_side(fleet, rel, None)),
             ),
-            Compare::Unreadable => Some(item(Change::Unreadable, "unreadable")),
         };
         items.extend(item.map(|item| {
             if secret {
@@ -160,7 +159,6 @@ enum Compare {
     Same,
     Differs,
     Missing,
-    Unreadable,
 }
 
 fn compare(fleet: &Fleet, rel: &Path, path: &Path) -> Result<Compare> {
@@ -176,7 +174,6 @@ fn compare(fleet: &Fleet, rel: &Path, path: &Path) -> Result<Compare> {
         Ok(true) => Compare::Same,
         Ok(false) => Compare::Differs,
         Err(e) if e.kind() == ErrorKind::NotFound => Compare::Missing,
-        Err(e) if e.kind() == ErrorKind::PermissionDenied => Compare::Unreadable,
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     })
 }
@@ -187,9 +184,6 @@ fn edited(package: &Package, backup: &Backup, rel: &Path) -> Result<Option<Item>
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-            return Ok(Some(item(Change::Unreadable, "unreadable")));
-        }
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
     if hash::md5(&bytes) == backup.md5 {

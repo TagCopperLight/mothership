@@ -77,7 +77,7 @@ impl Checkout {
         fs::write(type_dir.join("users/me/user.toml"), USER).unwrap();
         let hardware = BTreeSet::from([Hardware::Battery]);
         let repo = Repo::new(dir.path().to_path_buf(), "workstation", &[], &hardware).unwrap();
-        let mut me = crate::user::by_uid(unsafe { libc::geteuid() }).unwrap();
+        let mut me = crate::support::current_user();
         me.home = dir.path().to_path_buf();
         let fleet = Fleet::of(repo, &me);
         Checkout { dir, fleet }

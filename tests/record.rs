@@ -123,20 +123,20 @@ fn services_groups_and_shell_follow_the_same_rule() {
     assert!(!changed(&before, disable("mine.service")));
     assert!(!changed(
         &before,
-        Service::Unit(Unit::Disable("sshd.service".into()))
+        User::Unit(Unit::Disable("sshd.service".into()))
     ));
     assert!(changed(
         &before,
-        Service::Unit(Unit::Enable("sshd.service".into()))
+        User::Unit(Unit::Enable("sshd.service".into()))
     ));
 
-    assert!(changed(&before, Account::Join("video".into())));
-    assert!(!changed(&before, Account::Join("docker".into())));
-    assert!(changed(&before, Account::Leave("docker".into())));
-    assert!(!changed(&before, Account::Leave("audio".into())));
+    assert!(changed(&before, User::Join("video".into())));
+    assert!(!changed(&before, User::Join("docker".into())));
+    assert!(changed(&before, User::Leave("docker".into())));
+    assert!(!changed(&before, User::Leave("audio".into())));
 
-    assert!(!changed(&before, Account::Shell("/usr/bin/fish".into())));
-    assert!(changed(&before, Account::Shell("/usr/bin/zsh".into())));
+    assert!(!changed(&before, User::Shell("/usr/bin/fish".into())));
+    assert!(changed(&before, User::Shell("/usr/bin/zsh".into())));
 }
 
 #[test]
@@ -150,10 +150,10 @@ fn each_user_has_a_record_of_their_own() {
             .fleet_changed(&revert, Some("dev"), &no_packages())
             .unwrap()
     };
-    assert!(changed(&before, Account::Leave("docker".into())));
-    assert!(!other(Account::Leave("docker".into()).into()));
-    assert!(changed(&before, Service::Linger(false)));
-    assert!(other(Service::Linger(true).into()));
+    assert!(changed(&before, User::Leave("docker".into())));
+    assert!(!other(User::Leave("docker".into()).into()));
+    assert!(changed(&before, User::Linger(false)));
+    assert!(other(User::Linger(true).into()));
     let create = revert::Machine::CreateUser {
         name: "dev".into(),
         shell: None,
@@ -380,9 +380,9 @@ fn what_apply_skipped_keeps_its_old_entry_so_the_next_apply_brings_it() {
             .user_services
             .insert("kept.service".into());
     });
-    let enable = Service::Unit(Unit::Enable("app.service".into()));
-    let disable = Service::Unit(Unit::Disable("dropped.service".into()));
-    let skipped = [(0, &enable), (0, &disable), (0, &Service::Linger(true))];
+    let enable = User::Unit(Unit::Enable("app.service".into()));
+    let disable = User::Unit(Unit::Disable("dropped.service".into()));
+    let skipped = [(0, &enable), (0, &disable), (0, &User::Linger(true))];
     let machine = Machine::new();
     let after = Record::after(&fleet, &before, machine.dir.path(), &skipped).unwrap();
     let me = &after.users["me"];
@@ -445,11 +445,11 @@ fn tools_and_installers_follow_the_same_rule() {
         me(r).tools = tools(r#"cargo = ["ripgrep"]"#);
         me(r).installers.insert("bun".into());
     });
-    let install = |name: &str| ToolChange::Install {
+    let install = |name: &str| User::InstallTool {
         manager: Manager::Cargo,
         tool: Tool::Name(name.into()),
     };
-    let uninstall = |name: &str| ToolChange::Uninstall {
+    let uninstall = |name: &str| User::UninstallTool {
         manager: Manager::Cargo,
         name: name.into(),
     };
@@ -457,7 +457,7 @@ fn tools_and_installers_follow_the_same_rule() {
     assert!(!changed(&before, install("ripgrep")));
     assert!(changed(&before, uninstall("ripgrep")));
     assert!(!changed(&before, uninstall("bat")));
-    let uv = ToolChange::Install {
+    let uv = User::InstallTool {
         manager: Manager::Uv,
         tool: Tool::Name("ripgrep".into()),
     };
@@ -474,7 +474,7 @@ fn installs_a_missing_tool_again_when_the_fleet_changed_its_source() {
             tools(r#"cargo = [{ name = "x", git = "https://example.com/x", branch = "a" }]"#);
     });
     let moved = tools(r#"cargo = [{ name = "x", git = "https://example.com/x", branch = "b" }]"#);
-    let install = |tools: &Tools| ToolChange::Install {
+    let install = |tools: &Tools| User::InstallTool {
         manager: Manager::Cargo,
         tool: tools.of(Manager::Cargo)[0].clone(),
     };

@@ -24,6 +24,9 @@ mod scan;
 mod secrets;
 mod snapshot;
 mod style;
+#[cfg(test)]
+#[path = "../tests/support.rs"]
+mod support;
 mod systemd;
 mod tools;
 mod trust;

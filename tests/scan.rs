@@ -1,23 +1,12 @@
 use super::*;
 use crate::item::Section;
 
-fn in_section(mut item: Item, section: Section) -> Item {
-    item.section = section;
-    item
-}
+use crate::support::in_section;
 
 #[test]
 fn items_sort_by_section_area_change_then_subject() {
     let dir = tempfile::TempDir::new().unwrap();
-    let type_dir = dir.path().join("types/workstation");
-    fs::create_dir_all(&type_dir).unwrap();
-    fs::write(type_dir.join(crate::fleet::SYSTEM_TOML), "").unwrap();
-    let repo = crate::fleet::Repo::new(dir.path().into(), "workstation", &[], &Default::default())
-        .unwrap();
-    let fleet = Fleet::of(
-        repo,
-        &crate::user::by_uid(unsafe { libc::geteuid() }).unwrap(),
-    );
+    let fleet = crate::support::empty_fleet(dir.path());
     let item = |kind, change, subject: &str| Item::new(kind, change, subject, "");
     let mut items = vec![
         in_section(item(Kind::Package, Change::Added, "b"), Section::Fleet),

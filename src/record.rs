@@ -3,7 +3,7 @@ use crate::{
     fleet::{Fleet, Tools},
     hash,
     package::Db,
-    revert::{Account, Etc, Machine, Revert, Service, ToolChange, Unit, User},
+    revert::{Etc, Machine, Revert, Unit, User},
     walk,
 };
 use anyhow::{Context, Result};
@@ -54,19 +54,17 @@ impl Record {
         let mine = user.and_then(|u| self.users.get(u)).unwrap_or(&empty);
         Ok(match change {
             User::InitChezmoi => true,
-            User::Service(Service::Linger(linger)) => mine.linger != *linger,
-            User::Service(Service::Unit(Unit::Enable(unit))) => !mine.user_services.contains(unit),
-            User::Service(Service::Unit(Unit::Disable(unit))) => mine.user_services.contains(unit),
-            User::Tool(
-                ToolChange::Install { manager, tool } | ToolChange::Reinstall { manager, tool },
-            ) => mine.tools.find(*manager, tool.name()) != Some(tool),
-            User::Tool(ToolChange::Uninstall { manager, name }) => {
-                mine.tools.find(*manager, name).is_some()
+            User::Linger(linger) => mine.linger != *linger,
+            User::Unit(Unit::Enable(unit)) => !mine.user_services.contains(unit),
+            User::Unit(Unit::Disable(unit)) => mine.user_services.contains(unit),
+            User::InstallTool { manager, tool } | User::ReinstallTool { manager, tool } => {
+                mine.tools.find(*manager, tool.name()) != Some(tool)
             }
+            User::UninstallTool { manager, name } => mine.tools.find(*manager, name).is_some(),
             User::RunInstaller(name) => !mine.installers.contains(name),
-            User::Account(Account::Join(group)) => !mine.groups.contains(group),
-            User::Account(Account::Leave(group)) => mine.groups.contains(group),
-            User::Account(Account::Shell(shell)) => mine.shell.as_ref() != Some(shell),
+            User::Join(group) => !mine.groups.contains(group),
+            User::Leave(group) => mine.groups.contains(group),
+            User::Shell(shell) => mine.shell.as_ref() != Some(shell),
             User::ApplyFile { edited, .. } => !edited,
         })
     }
@@ -123,7 +121,7 @@ impl Record {
         fleet: &Fleet,
         before: &Record,
         etc_root: &Path,
-        skipped: &[(usize, &Service)],
+        skipped: &[(usize, &User)],
     ) -> Result<Record> {
         let mut etc = BTreeMap::new();
         for rel in &fleet.etc {
@@ -158,16 +156,17 @@ impl Record {
                     installers: config.installers.iter().map(|i| i.name.clone()).collect(),
                 };
                 let old = before.users.get(&member.name).unwrap_or(&empty);
-                for (_, service) in skipped.iter().filter(|(owner, _)| *owner == i) {
-                    match service {
-                        Service::Linger(_) => record.linger = old.linger,
-                        Service::Unit(Unit::Enable(unit) | Unit::Disable(unit)) => {
+                for (_, change) in skipped.iter().filter(|(owner, _)| *owner == i) {
+                    match change {
+                        User::Linger(_) => record.linger = old.linger,
+                        User::Unit(Unit::Enable(unit) | Unit::Disable(unit)) => {
                             if old.user_services.contains(unit) {
                                 record.user_services.insert(unit.clone());
                             } else {
                                 record.user_services.remove(unit);
                             }
                         }
+                        _ => unreachable!("only service changes are skipped"),
                     }
                 }
                 (member.name.clone(), record)

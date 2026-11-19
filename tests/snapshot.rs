@@ -2,7 +2,7 @@ use super::*;
 use std::os::unix::fs::symlink;
 
 fn me(home: &Path) -> User {
-    let mut user = crate::user::by_uid(unsafe { libc::geteuid() }).unwrap();
+    let mut user = crate::support::current_user();
     user.home = home.to_path_buf();
     user
 }
