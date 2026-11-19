@@ -63,6 +63,15 @@ fn a_file_in_a_closed_folder_is_secret() {
 }
 
 #[test]
+fn a_fleet_secret_is_not_guessed_again() {
+    let item = Item::new(Kind::Etc, Change::Edited, "/etc/x", "edited")
+        .guessing(Path::new("/etc/x"))
+        .secret(Secret::Fleet);
+    assert!(item.guess.is_none());
+    assert_eq!(item.secret, Secret::Fleet);
+}
+
+#[test]
 fn a_secret_is_added_encrypted() {
     let path = std::path::PathBuf::from("/x");
     let item = Item::new(Kind::Home, Change::Added, "x", "new")

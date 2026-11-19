@@ -221,6 +221,7 @@ impl Item {
     fn secret(mut self, secret: Secret) -> Self {
         self.secret = secret;
         self.preview = Preview::None;
+        self.guess = None;
         self.add = self.add.map(|add| add.encrypted().unwrap_or(add));
         self
     }

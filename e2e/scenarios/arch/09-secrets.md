@@ -166,6 +166,23 @@ $ stat -c '%a' ~/.ssh/id_test && cat ~/.ssh/id_test
 SSH-SECRET
 ```
 
+A secret of `/etc` edited on the machine stays one the fleet holds: review doesn't ask whether it
+is one.
+
+```console
+$ echo "psk=OTHER" | sudo install -m 600 /dev/stdin /etc/wifi.conf
+$ printf 'r\n' | sudo mothership review
+[1/1] Files
+    ~ /etc/wifi.conf  edited  secret
+  a  add         copy it into the type's etc/, encrypted
+  r  revert      write the fleet's version
+  i ignore · l later · p pass · q quit
+  › r
+1 reverted
+$ sudo cat /etc/wifi.conf
+psk=WIFI-SECRET
+```
+
 A second machine has its own keys, which the fleet doesn't know yet. Scan and apply leave the
 secrets alone.
 
