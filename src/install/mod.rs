@@ -3,33 +3,30 @@ mod disk;
 mod iso;
 
 use crate::{
-    apply,
+    apply, chezmoi,
     cmd::{self, As},
-    fleet::{self, Fleet, Machine},
+    fleet::{self, Fleet, Machine, Mode},
     hardware, net,
     package::{self, Distro},
-    prompt::Prompt,
-    revert::Revert,
-    scan,
-    secrets::{self, Owner},
+    prompt::{Choice, Prompt},
+    revert, scan,
+    secrets::{self, MachineKey},
     user::{self, User},
 };
 use anyhow::{Context, Result, bail};
 use std::{
-    collections::BTreeMap,
-    env, fs,
-    os::unix::fs::{MetadataExt, PermissionsExt},
-    path::Path,
+    collections::BTreeMap, env, ffi::CStr, fs, os::unix::fs::MetadataExt, path::Path,
     process::Stdio,
 };
 
-/// What install would otherwise ask, so cloud-init can run it with no questions.
+/// What install would otherwise ask. The ISO asks more than a server, so it takes more.
 #[derive(Default)]
 struct Flags {
     fleet: Option<String>,
     device_type: Option<String>,
     options: Vec<String>,
     hostname: Option<String>,
+    admin: Option<String>,
     timezone: Option<String>,
     disk: Option<String>,
     layout: Option<disk::Layout>,
@@ -49,6 +46,7 @@ impl Flags {
                 "--type" => flags.device_type = Some(value),
                 "--option" => flags.options.push(value),
                 "--hostname" => flags.hostname = Some(value),
+                "--admin" => flags.admin = Some(value),
                 "--timezone" => flags.timezone = Some(value),
                 "--disk" => flags.disk = Some(value),
                 "--layout" => flags.layout = Some(value.parse()?),
@@ -60,6 +58,16 @@ impl Flags {
         }
         Ok(flags)
     }
+
+    fn only_on_the_iso(&self) -> Option<&'static str> {
+        [
+            (self.timezone.is_some(), "--timezone"),
+            (self.disk.is_some(), "--disk"),
+            (self.layout.is_some(), "--layout"),
+        ]
+        .into_iter()
+        .find_map(|(given, flag)| given.then_some(flag))
+    }
 }
 
 /// The Arch ISO creates it when it starts.
@@ -68,24 +76,30 @@ const ARCHISO: &str = "/run/archiso";
 const GH_TOKEN: &str = "MOTHERSHIP_GH_TOKEN";
 /// Set by the ISO when it runs install inside the new system, before its first start.
 const FROM_ISO: &str = "MOTHERSHIP_FROM_ISO";
+/// Where the ISO puts mothership in the new system, and where its first start runs it.
+const BINARY: &str = "/usr/local/bin/mothership";
+const GH_LOGIN: [&str; 4] = ["auth", "login", "--hostname", "github.com"];
 
 pub fn run(args: &[String]) -> Result<()> {
     let flags = Flags::parse(args)?;
     let mut prompt = Prompt::new();
     if Path::new(ARCHISO).exists() {
-        iso::run(&flags, &mut prompt)
-    } else {
-        here(&flags, &mut prompt)
+        return iso::run(&flags, &mut prompt);
     }
+    if let Some(flag) = flags.only_on_the_iso() {
+        bail!("{flag} only means something on the Arch ISO");
+    }
+    here(&flags, &mut prompt)
 }
 
 /// On the machine's own system: a server, the new disk from the ISO, or its first start.
 fn here(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     let distro = Distro::here()?;
     let chroot = env::var_os(FROM_ISO).is_some();
-    // An earlier run that was killed left it behind.
-    if Path::new(NO_PASSWORD).exists() {
-        fs::remove_file(NO_PASSWORD)?;
+    let no_password = no_password_path();
+    // An earlier run that was killed with no chance to clean up left it behind.
+    if no_password.exists() {
+        fs::remove_file(no_password)?;
     }
     // The ISO hands over its gh login once, and no child sees it.
     let token = env::var(GH_TOKEN).ok();
@@ -110,30 +124,21 @@ fn here(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
         }
     }
     if fs::metadata(dir)?.uid() == 0 {
-        let names: Vec<String> = members.iter().map(|m| m.name.clone()).collect();
+        let names: Vec<Choice> = members.iter().map(|m| Choice::new(&m.name, "")).collect();
         adopt(prompt, &names, dir, token.as_deref())?;
     }
 
     trust_keys(prompt, &hostname()?)?;
     let fleet = Fleet::load()?;
-    let _sudo = match (distro, &fleet.system.aur_helper) {
+    let sudo = match (distro, &fleet.system.aur_helper) {
         (Distro::Arch, Some(helper)) => Some(build_helper(fleet.admin(), helper)?),
         _ => None,
     };
-    // A chroot runs no service manager, so the machine's first start does these.
-    let skip = |member: Option<usize>, revert: &Revert| {
-        chroot
-            && member.is_some()
-            && matches!(
-                revert,
-                Revert::Enable { .. } | Revert::Disable { .. } | Revert::Linger(_)
-            )
-    };
-    net::retry("Applying the fleet", || apply::unasked(&skip))?;
+    net::retry("Applying the fleet", || apply::unasked(!chroot))?;
+    drop(sudo);
     if distro == Distro::Debian {
         package::keep_only(&Fleet::load()?, prompt)?;
     }
-    drop(_sudo);
     if chroot {
         return boot::setup();
     }
@@ -145,15 +150,27 @@ fn here(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
 
 /// A server comes with its system: it only needs the fleet and its answers.
 fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<()> {
-    let admin = env::var("SUDO_USER")
-        .ok()
-        .and_then(|name| user::by_name(&name).transpose())
-        .transpose()?
-        .context("run install with sudo from the account that will commit the fleet")?;
+    let name = match &flags.admin {
+        Some(name) => name.clone(),
+        None => env::var("SUDO_USER").context(
+            "name the account that will commit the fleet with --admin, or run install with sudo \
+             from it",
+        )?,
+    };
+    let admin = user::by_name(&name)?.with_context(|| format!("there is no user {name}"))?;
     if !cmd::found(As::Root, "git") {
         net::retry("Installing git", || distro.bootstrap(&["git"]))?;
     }
-    install_chezmoi(distro)?;
+    if !cmd::found(As::Root, "chezmoi") {
+        net::retry("Installing chezmoi", || match distro {
+            Distro::Arch => distro.bootstrap(&["chezmoi"]),
+            Distro::Debian => {
+                let dir = tempfile::tempdir()?;
+                let deb = chezmoi::download_deb(dir.path())?;
+                distro.bootstrap(&[&deb.to_string_lossy()])
+            }
+        })?;
+    }
     let dir = Path::new(fleet::DIR);
     if !dir.join(".git").exists() {
         let url = match &flags.fleet {
@@ -165,9 +182,34 @@ fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<()
     }
     let machine = ask_machine(flags, prompt, dir)?;
     let hostname = ask_hostname(flags, prompt)?;
+    set_hostname(&hostname)?;
     // The machine file comes last: once it's there, install skips these questions.
-    cmd::root("hostnamectl", &["set-hostname", &hostname])?;
     machine.save(Path::new("/"))
+}
+
+/// Debian's installer names the machine in /etc/hosts too, and sudo warns on every run when
+/// that name is gone.
+fn set_hostname(new: &str) -> Result<()> {
+    let old = hostname()?;
+    cmd::root("hostnamectl", &["set-hostname", new])?;
+    let hosts = fs::read_to_string("/etc/hosts").context("reading /etc/hosts")?;
+    let renamed: Vec<String> = hosts
+        .lines()
+        .map(|line| match line.strip_prefix("127.0.1.1") {
+            Some(names) => {
+                let names: Vec<&str> = names
+                    .split_whitespace()
+                    .map(|name| if name == old { new } else { name })
+                    .collect();
+                format!("127.0.1.1\t{}", names.join(" "))
+            }
+            None => line.to_owned(),
+        })
+        .collect();
+    if renamed.join("\n") != hosts.trim_end_matches('\n') {
+        fs::write("/etc/hosts", renamed.join("\n") + "\n")?;
+    }
+    Ok(())
 }
 
 fn hostname() -> Result<String> {
@@ -182,7 +224,10 @@ fn ask_machine(flags: &Flags, prompt: &mut Prompt, dir: &Path) -> Result<Machine
     let device_type = match &flags.device_type {
         Some(name) if !types.contains(name) => bail!("the fleet has no type {name}"),
         Some(name) => name.clone(),
-        None => types[prompt.choose("Device type", &types)?].clone(),
+        None => {
+            let choices: Vec<Choice> = types.iter().map(|t| Choice::new(t, "")).collect();
+            types[prompt.choose("Device type", &choices)?].clone()
+        }
     };
     let hardware = hardware::detect(Path::new("/"))?;
     let offered = Fleet::new(dir.into(), &device_type, &[], &hardware)?.options();
@@ -209,43 +254,49 @@ fn ask_machine(flags: &Flags, prompt: &mut Prompt, dir: &Path) -> Result<Machine
     })
 }
 
+/// RFC 1123: up to 63 letters, digits and hyphens, with no hyphen at either end.
+fn valid_hostname(name: &str) -> bool {
+    (1..=63).contains(&name.len())
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 fn ask_hostname(flags: &Flags, prompt: &mut Prompt) -> Result<String> {
-    let valid = |name: &str| {
-        !name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    };
+    const RULE: &str = "use up to 63 of a-z, 0-9 and -, with no - at either end";
     match &flags.hostname {
-        Some(name) if valid(name) => Ok(name.clone()),
-        Some(name) => bail!("{name} isn't a hostname: use a-z, 0-9 and -"),
+        Some(name) if valid_hostname(name) => Ok(name.clone()),
+        Some(name) => bail!("{name} isn't a hostname: {RULE}"),
         None => loop {
             let name = prompt.line("Hostname:")?;
-            if valid(&name) {
+            if valid_hostname(&name) {
                 return Ok(name);
             }
-            println!("Use a-z, 0-9 and -.");
+            println!("That isn't a hostname: {RULE}.");
         },
     }
 }
 
-/// Clones with gh's login when the repository is private. Returns whether it logged in.
+/// Clones with gh's login when the repository is a private one on GitHub. Returns whether it
+/// is private.
 fn clone(url: &str, dir: &Path, who: As, distro: Distro) -> Result<bool> {
     let path = dir.to_string_lossy();
     // git fails the same way for a private repository and a dropped network, so it only
-    // counts as private once the network works.
-    let public = net::retry("Reaching the fleet", || {
+    // counts as private once the network works. Neither git nor ssh may ask anything here.
+    let readable = net::retry("Reaching the fleet", || {
         let mut probe = who.command("git", &["ls-remote", url]);
         probe
             .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         match probe.status().context("running git")?.success() {
             true => Ok(()),
-            false => bail!("git can't read {url} without a login"),
+            false => bail!("git can't read {url}"),
         }
-    })
-    .is_ok();
+    });
     let empty = || -> Result<()> {
         for entry in fs::read_dir(dir)? {
             let path = entry?.path();
@@ -257,7 +308,12 @@ fn clone(url: &str, dir: &Path, who: As, distro: Distro) -> Result<bool> {
         }
         Ok(())
     };
-    if public {
+    let private = match readable {
+        Ok(()) => false,
+        Err(_) if url.starts_with("https://github.com/") => true,
+        Err(e) => return Err(e.context("only a GitHub repository can use a login")),
+    };
+    if !private {
         net::retry("Cloning the fleet", || {
             empty()?;
             cmd::run(who, "git", &["clone", url, &path])
@@ -271,14 +327,11 @@ fn clone(url: &str, dir: &Path, who: As, distro: Distro) -> Result<bool> {
         };
         net::retry("Installing gh", || distro.bootstrap(&[name]))?;
     }
-    if cmd::bytes(who, "gh", &["auth", "status"]).is_err() {
+    // `gh auth token` reads the local login, where `gh auth status` also needs the network.
+    if cmd::bytes(who, "gh", &["auth", "token"]).is_err() {
         println!("The fleet is private: log in to GitHub.");
-        let args = ["auth", "login", "--hostname", "github.com"];
-        cmd::run(
-            who,
-            "gh",
-            &[&args[..], &["--git-protocol", "https", "--web"]].concat(),
-        )?;
+        let args = [&GH_LOGIN[..], &["--git-protocol", "https", "--web"]].concat();
+        cmd::run(who, "gh", &args)?;
     }
     net::retry("Cloning the fleet", || {
         empty()?;
@@ -287,68 +340,22 @@ fn clone(url: &str, dir: &Path, who: As, distro: Distro) -> Result<bool> {
     Ok(true)
 }
 
-/// git as the admin, with gh's login: the admin's own git config comes later, from chezmoi.
-fn git(admin: &User, args: &[&str]) -> Result<()> {
+/// git with gh's login: the admin's own git config comes later, from chezmoi.
+fn git(who: As, args: &[&str]) -> Result<()> {
     let helper = [
         "-c",
         "credential.helper=",
         "-c",
         "credential.helper=!gh auth git-credential",
     ];
-    cmd::run(As::User(admin), "git", &[&helper[..], args].concat())
+    cmd::run(who, "git", &[&helper[..], args].concat())
 }
 
-fn install_chezmoi(distro: Distro) -> Result<()> {
-    if cmd::found(As::Root, "chezmoi") {
-        return Ok(());
-    }
-    if distro == Distro::Arch {
-        return net::retry("Installing chezmoi", || distro.bootstrap(&["chezmoi"]));
-    }
-    // Debian has no package for it: the .deb comes from chezmoi's GitHub releases.
-    let arch = cmd::stdout(As::Root, "dpkg", &["--print-architecture"])?;
-    let suffix = format!("_linux_{}.deb", arch.trim());
-    net::retry("Installing chezmoi", || {
-        let latest = "https://api.github.com/repos/twpayne/chezmoi/releases/latest";
-        let release: serde_json::Value =
-            serde_json::from_str(&cmd::stdout(As::Root, "curl", &["-fsSL", latest])?)?;
-        let asset = |wanted: &dyn Fn(&str) -> bool| -> Result<(String, String)> {
-            release["assets"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|asset| asset["name"].as_str().is_some_and(wanted))
-                .and_then(|asset| {
-                    let name = asset["name"].as_str()?.to_owned();
-                    Some((name, asset["browser_download_url"].as_str()?.to_owned()))
-                })
-                .context("chezmoi's latest release lacks a file install needs")
-        };
-        let (name, url) = asset(&|n| n.ends_with(&suffix))?;
-        let (_, sums_url) = asset(&|n| n.ends_with("_checksums.txt"))?;
-        let dir = tempfile::tempdir()?;
-        let deb = dir.path().join(&name).to_string_lossy().into_owned();
-        cmd::root("curl", &["-fsSL", "-o", &deb, &url])?;
-        let sums = cmd::stdout(As::Root, "curl", &["-fsSL", &sums_url])?;
-        let wanted = sums
-            .lines()
-            .find_map(|line| line.strip_suffix(name.as_str())?.split_whitespace().next())
-            .with_context(|| format!("chezmoi's checksums don't list {name}"))?;
-        let actual = cmd::stdout(As::Root, "sha256sum", &[&deb])?;
-        if actual.split_whitespace().next() != Some(wanted) {
-            bail!("{name} doesn't match chezmoi's checksum");
-        }
-        distro.bootstrap(&[&deb])
-    })
-}
-
-/// The fleet the ISO copied belongs to root: one of the type's users becomes its admin.
-fn adopt(prompt: &mut Prompt, names: &[String], dir: &Path, token: Option<&str>) -> Result<()> {
-    if names.is_empty() {
-        bail!("the type lists no user to own the fleet");
-    }
-    let name = &names[prompt.choose("Admin, who commits and pushes the fleet", names)?];
-    let admin = user::by_name(name)?.context("created above")?;
+/// The fleet the ISO copied belongs to root: one of the type's users becomes its admin. The
+/// fleet goes to the admin last, since install only comes back here while root owns it.
+fn adopt(prompt: &mut Prompt, names: &[Choice], dir: &Path, token: Option<&str>) -> Result<()> {
+    let name = &names[prompt.choose("Admin, who commits and pushes the fleet", names)?].name;
+    let admin = user::by_name(name)?.context("install creates the type's users first")?;
     println!("{name}'s password:");
     let mut tries = 0;
     while let Err(e) = cmd::root("passwd", &[name]) {
@@ -357,42 +364,58 @@ fn adopt(prompt: &mut Prompt, names: &[String], dir: &Path, token: Option<&str>)
             return Err(e);
         }
     }
-    admin.own_all(dir)?;
     if let Some(token) = token {
-        let args = ["auth", "login", "--hostname", "github.com", "--with-token"];
-        cmd::with_input(As::User(&admin), "gh", &args, token.as_bytes())?;
+        let args = [&GH_LOGIN[..], &["--with-token"]].concat();
+        net::retry("Logging in to GitHub", || {
+            cmd::with_input(As::User(&admin), "gh", &args, token.as_bytes())
+        })?;
     }
-    Ok(())
+    admin.own_all(dir)
 }
 
-const NO_PASSWORD: &str = "/etc/sudoers.d/zz-mothership-install";
+const NO_PASSWORD: &CStr = c"/etc/sudoers.d/zz-mothership-install";
+const LEAVING: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
+
+fn no_password_path() -> &'static Path {
+    Path::new(NO_PASSWORD.to_str().expect("the path is ASCII"))
+}
 
 /// The AUR helper builds as the admin and calls sudo, so the admin gets sudo without a
-/// password while install applies the fleet.
-struct NoPassword(libc::sighandler_t);
+/// password while install applies the fleet. Only `kill -9` leaves the file behind, and the
+/// next install removes it.
+struct NoPassword([libc::sighandler_t; 3]);
 
-/// Ctrl-C stops the program running, whose failure then unwinds install and removes the file.
-extern "C" fn on_interrupt(_: libc::c_int) {}
+extern "C" fn remove_and_leave(signal: libc::c_int) {
+    // SAFETY: unlink, signal and raise are async-signal-safe.
+    unsafe {
+        libc::unlink(NO_PASSWORD.as_ptr());
+        libc::signal(signal, libc::SIG_DFL);
+        libc::raise(signal);
+    }
+}
 
 impl NoPassword {
     fn grant(admin: &User) -> Result<NoPassword> {
-        // SAFETY: the handler does nothing, and Drop puts the old one back.
-        let handler = on_interrupt as extern "C" fn(libc::c_int) as libc::sighandler_t;
-        let granted = NoPassword(unsafe { libc::signal(libc::SIGINT, handler) });
+        let handler = remove_and_leave as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        // SAFETY: the handler only calls async-signal-safe functions, and Drop puts the old
+        // ones back.
+        let previous = LEAVING.map(|signal| unsafe { libc::signal(signal, handler) });
+        let granted = NoPassword(previous);
         let rule = format!("{} ALL=(ALL:ALL) NOPASSWD: ALL\n", admin.name);
-        fs::write(NO_PASSWORD, rule)?;
-        fs::set_permissions(NO_PASSWORD, fs::Permissions::from_mode(0o440))?;
+        revert::write(no_password_path(), rule.as_bytes(), Mode(0o440))?;
         Ok(granted)
     }
 }
 
 impl Drop for NoPassword {
     fn drop(&mut self) {
-        if let Err(e) = fs::remove_file(NO_PASSWORD) {
-            eprintln!("Remove {NO_PASSWORD} by hand: {e}");
+        if let Err(e) = fs::remove_file(no_password_path()) {
+            eprintln!("Remove {} by hand: {e}", no_password_path().display());
         }
-        // SAFETY: puts back the handler grant replaced.
-        unsafe { libc::signal(libc::SIGINT, self.0) };
+        for (signal, previous) in LEAVING.into_iter().zip(self.0) {
+            // SAFETY: puts back the handler grant replaced.
+            unsafe { libc::signal(signal, previous) };
+        }
     }
 }
 
@@ -422,40 +445,43 @@ fn trust_keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
     loop {
         let fleet = Fleet::load()?;
         let mut waiting = Vec::new();
-        for owner in secrets::keys(&fleet)? {
-            if owner.trusted {
+        for key in secrets::machine_keys(&fleet)? {
+            if key.trusted {
                 continue;
             }
-            if secrets::names(&owner.list)?.is_empty() {
-                secrets::trust(&fleet, &owner.target, hostname, &owner.public)?;
+            if secrets::names(&key.list)?.is_empty() {
+                secrets::trust(&fleet, &key.target, hostname, &key.public)?;
             } else {
-                waiting.push(owner);
+                waiting.push(key);
             }
         }
         if waiting.is_empty() {
             return fleet.hand_back();
         }
-        let (question, keys): (&str, &[char]) = match print_trust(&waiting, hostname)? {
+        let (question, answers): (&str, &[char]) = match print_trust(&waiting, hostname)? {
             true => (
                 "d done, pull the fleet · r type the recovery key ›",
                 &['d', 'r'],
             ),
             false => ("r type the recovery key ›", &['r']),
         };
-        match prompt.ask(question, keys)? {
+        match prompt.ask(question, answers)? {
             Some('d') => net::retry("Pulling the fleet", || {
-                git(fleet.admin(), &["-C", fleet::DIR, "pull", "--ff-only"])
+                git(
+                    As::User(fleet.admin()),
+                    &["-C", fleet::DIR, "pull", "--ff-only"],
+                )
             })?,
             Some('r') => {
                 let mut keys = fleet.keys().clone();
                 let public = keys.add(&prompt.hidden("Recovery key:")?)?;
-                for owner in &waiting {
-                    if !secrets::holds(&owner.list, &public)? {
-                        bail!("that key isn't in {}", owner.list.display());
+                for key in &waiting {
+                    if !secrets::holds(&key.list, &public)? {
+                        bail!("that key isn't in {}", key.list.display());
                     }
                 }
-                for owner in &waiting {
-                    secrets::trust_with(&fleet, &keys, &owner.target, hostname, &owner.public)?;
+                for key in &waiting {
+                    secrets::trust_with(&fleet, &keys, &key.target, hostname, &key.public)?;
                 }
                 fleet.hand_back()?;
             }
@@ -464,13 +490,14 @@ fn trust_keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
     }
 }
 
-/// Returns whether any machine opens the lists, which leaves only the recovery key otherwise.
-fn print_trust(waiting: &[Owner], hostname: &str) -> Result<bool> {
-    let mut by_machine: BTreeMap<String, Vec<&Owner>> = BTreeMap::new();
-    for owner in waiting {
-        for name in secrets::names(&owner.list)? {
-            if name != secrets::RECOVERY {
-                by_machine.entry(name).or_default().push(owner);
+/// Returns whether another machine opens the lists, which leaves only the recovery key
+/// otherwise. A list may already name this machine, from before it was reinstalled.
+fn print_trust(waiting: &[MachineKey], hostname: &str) -> Result<bool> {
+    let mut by_machine: BTreeMap<String, Vec<&MachineKey>> = BTreeMap::new();
+    for key in waiting {
+        for name in secrets::names(&key.list)? {
+            if name != secrets::RECOVERY && name != hostname {
+                by_machine.entry(name).or_default().push(key);
             }
         }
     }
@@ -481,14 +508,18 @@ fn print_trust(waiting: &[Owner], hostname: &str) -> Result<bool> {
         return Ok(false);
     }
     println!("The fleet doesn't trust this machine's keys yet. Run these, then commit and push:");
-    for (machine, owners) in by_machine {
+    for (machine, keys) in by_machine {
         println!("  On {machine}:");
-        for owner in owners {
+        for key in keys {
             println!(
-                "    sudo mothership trust {} {hostname} {}",
-                owner.target, owner.public
+                "    {}",
+                secrets::trust_command(&key.target, hostname, &key.public)
             );
         }
     }
     Ok(true)
 }
+
+#[cfg(test)]
+#[path = "../../tests/install.rs"]
+mod tests;

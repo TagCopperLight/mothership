@@ -61,22 +61,23 @@ mothership treats a file as a secret when only its owner can read it. Review the
 
 ## Setting up a machine
 
-mothership runs on Arch Linux, Debian and Ubuntu. Each release publishes a static binary for x86_64 and aarch64, so a new machine downloads it instead of building it:
+mothership runs on Arch Linux, Debian and Ubuntu, on x86_64. Each release publishes a static binary and its checksum, so a new machine downloads it instead of building it:
 
 ```sh
-curl -fLo mothership https://github.com/TagCopperLight/mothership/releases/latest/download/mothership-$(uname -m)
-chmod +x mothership
+base=https://github.com/TagCopperLight/mothership/releases/latest/download
+curl -fLO $base/mothership-x86_64 -fLO $base/SHA256SUMS
+sha256sum -c SHA256SUMS && install -m 755 mothership-x86_64 mothership
 ```
 
-`sudo ./mothership install` then asks for the fleet's repository, the machine's type and options, and its hostname. For a private fleet, it logs in to GitHub with `gh`. Every answer also comes as a flag, so cloud-init can run it with no questions:
+`sudo ./mothership install` then asks for the fleet's repository, the machine's type and options, and its hostname. For a private fleet on GitHub, it logs in with `gh`, whose login can read every repository you can, and saves that login for the admin. The admin is the user who ran `sudo`, or the one `--admin` names. Every answer also comes as a flag, for cloud-init:
 
 ```sh
-sudo ./mothership install --fleet https://github.com/me/fleet --type server --hostname box
+./mothership install --fleet https://github.com/me/fleet --type server --hostname box --admin ubuntu
 ```
 
-Install creates the users the type lists, then the machine's keys. For each list that already holds keys, it prints the `trust` command to run on the machines named in it. You run them, commit and push, and answer **d**: install pulls the fleet. You can also type the recovery key instead, the key named `recovery` in every list, and install trusts the new keys itself. Then it applies the fleet. When the network drops, install waits for it and goes on.
+Install creates the users the type lists, then the machine's keys. A list with no key yet takes this machine's. For each list that already holds keys, it prints the `trust` command to run on the machines named in it. You run them, commit and push, and answer **d**: install pulls the fleet. You can also type the recovery key instead, the key named `recovery` in the lists, and install trusts the new keys itself. That step always waits for an answer, even when flags gave every other one. A machine reinstalled under the same name replaces its old key. Then install applies the fleet. When a step fails while the network is down, install waits for it and runs the step again.
 
-On Debian and Ubuntu, the installer leaves the whole base system marked as installed by hand. After the apply, install marks every package the type doesn't list as a dependency, and offers to remove the ones nothing needs.
+On Debian and Ubuntu, the installer leaves the whole base system marked as installed by hand. After the apply, install marks every package the type doesn't list as a dependency, and offers to remove the ones nothing needs. So the type lists what the machine can't go without: the kernel, `openssh-server`, git and chezmoi.
 
 The fleet lives in `/var/lib/mothership/fleet`. Whoever owns that folder is the machine's admin: they commit and push from it, and every file mothership writes there goes to them. The file `/etc/mothership/machine.toml` tells mothership the machine's type:
 
@@ -102,13 +103,15 @@ user = "tag"
 
 ### From the Arch ISO
 
-On a workstation, start the Arch ISO in UEFI mode, with Secure Boot in Setup Mode (its keys cleared in the firmware setup) and a TPM 2.0. Install checks all three before it touches the disk. Then it asks for the time zone, the disk, and whether to erase the whole disk (`wipe`) or use its largest free space next to Windows (`beside`). It changes the disk only once you type the disk's name.
+On a workstation, start the Arch ISO in UEFI mode, with Secure Boot in Setup Mode (its keys cleared in the firmware setup) and a TPM 2.0. Install checks all three before it touches the disk. New Secure Boot keys make Windows' BitLocker ask for its recovery key, so suspend BitLocker first, or have that key at hand. Then it asks for the time zone, the disk, and whether to erase the whole disk (`wipe`) or use its largest free space next to Windows (`beside`). It changes the disk only once you type the disk's name.
 
 The root partition is encrypted with LUKS, and systemd finds it by its partition type, so no file names it. With `wipe`, the boot partition holds systemd-boot and the kernel. With `beside`, systemd-boot goes in Windows' EFI partition, and the kernel in a new boot partition.
 
-Install then runs inside the new system: it asks which of the type's users is the admin and their password, applies the fleet, builds the kernel image, and signs it and systemd-boot with new Secure Boot keys, which keep Microsoft's for Windows. The type's mkinitcpio preset must build that image as a UKI in `/boot/EFI/Linux`, with the `systemd` and `sd-encrypt` hooks.
+Install then runs inside the new system: it asks which of the type's users is the admin and their password, applies the fleet, builds the kernel image, and signs it and systemd-boot with new Secure Boot keys, which keep Microsoft's for Windows. The type lists `linux` and `sbctl`, and holds `/etc/kernel/cmdline`. Its mkinitcpio preset builds that image as a UKI in `/boot/EFI/Linux`, with the `systemd` and `sd-encrypt` hooks.
 
-At the next start, you type the disk's passphrase. Install finishes on the console: it checks Secure Boot is on, has the TPM open the disk from then on, and applies what needs a running system, such as user services.
+At the next start, you type the disk's passphrase. Install finishes on the console: it checks Secure Boot is on, has the TPM open the disk from then on, and applies what needs a running system, such as user services. The TPM opens the disk only while Secure Boot runs with this machine's keys, and before any other root partition was opened, so a partition someone adds can't ask for the key.
+
+When install stops on the ISO after it opened the disk, running it again goes on from there, and pulls what the fleet gained since.
 
 ## Writing a fleet
 

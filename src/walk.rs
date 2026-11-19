@@ -138,3 +138,8 @@ pub fn files(root: &Path) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 #[path = "../tests/walk.rs"]
 mod tests;
+
+/// Where an absolute path lands in a system mounted at `root`, such as a new disk.
+pub fn under(root: &Path, absolute: &str) -> PathBuf {
+    root.join(absolute.trim_start_matches('/'))
+}

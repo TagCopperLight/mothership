@@ -212,7 +212,7 @@ desktop opens the 1 secrets of workstation/root now. Commit and push the fleet.
 $ sudo mothership trust workstation/me desktop "$(grep -o 'age1.*' ~/desktop.txt)"
 desktop opens the 4 secrets of workstation/me now. Commit and push the fleet.
 $ sudo mothership trust workstation/me desktop "$(grep -o 'age1.*' ~/desktop.txt)"
-Error: workstation/me already holds desktop
+Error: workstation/me already holds this key, as desktop
 [exit 1]
 $ sudo mv /etc/mothership/key.txt /root/laptop.txt && sudo mv /root/desktop.txt /etc/mothership/key.txt
 $ mv ~/.config/mothership/key.txt ~/laptop.txt && mv ~/desktop.txt ~/.config/mothership/key.txt

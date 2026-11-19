@@ -365,7 +365,15 @@ fn what_apply_skipped_keeps_its_old_entry_so_the_next_apply_brings_it() {
         unit: "app.service".into(),
         user: true,
     };
-    let skipped = [(Some(0), &enable), (Some(0), &Revert::Linger(true))];
+    let disable = Revert::Disable {
+        unit: "dropped.service".into(),
+        user: true,
+    };
+    let skipped = [
+        (Some(0), &enable),
+        (Some(0), &disable),
+        (Some(0), &Revert::Linger(true)),
+    ];
     let machine = Machine::new();
     let after = Record::after(&fleet, &before, machine.dir.path(), &skipped).unwrap();
     let me = &after.users["me"];

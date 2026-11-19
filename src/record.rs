@@ -165,7 +165,7 @@ impl Record {
                                 record.user_services.remove(unit);
                             }
                         }
-                        _ => unreachable!("apply skips only user units and linger"),
+                        _ => unreachable!("apply skips only what needs_service_manager names"),
                     }
                 }
                 Some((member.name.clone(), record))

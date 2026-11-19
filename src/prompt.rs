@@ -1,6 +1,20 @@
 use anyhow::{Result, bail};
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 
+pub struct Choice {
+    pub name: String,
+    pub about: String,
+}
+
+impl Choice {
+    pub fn new(name: impl Into<String>, about: impl Into<String>) -> Choice {
+        Choice {
+            name: name.into(),
+            about: about.into(),
+        }
+    }
+}
+
 pub struct Prompt {
     input: Input,
 }
@@ -100,18 +114,20 @@ impl Prompt {
     }
 
     /// One of `choices`, by its number or its name. A single choice needs no question.
-    pub fn choose(&mut self, question: &str, choices: &[String]) -> Result<usize> {
+    pub fn choose(&mut self, question: &str, choices: &[Choice]) -> Result<usize> {
         match choices {
             [] => bail!("{question}: there is nothing to choose from"),
             [only] => {
-                println!("{question}: {only}");
+                println!("{question}: {}", only.name);
                 return Ok(0);
             }
             _ => {}
         }
         println!("{question}:");
+        let width = choices.iter().map(|c| c.name.len()).max().unwrap_or(0);
         for (i, choice) in choices.iter().enumerate() {
-            println!("  {}  {choice}", i + 1);
+            let line = format!("  {}  {:width$}  {}", i + 1, choice.name, choice.about);
+            println!("{}", line.trim_end());
         }
         loop {
             let answer = self.line("  ›")?;
@@ -120,9 +136,13 @@ impl Prompt {
                 .ok()
                 .and_then(|n| n.checked_sub(1))
                 .filter(|i| *i < choices.len())
-                .or_else(|| choices.iter().position(|c| *c == answer));
-            if let Some(i) = picked {
-                return Ok(i);
+                .or_else(|| choices.iter().position(|c| c.name == answer));
+            match picked {
+                Some(i) => return Ok(i),
+                None => println!(
+                    "  Answer with a number from 1 to {}, or a name.",
+                    choices.len()
+                ),
             }
         }
     }
@@ -206,3 +226,7 @@ fn with_terminal<T>(off: libc::tcflag_t, read: impl FnOnce() -> Result<T>) -> Re
     unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) };
     result
 }
+
+#[cfg(test)]
+#[path = "../tests/prompt.rs"]
+mod tests;

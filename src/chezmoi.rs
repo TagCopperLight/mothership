@@ -3,9 +3,14 @@ use crate::{
     fleet::Fleet,
     user::User,
 };
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use std::{collections::BTreeMap, fs, path::PathBuf, process::Command};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 pub fn managed(user: &User, include: &str) -> Result<Vec<PathBuf>> {
     let args = ["managed", "--include", include, "--path-style", "absolute"];
@@ -84,4 +89,40 @@ pub fn encrypted(fleet: &Fleet, type_name: &str, user: &str) -> Result<Vec<(Path
         .into_iter()
         .map(|(target, m)| (target, m.source_absolute))
         .collect())
+}
+
+/// Debian has no package for chezmoi: the .deb comes from its GitHub releases, checked against
+/// the release's checksums.
+pub fn download_deb(dir: &Path) -> Result<PathBuf> {
+    let arch = cmd::stdout(As::Root, "dpkg", &["--print-architecture"])?;
+    let suffix = format!("_linux_{}.deb", arch.trim());
+    let latest = "https://api.github.com/repos/twpayne/chezmoi/releases/latest";
+    let release: serde_json::Value =
+        serde_json::from_str(&cmd::stdout(As::Root, "curl", &["-fsSL", latest])?)?;
+    let asset = |wanted: &dyn Fn(&str) -> bool| -> Result<(String, String)> {
+        release["assets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|asset| asset["name"].as_str().is_some_and(wanted))
+            .and_then(|asset| {
+                let name = asset["name"].as_str()?.to_owned();
+                Some((name, asset["browser_download_url"].as_str()?.to_owned()))
+            })
+            .context("chezmoi's latest release lacks the .deb or its checksums")
+    };
+    let (name, url) = asset(&|n| n.ends_with(&suffix))?;
+    let (_, sums_url) = asset(&|n| n.ends_with("_checksums.txt"))?;
+    let deb = dir.join(&name);
+    cmd::root("curl", &["-fsSL", "-o", &deb.to_string_lossy(), &url])?;
+    let sums = cmd::stdout(As::Root, "curl", &["-fsSL", &sums_url])?;
+    let wanted = sums
+        .lines()
+        .find_map(|line| line.strip_suffix(name.as_str())?.split_whitespace().next())
+        .with_context(|| format!("chezmoi's checksums don't list {name}"))?;
+    let actual = cmd::stdout(As::Root, "sha256sum", &[&deb.to_string_lossy()])?;
+    if actual.split_whitespace().next() != Some(wanted) {
+        bail!("{name} doesn't match chezmoi's checksum");
+    }
+    Ok(deb)
 }

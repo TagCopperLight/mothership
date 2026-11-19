@@ -84,19 +84,17 @@ def site(dir: Path) -> Path:
 def serve(dir: Path) -> int:
     handler = partial(http.server.SimpleHTTPRequestHandler, directory=str(dir))
     handler.log_message = lambda *args: None
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", 0), handler)
+    # qemu's user network reaches the host's loopback, so nothing else on the network can.
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server.server_address[1]
 
 
-def iso_boot_files(tmp: Path) -> tuple[Path, Path, str]:
+def iso_boot_files(tmp: Path) -> tuple[Path, Path]:
     """The ISO's kernel and initramfs, started directly so its console is the serial port."""
     members = ["arch/boot/x86_64/vmlinuz-linux", "arch/boot/x86_64/initramfs-linux.img"]
     subprocess.run(["bsdtar", "-xf", str(ISO), "-C", str(tmp), *members], check=True)
-    with open(ISO, "rb") as iso:
-        iso.seek(16 * 2048 + 40)
-        label = iso.read(32).decode().strip()
-    return tmp / members[0], tmp / members[1], label
+    return tmp / members[0], tmp / members[1]
 
 
 def start_tpm(tmp: Path) -> subprocess.Popen:
@@ -119,9 +117,9 @@ def qemu(tmp: Path, boot_files=None) -> list[str]:
         "-nic", "user,model=virtio-net-pci",
     ]
     if boot_files:
-        kernel, initrd, label = boot_files
+        kernel, initrd = boot_files
         args += ["-cdrom", str(ISO), "-kernel", str(kernel), "-initrd", str(initrd),
-                 "-append", f"archisobasedir=arch archisosearchlabel={label} console=ttyS0,115200"]
+                 "-append", "archisobasedir=arch archisodevice=/dev/sr0 console=ttyS0,115200"]
     return args
 
 
@@ -129,6 +127,14 @@ def spawn(args: list[str], log) -> pexpect.spawn:
     vm = pexpect.spawn(args[0], args[1:], encoding="utf-8", codec_errors="replace", timeout=600)
     vm.logfile_read = log
     return vm
+
+
+def own_prompt(vm: pexpect.spawn) -> None:
+    """bash with a prompt the harness waits for. The quotes keep the echoed command from
+    matching it."""
+    vm.sendline("exec bash --norc --noprofile")
+    vm.sendline("PS1='V''M# '")
+    vm.expect("VM# ")
 
 
 def shell(vm: pexpect.spawn, command: str, timeout: int = 600) -> None:
@@ -141,8 +147,7 @@ def install(args: list[str], port: int, log) -> None:
     vm.expect("archiso login:", timeout=300)
     vm.sendline("root")
     vm.expect("# ")
-    vm.sendline("PS1='VM# '")
-    vm.expect("VM# ")
+    own_prompt(vm)
     site = f"http://{HOST}:{port}"
     shell(vm, f"printf 'Server = {site}/$repo/os/$arch\\nServer = {MIRROR}\\n' > /etc/pacman.d/mirrorlist")
     shell(vm, f"curl -fsS -o /root/mothership {site}/mothership && chmod +x /root/mothership")
@@ -205,8 +210,7 @@ def login(vm: pexpect.spawn) -> None:
     vm.expect("Password:")
     vm.sendline(PASSWORD)
     vm.expect(r"\$ ")
-    vm.sendline("PS1='VM# '")
-    vm.expect("VM# ")
+    own_prompt(vm)
 
 
 if __name__ == "__main__":

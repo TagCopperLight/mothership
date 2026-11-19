@@ -83,8 +83,7 @@ pub fn opens(list: &Path, key: &Path) -> Result<bool> {
     let Some(key) = read_key(key)? else {
         return Ok(false);
     };
-    let public = key.to_public().to_string();
-    Ok(read(list)?.iter().any(|r| r.key == public))
+    holds(list, &key.to_public().to_string())
 }
 
 pub fn encrypt(list: &Path, bytes: &[u8]) -> Result<Vec<u8>> {
@@ -156,7 +155,7 @@ fn read(path: &Path) -> Result<Vec<Recipient>> {
 }
 
 /// One of the machine's keys: root's or a user's.
-pub struct Owner {
+pub struct MachineKey {
     pub name: String,
     pub public: String,
     /// What `trust` takes, such as `workstation/root`.
@@ -166,7 +165,7 @@ pub struct Owner {
 }
 
 /// Creates root's key and each user's when they have none.
-pub fn keys(fleet: &Fleet) -> Result<Vec<Owner>> {
+pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
     let mut owners = vec![("root".to_owned(), None, fleet.recipients())];
     for member in &fleet.members {
         if let Some(user) = &member.user {
@@ -181,7 +180,7 @@ pub fn keys(fleet: &Fleet) -> Result<Vec<Owner>> {
                 make_key(&path, user)?;
             }
             let public = read_key(&path)?.expect("just made").to_public().to_string();
-            Ok(Owner {
+            Ok(MachineKey {
                 target: format!("{}/{name}", fleet.type_name),
                 trusted: opens(&list, &path)?,
                 name,
@@ -193,21 +192,22 @@ pub fn keys(fleet: &Fleet) -> Result<Vec<Owner>> {
 }
 
 pub fn key(fleet: &Fleet) -> Result<()> {
-    let owners = keys(fleet)?;
-    for owner in &owners {
-        println!("{:6}  {}", owner.name, owner.public);
+    let keys = machine_keys(fleet)?;
+    for key in &keys {
+        println!("{:6}  {}", key.name, key.public);
     }
-    let untrusted: Vec<&Owner> = owners.iter().filter(|o| !o.trusted).collect();
+    let untrusted: Vec<&MachineKey> = keys.iter().filter(|k| !k.trusted).collect();
     if !untrusted.is_empty() {
         println!("Add them from a machine that opens the secrets, or here for the first one:");
-        for owner in untrusted {
-            println!(
-                "  sudo mothership trust {} <name> {}",
-                owner.target, owner.public
-            );
+        for key in untrusted {
+            println!("  {}", trust_command(&key.target, "<name>", &key.public));
         }
     }
     Ok(())
+}
+
+pub fn trust_command(target: &str, name: &str, public: &str) -> String {
+    format!("sudo mothership trust {target} {name} {public}")
 }
 
 fn make_key(path: &Path, owner: Option<&User>) -> Result<()> {
@@ -275,14 +275,20 @@ pub fn trust(fleet: &Fleet, text: &str, name: &str, key: &str) -> Result<()> {
     trust_with(fleet, fleet.keys(), text, name, key)
 }
 
-/// `keys` open the list's secrets, to encrypt them again for the new key.
+/// `keys` open the list's secrets, to encrypt them again for the new key. A name the list
+/// already holds is a machine reinstalled with a new key, which replaces its old one.
 pub fn trust_with(fleet: &Fleet, keys: &Keys, text: &str, name: &str, key: &str) -> Result<()> {
     let target = target(fleet, text)?;
     key.parse::<x25519::Recipient>()
         .map_err(|e| anyhow!("{key}: {e}"))?;
     let mut list = read(&target.list)?;
-    if let Some(known) = list.iter().find(|r| r.name == name || r.key == key) {
-        bail!("{text} already holds {}", known.name);
+    if let Some(known) = list.iter().find(|r| r.key == key) {
+        bail!("{text} already holds this key, as {}", known.name);
+    }
+    let before = list.len();
+    list.retain(|r| r.name != name);
+    if list.len() < before {
+        println!("This key replaces {name}'s old one.");
     }
     list.push(Recipient {
         name: name.to_owned(),

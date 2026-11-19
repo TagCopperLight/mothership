@@ -1,7 +1,8 @@
 use super::Flags;
 use crate::{
     cmd::{self, As},
-    prompt::Prompt,
+    prompt::{Choice, Prompt},
+    walk,
 };
 use anyhow::{Context, Result, bail};
 use std::{fs, path::Path, str::FromStr};
@@ -11,8 +12,15 @@ pub const ROOT: &str = "/mnt";
 /// gpt-auto opens the root partition under this name, so the ISO uses it too.
 const MAPPER: &str = "root";
 const ESP_TYPE: &str = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b";
-const BOOT_SIZE: u64 = 1 << 30;
-const ROOT_MIN: u64 = 20 << 30;
+/// sgdisk's codes for the EFI partition, an extra boot partition (XBOOTLDR) and the x86-64 root.
+const ESP_CODE: &str = "ef00";
+const XBOOTLDR_CODE: &str = "ea00";
+const ROOT_CODE: &str = "8304";
+const GIB: u64 = 1 << 30;
+const BOOT_SIZE: u64 = GIB;
+const ROOT_MIN: u64 = 20 * GIB;
+/// The ISO mounts the drive it started from there, unless it copied itself to RAM.
+const BOOT_MOUNT: &str = "/run/archiso/bootmnt";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Layout {
@@ -42,22 +50,18 @@ pub struct Disk {
 pub fn choose(flags: &Flags, prompt: &mut Prompt) -> Result<Disk> {
     let disks = list()?;
     let path = match &flags.disk {
-        Some(path) if !disks.iter().any(|(p, _)| p == path) => {
+        Some(path) if !disks.iter().any(|d| d.name == *path) => {
             bail!("{path} isn't a disk install can use")
         }
         Some(path) => path.clone(),
-        None if disks.is_empty() => bail!("the machine has no disk to install on"),
-        None => {
-            let shown: Vec<String> = disks.iter().map(|(p, d)| format!("{p}  {d}")).collect();
-            disks[prompt.choose("Disk", &shown)?].0.clone()
-        }
+        None => disks[prompt.choose("Disk", &disks)?].name.clone(),
     };
     let layout = match flags.layout {
         Some(layout) => layout,
         None => {
             let choices = [
-                "wipe    erase the whole disk".to_owned(),
-                "beside  use its largest free space, next to Windows".to_owned(),
+                Choice::new("wipe", "erase the whole disk"),
+                Choice::new("beside", "use its largest free space, next to Windows"),
             ];
             [Layout::Wipe, Layout::Beside][prompt.choose("Layout", &choices)?]
         }
@@ -66,21 +70,28 @@ pub fn choose(flags: &Flags, prompt: &mut Prompt) -> Result<Disk> {
 }
 
 /// The machine's real disks, leaving out the one the ISO started from.
-fn list() -> Result<Vec<(String, String)>> {
-    let boot = cmd::stdout(
-        As::Root,
-        "findmnt",
-        &["--noheadings", "--output", "SOURCE", "/run/archiso/bootmnt"],
-    )
-    .ok()
-    .map(|source| source.trim().to_owned());
-    let boot_disk = match boot {
-        Some(source) => Some(cmd::stdout(
-            As::Root,
-            "lsblk",
-            &["--noheadings", "--paths", "--output", "PKNAME", &source],
-        )?),
-        None => None,
+fn list() -> Result<Vec<Choice>> {
+    let boot_disk = match cmd::bytes(As::Root, "mountpoint", &["--quiet", BOOT_MOUNT]) {
+        Ok(_) => {
+            let source = cmd::stdout(
+                As::Root,
+                "findmnt",
+                &["--noheadings", "--output", "SOURCE", BOOT_MOUNT],
+            )?;
+            let disk = cmd::stdout(
+                As::Root,
+                "lsblk",
+                &[
+                    "--noheadings",
+                    "--paths",
+                    "--output",
+                    "PKNAME",
+                    source.trim(),
+                ],
+            )?;
+            Some(disk.trim().to_owned())
+        }
+        Err(_) => None,
     };
     let json = cmd::stdout(
         As::Root,
@@ -108,10 +119,10 @@ fn list() -> Result<Vec<(String, String)>> {
             let name = name.trim_start_matches("/dev/");
             Path::new("/sys/block").join(name).join("device").exists()
         })
-        .filter(|device| boot_disk.as_deref().map(str::trim) != Some(&text(device, "name")))
+        .filter(|device| boot_disk.as_deref() != Some(&text(device, "name")))
         .map(|device| {
             let about = format!("{}  {}", text(device, "size"), text(device, "model"));
-            (text(device, "name"), about.trim().to_owned())
+            Choice::new(text(device, "name"), about.trim())
         })
         .collect())
 }
@@ -120,7 +131,7 @@ fn list() -> Result<Vec<(String, String)>> {
 pub fn prepare(disk: &Disk, prompt: &mut Prompt) -> Result<()> {
     let name = Path::new(&disk.path)
         .file_name()
-        .context("a disk path has a name")?
+        .expect("lsblk names disks by path")
         .to_string_lossy()
         .into_owned();
     match disk.layout {
@@ -158,7 +169,7 @@ pub fn prepare(disk: &Disk, prompt: &mut Prompt) -> Result<()> {
     cmd::root("mkfs.ext4", &["-q", &mapped])?;
     cmd::root("mount", &[&mapped, ROOT])?;
     for (device, at) in mounts {
-        let dir = Path::new(ROOT).join(at.trim_start_matches('/'));
+        let dir = walk::under(Path::new(ROOT), at);
         fs::create_dir_all(&dir)?;
         cmd::root("mount", &[&device, &dir.to_string_lossy()])?;
     }
@@ -192,10 +203,10 @@ fn wipe(disk: &str) -> Result<Partitions> {
     cmd::root(
         "sgdisk",
         &[
-            "--new=1:0:+1G",
-            "--typecode=1:ef00",
+            &format!("--new=1:0:+{}M", BOOT_SIZE >> 20),
+            &format!("--typecode=1:{ESP_CODE}"),
             "--new=2:0:0",
-            "--typecode=2:8304",
+            &format!("--typecode=2:{ROOT_CODE}"),
             disk,
         ],
     )?;
@@ -209,10 +220,12 @@ fn wipe(disk: &str) -> Result<Partitions> {
 /// the kernel goes in its own boot partition (XBOOTLDR).
 fn beside(disk: &str, prompt: &mut Prompt) -> Result<Partitions> {
     let esps = esps(disk)?;
-    let esp = match esps.len() {
-        0 => bail!("{disk} has no EFI partition to share"),
-        _ => esps[prompt.choose("EFI partition to share", &esps)?].clone(),
-    };
+    if esps.is_empty() {
+        bail!("{disk} has no EFI partition to share");
+    }
+    let esp = esps[prompt.choose("EFI partition to share", &esps)?]
+        .name
+        .clone();
     let sector: u64 = cmd::stdout(As::Root, "blockdev", &["--getss", disk])?
         .trim()
         .parse()?;
@@ -230,16 +243,17 @@ fn beside(disk: &str, prompt: &mut Prompt) -> Result<Partitions> {
     );
     let boot_end = start + BOOT_SIZE / sector - 1;
     if end < boot_end || (end - boot_end) * sector < ROOT_MIN {
-        bail!("{disk}'s largest free space is under 21 GiB: shrink Windows first");
+        let needed = (BOOT_SIZE + ROOT_MIN) / GIB;
+        bail!("{disk}'s largest free space is under {needed} GiB: shrink Windows first");
     }
     let next = numbers(disk)?.into_iter().max().unwrap_or(0) + 1;
     cmd::root(
         "sgdisk",
         &[
             &format!("--new={next}:{start}:{boot_end}"),
-            &format!("--typecode={next}:ea00"),
+            &format!("--typecode={next}:{XBOOTLDR_CODE}"),
             &format!("--new={}:{}:{end}", next + 1, boot_end + 1),
-            &format!("--typecode={}:8304", next + 1),
+            &format!("--typecode={}:{ROOT_CODE}", next + 1),
             disk,
         ],
     )?;
@@ -265,11 +279,11 @@ fn partitions(disk: &str) -> Result<Vec<serde_json::Value>> {
         .unwrap_or_default())
 }
 
-fn esps(disk: &str) -> Result<Vec<String>> {
+fn esps(disk: &str) -> Result<Vec<Choice>> {
     Ok(partitions(disk)?
         .iter()
         .filter(|p| p["parttype"] == ESP_TYPE)
-        .filter_map(|p| p["name"].as_str().map(str::to_owned))
+        .filter_map(|p| p["name"].as_str().map(|name| Choice::new(name, "")))
         .collect())
 }
 
@@ -288,3 +302,7 @@ fn partition(disk: &str, number: u64) -> String {
         format!("{disk}{number}")
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/disk.rs"]
+mod tests;

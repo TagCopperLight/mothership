@@ -1,3 +1,4 @@
+use super::BINARY;
 use crate::cmd::{self, As};
 use anyhow::{Context, Result, bail};
 use std::{fs, io::ErrorKind, path::Path};
@@ -8,22 +9,33 @@ const SYSTEMD_BOOT: &str = "/usr/lib/systemd/boot/efi/systemd-bootx64.efi";
 /// Runs install again at the machine's first start, on the console, before anyone logs in.
 const SERVICE: &str = "mothership-install.service";
 const SERVICE_DIR: &str = "/etc/systemd/system";
-const UNIT: &str = "[Unit]\n\
-Description=Finish the mothership install\n\
-Wants=network-online.target getty-pre.target\n\
-After=network-online.target systemd-user-sessions.service\n\
-Before=getty-pre.target display-manager.service\n\
-\n\
-[Service]\n\
-Type=oneshot\n\
-ExecStart=/usr/local/bin/mothership install\n\
-StandardInput=tty\n\
-StandardOutput=tty\n\
-TTYPath=/dev/console\n\
-TTYReset=yes\n\
-\n\
-[Install]\n\
-WantedBy=multi-user.target\n";
+/// The disk only opens with the kernel's command line in the UKI: without the file,
+/// mkinitcpio would copy the ISO's.
+const CMDLINE: &str = "/etc/kernel/cmdline";
+/// PCR 7 holds the Secure Boot state. PCR 15 is still zero until the initramfs opens a root,
+/// so a fake root partition someone adds can't ask the TPM for this disk's key.
+const PCRS: &str = "7+15:sha256=0000000000000000000000000000000000000000000000000000000000000000";
+
+fn unit() -> String {
+    format!(
+        "[Unit]\n\
+         Description=Finish the mothership install\n\
+         Wants=network-online.target getty-pre.target\n\
+         After=network-online.target systemd-user-sessions.service\n\
+         Before=getty-pre.target display-manager.service\n\
+         \n\
+         [Service]\n\
+         Type=oneshot\n\
+         ExecStart={BINARY} install\n\
+         StandardInput=tty\n\
+         StandardOutput=tty\n\
+         TTYPath=/dev/console\n\
+         TTYReset=yes\n\
+         \n\
+         [Install]\n\
+         WantedBy=multi-user.target\n"
+    )
+}
 
 /// The fifth byte holds the value, after four bytes of attributes.
 fn efi_var(name: &str) -> Result<Option<u8>> {
@@ -46,7 +58,10 @@ pub fn check_firmware() -> Result<()> {
              the ISO again"
         );
     }
-    let version = fs::read_to_string("/sys/class/tpm/tpm0/tpm_version_major").unwrap_or_default();
+    let version = match fs::read_to_string("/sys/class/tpm/tpm0/tpm_version_major") {
+        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
+        version => version.context("reading the TPM's version")?,
+    };
     if version.trim() != "2" {
         bail!("the machine has no TPM 2.0 to unlock the disk");
     }
@@ -56,6 +71,9 @@ pub fn check_firmware() -> Result<()> {
 /// In the new system, before its first start: a signed UKI, signed systemd-boot, and this
 /// machine's Secure Boot keys, with Microsoft's for Windows and the firmware's own drivers.
 pub fn setup() -> Result<()> {
+    if !Path::new(CMDLINE).exists() {
+        bail!("the type has no {CMDLINE}, which the encrypted disk's UKI needs");
+    }
     cmd::root("mkinitcpio", &["--allpresets"])?;
     let ukis = ukis()?;
     if ukis.is_empty() {
@@ -82,7 +100,7 @@ pub fn setup() -> Result<()> {
         cmd::root("sbctl", &["sign", "--save", uki])?;
     }
 
-    fs::write(Path::new(SERVICE_DIR).join(SERVICE), UNIT)?;
+    fs::write(Path::new(SERVICE_DIR).join(SERVICE), unit())?;
     cmd::root("systemctl", &["enable", SERVICE])?;
     println!("Secure Boot holds this machine's keys now.");
     Ok(())
@@ -119,7 +137,11 @@ pub fn finish() -> Result<()> {
         println!("The TPM opens the disk from now on. Type the passphrase once more:");
         cmd::root(
             "systemd-cryptenroll",
-            &["--tpm2-device=auto", "--tpm2-pcrs=7", &device],
+            &[
+                "--tpm2-device=auto",
+                &format!("--tpm2-pcrs={PCRS}"),
+                &device,
+            ],
         )?;
     }
     cmd::root("systemctl", &["disable", SERVICE])?;

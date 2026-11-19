@@ -102,8 +102,8 @@ impl Machine {
 
     /// `root` is where the machine's system sits: `/`, or the new disk during an install.
     pub fn save(&self, root: &Path) -> Result<()> {
-        let path = root.join(MACHINE.trim_start_matches('/'));
-        fs::create_dir_all(path.parent().context("no parent folder")?)?;
+        let path = walk::under(root, MACHINE);
+        fs::create_dir_all(path.parent().expect("MACHINE has a folder"))?;
         fs::write(&path, toml::to_string(self)?)
             .with_context(|| format!("writing {}", path.display()))
     }

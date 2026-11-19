@@ -27,7 +27,7 @@ use fleet::Fleet;
 const USAGE: &str = "usage: mothership scan | review | apply | key \
                      | trust <type>/<root|user> <name> <key> | retire <type>/<root|user> <name> \
                      | install [--fleet <repo>] [--type <type>] [--option <option>]... \
-                     [--hostname <name>] [--timezone <zone>] [--disk <disk>] \
+                     [--hostname <name>] [--admin <user>] [--timezone <zone>] [--disk <disk>] \
                      [--layout wipe|beside]";
 
 fn main() -> anyhow::Result<()> {

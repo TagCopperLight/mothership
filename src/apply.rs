@@ -12,20 +12,18 @@ use std::path::Path;
 
 pub fn run() -> Result<()> {
     let mut prompt = Prompt::new();
-    while round(&mut || prompt.confirm("Apply"), &|_, _| false)? {}
+    while round(&mut || prompt.confirm("Apply"), true)? {}
     Ok(())
 }
 
-/// For install, which already has the go-ahead: applies everything but what `skip` names.
-pub fn unasked(skip: &dyn Fn(Option<usize>, &Revert) -> bool) -> Result<()> {
-    while round(&mut || Ok(true), skip)? {}
+/// For install, which already has the go-ahead. Without a service manager, it leaves what
+/// needs one to the next apply.
+pub fn unasked(service_manager: bool) -> Result<()> {
+    while round(&mut || Ok(true), service_manager)? {}
     Ok(())
 }
 
-fn round(
-    approve: &mut dyn FnMut() -> Result<bool>,
-    skip: &dyn Fn(Option<usize>, &Revert) -> bool,
-) -> Result<bool> {
+fn round(approve: &mut dyn FnMut() -> Result<bool>, service_manager: bool) -> Result<bool> {
     let fleet = Fleet::load()?;
     let db = Db::load()?;
     let record_path = Path::new(record::PATH);
@@ -37,7 +35,11 @@ fn round(
     let mut skipped: Vec<Owned> = Vec::new();
     for item in &items {
         match &item.revert {
-            Some(revert) if item.section == Section::Fleet && skip(item.member, revert) => {
+            Some(revert)
+                if item.section == Section::Fleet
+                    && !service_manager
+                    && revert.needs_service_manager() =>
+            {
                 skipped.push((item.member, revert))
             }
             _ if item.section == Section::Fleet => todo.push(item),
@@ -50,6 +52,12 @@ fn round(
 
     let style = Style::stdout();
     scan::print_section(&fleet, Section::Fleet, &todo, style, &|_| None);
+    if !skipped.is_empty() {
+        println!(
+            "{} left for the machine's first start, which runs a service manager",
+            skipped.len()
+        );
+    }
     for (items, why) in [
         (&edited, "they were edited on this machine"),
         (&locked, "this machine's key can't open them"),

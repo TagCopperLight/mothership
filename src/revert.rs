@@ -56,6 +56,18 @@ impl Revert {
     }
 }
 
+impl Revert {
+    /// What only a running service manager can do: a chroot has none.
+    pub fn needs_service_manager(&self) -> bool {
+        matches!(
+            self,
+            Revert::Enable { user: true, .. }
+                | Revert::Disable { user: true, .. }
+                | Revert::Linger(_)
+        )
+    }
+}
+
 pub type Owned<'a> = (Option<usize>, &'a Revert);
 
 /// The machine goes first, then each user. Packages go first, after the sources they come
