@@ -20,6 +20,18 @@ fn flags_take_a_value_each_and_options_add_up() {
 fn flags_refuse_what_they_can_not_mean() {
     let error = |args: &[&str]| parse(args).err().unwrap().to_string();
     assert_eq!(error(&["--type"]), "--type needs a value");
+    assert_eq!(
+        error(&["--fleet", "--type", "server"]),
+        "--fleet needs a value"
+    );
+    assert_eq!(
+        error(&["--type", "a", "--type", "b"]),
+        "--type is given twice"
+    );
+    assert_eq!(
+        error(&["--type", "a", "--option", "x", "--option", "x"]),
+        "--option x is given twice"
+    );
     assert_eq!(error(&["--colour", "red"]), "install has no --colour");
     assert_eq!(error(&["--option", "a"]), "--option needs --type");
     assert_eq!(

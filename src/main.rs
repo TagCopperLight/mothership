@@ -27,12 +27,13 @@ mod walk;
 
 use anyhow::bail;
 use fleet::Fleet;
+use std::process::ExitCode;
 
 const USAGE: &str = "usage: mothership scan | review | apply | key \
                      | trust <type>/<root|user> <name> <key> | retire <type>/<root|user> <name> \
                      | install [--fleet <repo>] [--type <type>] [--option <option>]... \
                      [--hostname <name>] [--admin <user>] [--timezone <zone>] [--disk <disk>] \
-                     [--layout wipe|beside]";
+                     [--layout wipe|beside] [--remove-unlisted yes|no]";
 
 #[derive(Clone, Copy)]
 enum Command {
@@ -60,9 +61,27 @@ impl Command {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> ExitCode {
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [help] = &args[..]
+        && matches!(help.as_str(), "--help" | "-h" | "help")
+    {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    match run(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            let text = format!("{e:#}");
+            let lines: Vec<String> = text.lines().map(style::clean).collect();
+            eprintln!("Error: {}", lines.join("\n"));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run(args: &[String]) -> anyhow::Result<()> {
     let Some((command, rest)) = args
         .split_first()
         .and_then(|(name, rest)| Some((Command::parse(name)?, rest)))

@@ -3,7 +3,7 @@ use crate::{
     fleet::{self, Fleet, Machine},
     prompt::{Choice, Prompt},
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Default)]
@@ -26,20 +26,25 @@ impl Flags {
         let mut flags = Flags::default();
         let mut args = args.iter();
         while let Some(flag) = args.next() {
-            let value = args
-                .next()
-                .with_context(|| format!("{flag} needs a value"))?
-                .clone();
+            let value = match args.next() {
+                Some(value) if !value.starts_with("--") => value.clone(),
+                _ => bail!("{flag} needs a value"),
+            };
             match flag.as_str() {
-                "--fleet" => flags.fleet = Some(value),
-                "--type" => flags.device_type = Some(value),
+                "--fleet" => once(&mut flags.fleet, flag, value)?,
+                "--type" => once(&mut flags.device_type, flag, value)?,
+                "--option" if flags.options.contains(&value) => {
+                    bail!("{flag} {value} is given twice")
+                }
                 "--option" => flags.options.push(value),
-                "--hostname" => flags.hostname = Some(value),
-                ADMIN => flags.admin = Some(value),
-                "--remove-unlisted" => flags.remove_unlisted = Some(yes_or_no(flag, &value)?),
-                "--timezone" => flags.timezone = Some(value),
-                "--disk" => flags.disk = Some(value),
-                "--layout" => flags.layout = Some(value.parse()?),
+                "--hostname" => once(&mut flags.hostname, flag, value)?,
+                ADMIN => once(&mut flags.admin, flag, value)?,
+                "--remove-unlisted" => {
+                    once(&mut flags.remove_unlisted, flag, yes_or_no(flag, &value)?)?
+                }
+                "--timezone" => once(&mut flags.timezone, flag, value)?,
+                "--disk" => once(&mut flags.disk, flag, value)?,
+                "--layout" => once(&mut flags.layout, flag, value.parse()?)?,
                 _ => bail!("install has no {flag}"),
             }
         }
@@ -58,6 +63,14 @@ impl Flags {
         .into_iter()
         .find_map(|(given, flag)| given.then_some(flag))
     }
+}
+
+fn once<T>(slot: &mut Option<T>, flag: &str, value: T) -> Result<()> {
+    if slot.is_some() {
+        bail!("{flag} is given twice");
+    }
+    *slot = Some(value);
+    Ok(())
 }
 
 fn yes_or_no(flag: &str, value: &str) -> Result<bool> {

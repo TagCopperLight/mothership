@@ -10,6 +10,11 @@ mothership reads every user's home, so it needs root.
 $ mothership scan
 Error: mothership reads every user's home: run it with sudo
 [exit 1]
+$ mothership --help
+usage: mothership scan \| review .* (re)
+$ mothership scna
+usage: mothership scan \| review .* (re)
+[exit 2]
 ```
 
 The scan finds what the fleet wants and the machine lacks. Nothing was ever applied here, so it
