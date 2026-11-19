@@ -18,9 +18,6 @@ Coming from the fleet · 1
   Users
     + dev  create it
 
-Shared · 1
-  ~/.gitconfig  workstation/dev, workstation/me
-
 1 to apply      sudo mothership apply
 The fleet has 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
@@ -58,9 +55,6 @@ dev /home/dev/.gitconfig
 $ sudo grep sourceDir /home/dev/.config/chezmoi/chezmoi.toml
 sourceDir = "/var/lib/mothership/fleet/types/workstation/users/dev/home"
 $ sudo mothership scan
-Shared · 1
-  ~/.gitconfig  workstation/dev, workstation/me
-
 ✓ Nothing differs from the workstation type
 The fleet has 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
@@ -90,9 +84,6 @@ $ find /var/lib/mothership/fleet -not -user me | wc -l
 $ sudo stat -c %U /home/dev/.config/chezmoi/chezmoistate.boltdb
 dev
 $ sudo mothership scan
-Shared · 1
-  ~/.gitconfig  workstation/dev, workstation/me
-
 ✓ Nothing differs from the workstation type
 The fleet has 2 commits not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
@@ -213,11 +204,6 @@ Changed on this machine · 2
     + guest    not in the fleet
     + visitor  not in the fleet
 
-Shared · 3
-  .secrets/token.age  workstation/dev, workstation/me
-  ~/.gitconfig        workstation/dev, workstation/me
-  ~/.token            workstation/dev
-
 2 to review     sudo mothership review
 The fleet has 4 commits not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
@@ -246,4 +232,22 @@ Coming from the fleet · 1
   Files · guest
     + chezmoi  write its config  its config isn't the one mothership writes
 
+```
+
+A file in `shared/` that no home links needs attention: it reaches nobody. Ignoring it writes a
+`shared` line in the type's `ignore.txt`.
+
+```console
+$ cd /var/lib/mothership/fleet && touch shared/dot_unused
+$ sudo mothership scan | head -4
+Needs attention · 1
+  Shared files
+    + dot_unused  linked by no home  link it from a home, or delete it
+
+$ printf 'i\n' | sudo mothership review | tail -3
+1 ignored
+1 coming from the fleet, for sudo mothership apply
+Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+$ tail -1 /var/lib/mothership/fleet/types/workstation/ignore.txt
+shared dot_unused
 ```

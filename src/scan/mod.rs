@@ -7,6 +7,7 @@ mod print;
 mod secret;
 mod services;
 mod settings;
+mod shared;
 pub mod tools;
 
 pub use print::{Columns, heading, line, print_groups, print_section};
@@ -24,7 +25,7 @@ use crate::{
     style::{Paint, Style},
 };
 use anyhow::Result;
-use print::{owner, print_shared, summary};
+use print::{owner, summary};
 use secret::finish;
 use std::{collections::HashSet, fs, path::Path, thread};
 
@@ -97,6 +98,7 @@ pub fn checks(fleet: &Fleet, db: &Db, record: &Record, which: Checks) -> Result<
         Ok::<_, anyhow::Error>(items.into_iter().flatten().collect::<Vec<_>>())
     })?;
     items.extend(account::users(fleet)?);
+    items.extend(shared::unlinked(fleet)?);
     for item in &mut items {
         let user = item.member.map(|i| fleet.members[i].name.as_str());
         if item.section == Section::Machine
@@ -220,7 +222,6 @@ pub fn run() -> Result<()> {
             .collect();
         print_section(fleet, section, &items, style, &waiting);
     }
-    print_shared(fleet, style)?;
     summary(&report, style, &waiting);
     let unsaved = fleet.unsaved()?;
     if !unsaved.is_empty() {

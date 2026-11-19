@@ -1,11 +1,10 @@
 use super::Report;
 use crate::{
-    fleet::{Fleet, homes},
+    fleet::Fleet,
     item::{Change, Item, Secret, Section},
     kind::Kind,
     style::{self, Paint, Style},
 };
-use anyhow::Result;
 
 impl Kind {
     pub fn area(self) -> Area {
@@ -17,6 +16,7 @@ impl Kind {
             Kind::UserService => Area::UserServices,
             Kind::Account => Area::Account,
             Kind::User => Area::Users,
+            Kind::Shared => Area::Shared,
             Kind::Dconf | Kind::Pref => Area::Settings,
         }
     }
@@ -29,6 +29,7 @@ pub enum Area {
     Files,
     Services,
     Users,
+    Shared,
     UserServices,
     Account,
     Settings,
@@ -42,6 +43,7 @@ impl Area {
             Area::Files => "Files",
             Area::Services => "Services",
             Area::Users => "Users",
+            Area::Shared => "Shared files",
             Area::UserServices => "User services",
             Area::Account => "Account",
             Area::Settings => "Settings",
@@ -94,29 +96,6 @@ pub fn summary(report: &Report, style: Style, waiting: &dyn Fn(&Item) -> Option<
         let later = format!("{put_off} put off for later");
         println!("{}", style.paint(later, &[Paint::Blue]));
     }
-}
-
-pub fn print_shared(fleet: &Fleet, style: Style) -> Result<()> {
-    let shared = homes::shared(&fleet.dir)?;
-    if shared.is_empty() {
-        return Ok(());
-    }
-    let title = format!("Shared · {}", shared.len());
-    println!("{}", style.paint(title, &[Paint::Bold]));
-    let pairs: Vec<(String, String)> = shared
-        .iter()
-        .map(|file| {
-            let homes: Vec<String> = file.homes.iter().map(|home| home.to_string()).collect();
-            let homes = match homes.is_empty() {
-                true => style.paint("linked by nobody", &[Paint::Yellow]),
-                false => style::clean(&homes.join(", ")),
-            };
-            (homes::shown(&file.rel), homes)
-        })
-        .collect();
-    style::print_pairs(&pairs);
-    println!();
-    Ok(())
 }
 
 pub fn print_section(
