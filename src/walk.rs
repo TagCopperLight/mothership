@@ -193,3 +193,18 @@ pub fn read(path: &Path) -> Result<Option<Vec<u8>>> {
 pub fn under(root: &Path, absolute: &str) -> PathBuf {
     root.join(absolute.trim_start_matches('/'))
 }
+
+pub fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> Result<T> {
+    match fs::read_to_string(path) {
+        Ok(text) => {
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(T::default()),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+pub fn write_json(path: &Path, value: &impl serde::Serialize) -> Result<()> {
+    write(path, serde_json::to_string_pretty(value)?.as_bytes(), 0o600)
+        .with_context(|| format!("writing {}", path.display()))
+}

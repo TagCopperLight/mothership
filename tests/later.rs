@@ -1,5 +1,6 @@
 use super::*;
 use crate::scan::{Change, Kind};
+use std::fs;
 
 fn item(subject: &str) -> Item {
     Item::new(Kind::Package, Change::Added, subject, "installed")

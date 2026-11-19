@@ -138,3 +138,7 @@ fn chezmoi_status(code: u8, edited: bool) -> (Change, &'static str) {
         (_, false) => (Change::Edited, "changed in the fleet"),
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/files.rs"]
+mod tests;

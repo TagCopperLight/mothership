@@ -3,12 +3,10 @@ use crate::{
     scan::{self, Item},
     walk,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
-    io::ErrorKind,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -38,15 +36,9 @@ impl Later {
     }
 
     pub fn at(path: &Path) -> Result<Self> {
-        let items = match fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text)
-                .with_context(|| format!("parsing {}", path.display()))?,
-            Err(e) if e.kind() == ErrorKind::NotFound => BTreeMap::new(),
-            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-        };
         Ok(Later {
             path: path.to_path_buf(),
-            items,
+            items: walk::read_json(path)?,
         })
     }
 
@@ -79,12 +71,7 @@ impl Later {
     pub fn save(mut self, fleet: &Fleet, current: &[&Item]) -> Result<()> {
         let keys: BTreeSet<String> = current.iter().map(|i| scan::key(fleet, i)).collect();
         self.items.retain(|key, _| keys.contains(key));
-        walk::write(
-            &self.path,
-            serde_json::to_string_pretty(&self.items)?.as_bytes(),
-            0o600,
-        )
-        .with_context(|| format!("writing {}", self.path.display()))
+        walk::write_json(&self.path, &self.items)
     }
 }
 

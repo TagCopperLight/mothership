@@ -37,18 +37,11 @@ struct UserRecord {
 
 impl Record {
     pub fn load(path: &Path) -> Result<Self> {
-        match fs::read_to_string(path) {
-            Ok(text) => {
-                serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
-            }
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(Record::default()),
-            Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-        }
+        walk::read_json(path)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        walk::write(path, serde_json::to_string_pretty(self)?.as_bytes(), 0o600)
-            .with_context(|| format!("writing {}", path.display()))
+        walk::write_json(path, self)
     }
 
     pub fn fleet_changed(&self, revert: &Revert, user: Option<&str>, db: &Db) -> Result<bool> {
