@@ -107,12 +107,20 @@ pub fn shipped(archive: &Path, member: &Path) -> Result<Vec<u8>> {
 
 pub fn install(fleet: &Fleet, names: &[&str]) -> Result<()> {
     let install = split_install(names, &in_repos()?, fleet.system.aur_helper.as_deref())?;
+    if let Some((helper, _)) = &install.aur
+        && !cmd::found(As::User(fleet.admin()), helper)
+    {
+        bail!(
+            "system.toml names {helper} as the AUR helper, but {} has no {helper}",
+            fleet.admin().name
+        );
+    }
     if !install.repo.is_empty() {
         let args = [&["-S", "--needed", "--noconfirm"], &install.repo[..]].concat();
         cmd::root("pacman", &args)?;
     }
     // An AUR helper builds as a user, never as root.
-    if let Some((helper, aur)) = install.aur {
+    if let Some((helper, aur)) = &install.aur {
         cmd::run(
             As::User(fleet.admin()),
             helper,

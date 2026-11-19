@@ -58,6 +58,11 @@ pub fn output(mut command: Command, program: &str, args: &[&str]) -> Result<Vec<
     Ok(out.stdout)
 }
 
+/// Whether the program is on the PATH of whoever runs it.
+pub fn found(who: As, program: &str) -> bool {
+    bytes(who, "sh", &["-c", "command -v \"$1\"", "sh", program]).is_ok()
+}
+
 pub fn run(who: As, program: &str, args: &[&str]) -> Result<()> {
     status(who.command(program, args), program, args)
 }

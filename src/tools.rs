@@ -32,12 +32,7 @@ pub fn run_installer(user: &User, installer: &Installer) -> Result<()> {
 pub fn has(user: &User, manager: Manager) -> bool {
     match manager {
         Manager::Bun => user.home.join(".bun/bin/bun").exists(),
-        _ => cmd::bytes(
-            As::User(user),
-            "sh",
-            &["-c", &format!("command -v {}", manager.name())],
-        )
-        .is_ok(),
+        _ => cmd::found(As::User(user), manager.name()),
     }
 }
 
