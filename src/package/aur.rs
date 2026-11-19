@@ -36,6 +36,7 @@ impl Helper {
     }
 
     pub fn build(self, admin: &User) -> Result<()> {
+        let _sudo = NoPassword::grant(admin)?;
         let build = tempfile::tempdir()?;
         admin.own(build.path())?;
         let dir = build

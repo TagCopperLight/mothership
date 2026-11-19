@@ -98,7 +98,11 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     }
     let _lock = match command {
         Command::Scan => None,
-        _ => Some(lock()?),
+        _ => {
+            let lock = lock()?;
+            package::aur::NoPassword::remove_leftover()?;
+            Some(lock)
+        }
     };
     if !matches!(command, Command::Install) {
         fleet::require_admin_sudo()?;

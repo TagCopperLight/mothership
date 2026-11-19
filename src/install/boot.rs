@@ -27,6 +27,8 @@ const HOOKS: [&str; 2] = ["systemd", "sd-encrypt"];
 const KEYMAP_HOOK: &str = "sd-vconsole";
 const PCRS: &str = "7+15:sha256=0000000000000000000000000000000000000000000000000000000000000000";
 const ANSWER_WITHIN: Duration = Duration::from_secs(30 * 60);
+const PCR_15: &str = "/sys/class/tpm/tpm0/pcr-sha256/15";
+pub const NETWORK_WITHIN: Duration = Duration::from_secs(5 * 60);
 
 fn unit() -> String {
     format!(
@@ -238,6 +240,14 @@ pub fn secure() -> Result<()> {
     let device = luks_device()?;
     let slots = cmd::stdout(As::Root, "systemd-cryptenroll", &[&device])?;
     if !slots.split_whitespace().any(|word| word == "tpm2") {
+        let pcr = fs::read_to_string(PCR_15).with_context(|| format!("reading {PCR_15}"))?;
+        if !root_measured(&pcr) {
+            bail!(
+                "PCR 15 is still zero: systemd didn't measure the root it opened, so the TPM \
+                 key would open for any root partition. Name the root with the partition type \
+                 code instead of root= or rd.luks.* in the kernel command line"
+            );
+        }
         println!("The TPM opens the disk from now on. Type the passphrase once more:");
         cmd::root(
             "systemd-cryptenroll",
@@ -249,6 +259,10 @@ pub fn secure() -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+fn root_measured(pcr: &str) -> bool {
+    pcr.trim().chars().any(|digit| digit != '0')
 }
 
 pub fn finish() -> Result<()> {

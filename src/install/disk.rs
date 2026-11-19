@@ -6,7 +6,11 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use std::{fs, path::Path, str::FromStr};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 pub const ROOT: &str = "/mnt";
 pub const MAPPER: &str = "root";
@@ -14,7 +18,6 @@ const GIB: u64 = 1 << 30;
 const LABELS: [&str; 2] = ["mothership-boot", "mothership-root"];
 const BOOT_SIZE: u64 = GIB;
 const ROOT_MIN: u64 = 20 * GIB;
-const BOOT_MOUNT: &str = "/run/archiso/bootmnt";
 const COLUMNS: &str =
     "NAME,TYPE,SIZE,MODEL,RO,UUID,LABEL,FSTYPE,PARTLABEL,PARTTYPE,PARTN,MOUNTPOINTS";
 
@@ -163,17 +166,6 @@ impl Iso {
                 Some(("archisolabel", label)) => iso.labels.push(label.to_owned()),
                 Some(("archisosearchuuid", uuid)) => iso.uuids.push(uuid.to_owned()),
                 _ => {}
-            }
-        }
-        let mountinfo =
-            fs::read_to_string("/proc/self/mountinfo").context("reading /proc/self/mountinfo")?;
-        for line in mountinfo.lines() {
-            let fields: Vec<&str> = line.split_whitespace().collect();
-            let after = fields.iter().position(|f| *f == "-");
-            if let (Some(&BOOT_MOUNT), Some(after)) = (fields.get(4), after)
-                && let Some(source) = fields.get(after + 2)
-            {
-                iso.paths.push(canonical(source)?);
             }
         }
         Ok(iso)
@@ -337,13 +329,24 @@ pub fn still_open() -> Result<bool> {
     if !Path::new("/dev/mapper").join(MAPPER).exists() {
         return Ok(false);
     }
-    if cmd::bytes(As::Root, "mountpoint", &["--quiet", ROOT]).is_err() {
-        bail!(
-            "an earlier run opened the disk but didn't mount it: close it with `cryptsetup close \
-             {MAPPER}`, then run install again"
-        );
+    for dir in mounts_needed(Path::new(ROOT)) {
+        if cmd::bytes(As::Root, "mountpoint", &["--quiet", &dir.to_string_lossy()]).is_err() {
+            bail!(
+                "an earlier run opened the disk but didn't mount {}: run `umount --recursive \
+                 {ROOT}` if it's mounted, then `cryptsetup close {MAPPER}`, then install again",
+                dir.display()
+            );
+        }
     }
     Ok(true)
+}
+
+fn mounts_needed(root: &Path) -> Vec<PathBuf> {
+    let efi = file::under(root, "/efi");
+    [root.to_path_buf(), file::under(root, "/boot")]
+        .into_iter()
+        .chain(efi.exists().then_some(efi))
+        .collect()
 }
 
 pub fn close() -> Result<()> {

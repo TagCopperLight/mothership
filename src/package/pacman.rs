@@ -148,10 +148,11 @@ pub fn install(aur: &Aur, names: &[&str]) -> Result<()> {
         cmd::root("pacman", &args)?;
     }
     if let Some((helper, names)) = &install.aur {
+        let _sudo = aur::NoPassword::grant(aur.admin)?;
         cmd::run(
             As::User(aur.admin),
             helper.command(),
-            &[&["-S", "--needed"], &names[..]].concat(),
+            &[&["-S", "--needed", "--noconfirm"], &names[..]].concat(),
         )?;
     }
     Ok(())

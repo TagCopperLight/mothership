@@ -25,3 +25,10 @@ fn a_type_missing_the_boot_pieces_stops_before_the_disk() {
          mkinitcpio hook sd-vconsole"
     );
 }
+
+#[test]
+fn a_root_is_measured_once_pcr_15_holds_something() {
+    let zero = "0".repeat(64);
+    assert!(!root_measured(&format!("{zero}\n")));
+    assert!(root_measured(&format!("{}1\n", &zero[1..])));
+}

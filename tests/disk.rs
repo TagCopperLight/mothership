@@ -80,3 +80,19 @@ fn the_free_space_holds_a_1_gib_boot_and_at_least_20_gib_of_root() {
         assert_eq!(boot_end(start, start, sector), None);
     }
 }
+
+#[test]
+fn the_efi_mount_is_needed_once_its_folder_exists() {
+    let root = tempfile::tempdir().unwrap();
+    let boot = root.path().join("boot");
+    assert_eq!(
+        mounts_needed(root.path()),
+        [root.path().to_path_buf(), boot.clone()]
+    );
+    let efi = root.path().join("efi");
+    fs::create_dir(&efi).unwrap();
+    assert_eq!(
+        mounts_needed(root.path()),
+        [root.path().to_path_buf(), boot, efi]
+    );
+}

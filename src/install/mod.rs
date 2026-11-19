@@ -43,7 +43,6 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     if flags.remove_unlisted.is_some() && distro != Distro::Debian {
         bail!("--remove-unlisted only means something on Debian and Ubuntu");
     }
-    aur::NoPassword::remove_leftover()?;
     let token = env::var(GH_TOKEN).ok();
     unsafe { env::remove_var(GH_TOKEN) };
     if !Path::new(fleet::MACHINE).exists() {
@@ -65,30 +64,26 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     let first_start = !chroot && boot::first_start();
     let answering = first_start.then(boot::answering);
     if first_start {
+        net::give_up_waiting_after(boot::NETWORK_WITHIN);
         boot::secure()?;
     }
     trust::keys(prompt, &host::name()?)?;
     drop(answering);
     let fleet = Fleet::load()?;
-    let sudo = match (distro, fleet.system.aur_helper) {
-        (Distro::Arch, Some(helper)) => {
-            let granted = aur::NoPassword::grant(fleet.admin())?;
-            if !helper.installed(fleet.admin()) {
-                net::retry("Building the AUR helper", &Needs::url(aur::URL)?, || {
-                    helper.build(fleet.admin())
-                })?;
-            }
-            Some(granted)
+    match (distro, fleet.system.aur_helper) {
+        (Distro::Arch, Some(helper)) if !helper.installed(fleet.admin()) => {
+            net::retry("Building the AUR helper", &Needs::url(aur::URL)?, || {
+                helper.build(fleet.admin())
+            })?;
         }
-        _ => None,
-    };
+        _ => {}
+    }
     net::retry("Applying the fleet", &Needs::mirror(distro)?, || {
         apply::unasked(match chroot {
             true => ServiceManager::Missing,
             false => ServiceManager::Running,
         })
     })?;
-    drop(sudo);
     fleet::require_admin_sudo()?;
     if distro == Distro::Debian {
         let listed = Fleet::load()?.listed_packages();

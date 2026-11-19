@@ -5,8 +5,11 @@
 - `arch-chroot` shares the ISO's `/run` with the new system, so `/run/archiso` shows inside it. The ISO sets `MOTHERSHIP_FROM_ISO` for the inner run, and that decides.
 - Without `/etc/kernel/cmdline`, mkinitcpio puts the running kernel's command line in the UKI. In the chroot, that's the ISO's.
 - The TPM key is bound to PCR 7 (Secure Boot state) and to PCR 15 being zero. systemd extends PCR 15 when it opens a root, so a fake root partition someone adds can't unseal this disk's key.
+- Install enrols the TPM only if PCR 15 already holds a measurement, since a root named with `root=` or `rd.luks.*` isn't measured.
+- At the first start, a wait for the network ends after five minutes, so the service fails and logins stay possible. It stays enabled and runs again at the next start.
+- The passwordless pacman rule exists only around each AUR helper run, so code running as the admin at other times can't use it. A hard kill can leave it behind, so every command that takes the lock removes it first.
 - PCR 7 lets every UKI this machine ever signed unseal the key, and a dbx update changes it. A signed PCR 11 policy (ukify with a PCR key, `--tpm2-public-key`) survives dbx updates but still trusts old UKIs; revoking them takes systemd's pcrlock.
-- archiso names its device on the kernel command line (`archisodevice`, `archisolabel`, `archisosearchuuid`), which still holds after `copytoram` unmounts it. An isohybrid stick carries the ISO's filesystem on the whole disk.
+- archiso names its device on the kernel command line (`archisodevice`, `archisolabel`, `archisosearchuuid`), which still holds after `copytoram` unmounts it, so install doesn't read the mounts. An isohybrid stick carries the ISO's filesystem on the whole disk.
 - systemd's gpt-auto finds the partitions by type code (ESP `ef00`, XBOOTLDR `ea00`, root `8304`) and opens the root as `root`. No fstab or crypttab names them.
 - `sbctl enroll-keys --microsoft` also enrolls Microsoft's third-party CA, which signs graphics cards' option ROMs. `--tpm-eventlog` finds no event log inside the chroot.
 - `beside` puts the kernel in its own XBOOTLDR partition, since Windows' EFI partition is often too small.

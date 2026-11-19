@@ -49,3 +49,12 @@ fn reads_the_first_apt_source() {
     );
     assert_eq!(apt_uri("# deb http://old"), None);
 }
+
+#[test]
+fn waiting_for_the_network_gives_up_after_its_patience() {
+    let error = wait_for("127.0.0.1:1", Some(Duration::ZERO)).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "127.0.0.1:1 still doesn't answer: install stops, and goes on at the next start"
+    );
+}

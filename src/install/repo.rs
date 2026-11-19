@@ -22,12 +22,13 @@ fn check_url(url: &str) -> Result<()> {
     let Some(remote) = net::remote(url)? else {
         return Ok(());
     };
-    let secret = match (remote.scheme, remote.userinfo) {
-        (Scheme::Http | Scheme::Https, Some(_)) => true,
-        (_, Some(userinfo)) => userinfo.contains(':'),
-        (_, None) => false,
-    };
-    if secret {
+    if remote.scheme != Scheme::Https {
+        bail!(
+            "{url} needs an SSH key or sends nothing encrypted, and a new machine has no SSH key \
+             yet: give the https URL"
+        );
+    }
+    if remote.userinfo.is_some() {
         bail!(
             "{url} holds a login, and git would save it where every user of the machine reads \
              it: give the URL without it, and install logs in to GitHub with gh"
@@ -134,3 +135,7 @@ pub fn pull(dir: &Path, expected: Option<&str>, git: impl Fn() -> Cmd) -> Result
         cmd::status(command, "git", &args)
     })
 }
+
+#[cfg(test)]
+#[path = "../../tests/repo.rs"]
+mod tests;

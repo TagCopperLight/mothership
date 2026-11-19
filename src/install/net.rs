@@ -3,11 +3,13 @@ use anyhow::{Context, Result, bail};
 use std::{
     net::{TcpStream, ToSocketAddrs},
     path::Path,
+    sync::OnceLock,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const PAUSE: Duration = Duration::from_secs(10);
+static PATIENCE: OnceLock<Duration> = OnceLock::new();
 const MIRRORLIST: &str = "/etc/pacman.d/mirrorlist";
 const APT_SOURCES: &str = "/etc/apt/sources.list";
 const APT_SOURCES_DIR: &str = "/etc/apt/sources.list.d";
@@ -167,6 +169,23 @@ fn reachable(address: &str) -> bool {
         .any(|a| TcpStream::connect_timeout(&a, Duration::from_secs(5)).is_ok())
 }
 
+pub fn give_up_waiting_after(patience: Duration) {
+    PATIENCE
+        .set(patience)
+        .expect("install sets its patience once");
+}
+
+fn wait_for(address: &str, patience: Option<Duration>) -> Result<()> {
+    let start = Instant::now();
+    while !reachable(address) {
+        if patience.is_some_and(|patience| start.elapsed() >= patience) {
+            bail!("{address} still doesn't answer: install stops, and goes on at the next start");
+        }
+        thread::sleep(PAUSE);
+    }
+    Ok(())
+}
+
 pub fn retry<T>(what: &str, needs: &Needs, mut step: impl FnMut() -> Result<T>) -> Result<T> {
     let Some(address) = &needs.0 else {
         return step();
@@ -178,9 +197,7 @@ pub fn retry<T>(what: &str, needs: &Needs, mut step: impl FnMut() -> Result<T>) 
         };
         println!("{what} failed, and {address} doesn't answer: {error:#}");
         println!("Waiting for the network…");
-        while !reachable(address) {
-            thread::sleep(PAUSE);
-        }
+        wait_for(address, PATIENCE.get().copied())?;
     }
 }
 
