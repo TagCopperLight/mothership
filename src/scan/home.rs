@@ -10,6 +10,7 @@ use crate::{
 use anyhow::Result;
 use std::{
     collections::HashSet,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -31,14 +32,15 @@ pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
     if !tools.of(Manager::Cargo).is_empty() {
         known.insert(home.join(".cargo"));
     }
-    if !tools.of(Manager::Uv).is_empty() {
-        known.insert(home.join(".local/share/uv"));
-        known.extend(
-            tools
-                .of(Manager::Uv)
-                .iter()
-                .map(|tool| home.join(".local/bin").join(tool.name())),
-        );
+    let uv = home.join(".local/share/uv");
+    let uv_links = user.with_rights(|| {
+        uv.exists()
+            .then(|| links_into(&home.join(".local/bin"), &uv.join("tools")))
+            .transpose()
+    })?;
+    if let Some(links) = uv_links {
+        known.extend(links);
+        known.insert(uv);
     }
 
     let skip = |path: &Path| {
@@ -78,3 +80,17 @@ pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
     }));
     Ok(items)
 }
+
+fn links_into(bin: &Path, dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut links = Vec::new();
+    for path in walk::children(bin)? {
+        if fs::symlink_metadata(&path)?.is_symlink() && fs::read_link(&path)?.starts_with(dir) {
+            links.push(path);
+        }
+    }
+    Ok(links)
+}
+
+#[cfg(test)]
+#[path = "../../tests/scan_home.rs"]
+mod tests;
