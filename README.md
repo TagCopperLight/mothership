@@ -1,5 +1,12 @@
 # mothership
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark-dark.svg">
+    <img src="assets/wordmark.svg" alt="mothership" width="360">
+  </picture>
+</p>
+
 mothership sets up machines from a git repository, and tells you when a machine drifts away from it. That repository is called the fleet.
 
 The fleet doesn't describe each machine. It describes device types, such as "workstation", and every machine belongs to one type. Machines of the same type end up identical, even when their hardware differs.
