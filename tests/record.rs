@@ -318,7 +318,7 @@ linger = true
         r.etc.insert(machine.path("dropped.conf"), md5("old"));
     });
 
-    let after = Record::after(&fleet, &before, machine.dir.path()).unwrap();
+    let after = Record::after(&fleet, &before, machine.dir.path(), &[]).unwrap();
     let names = |set: &BTreeSet<String>| set.iter().cloned().collect::<Vec<_>>();
     assert_eq!(names(&after.packages), ["vim", "zip"]);
     assert_eq!(names(&after.services), ["sshd.service"]);
@@ -340,8 +340,40 @@ fn a_user_the_machine_lacked_keeps_their_old_entry() {
     let fleet = fleet(checkout.path(), "", "linger = true\n", &[]);
     assert!(fleet.members[0].user.is_none());
     let machine = Machine::new();
-    let after = Record::after(&fleet, &Record::default(), machine.dir.path()).unwrap();
+    let after = Record::after(&fleet, &Record::default(), machine.dir.path(), &[]).unwrap();
     assert!(after.users.is_empty());
+}
+
+#[test]
+fn what_apply_skipped_keeps_its_old_entry_so_the_next_apply_brings_it() {
+    let checkout = TempDir::new().unwrap();
+    let mut fleet = fleet(
+        checkout.path(),
+        "",
+        "user_services = [\"app.service\", \"kept.service\"]\nlinger = true\n",
+        &[],
+    );
+    fleet.members[0].user = Some(crate::user::by_uid(0).unwrap());
+    let before = record(|r| {
+        r.users
+            .entry("me".into())
+            .or_default()
+            .user_services
+            .insert("kept.service".into());
+    });
+    let enable = Revert::Enable {
+        unit: "app.service".into(),
+        user: true,
+    };
+    let skipped = [(Some(0), &enable), (Some(0), &Revert::Linger(true))];
+    let machine = Machine::new();
+    let after = Record::after(&fleet, &before, machine.dir.path(), &skipped).unwrap();
+    let me = &after.users["me"];
+    assert_eq!(
+        me.user_services,
+        BTreeSet::from(["kept.service".to_owned()])
+    );
+    assert!(!me.linger);
 }
 
 #[test]

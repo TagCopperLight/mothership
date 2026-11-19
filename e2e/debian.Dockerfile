@@ -20,7 +20,7 @@ RUN for group in repo local extra; do mkdir "/$group" \
 
 # No systemd runs in the container: systemctl only logs what it was asked, and loginctl keeps
 # linger as files.
-COPY bin/systemctl bin/loginctl /usr/local/bin/
+COPY bin/systemctl bin/loginctl bin/hostnamectl /usr/local/bin/
 RUN touch /var/log/systemctl.log && chmod 666 /var/log/systemctl.log
 
 FROM machine

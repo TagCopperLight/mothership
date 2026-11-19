@@ -105,6 +105,13 @@ pub fn shipped(archive: &Path, member: &Path) -> Result<Vec<u8>> {
     )
 }
 
+pub fn bootstrap(names: &[&str]) -> Result<()> {
+    cmd::root(
+        "pacman",
+        &[&["-S", "--needed", "--noconfirm"], names].concat(),
+    )
+}
+
 pub fn install(fleet: &Fleet, names: &[&str]) -> Result<()> {
     let install = split_install(names, &in_repos()?, fleet.system.aur_helper.as_deref())?;
     if let Some((helper, _)) = &install.aur

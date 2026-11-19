@@ -61,9 +61,22 @@ mothership treats a file as a secret when only its owner can read it. Review the
 
 ## Setting up a machine
 
-mothership runs on Arch Linux, Debian and Ubuntu. It needs `chezmoi`, plus `cargo`, `uv` and `dconf` when a user's part uses them. Build it from this repository with `cargo build --release`, on Debian for a Debian machine, since a binary built on Arch needs a newer C library.
+mothership runs on Arch Linux, Debian and Ubuntu. Each release publishes a static binary for x86_64 and aarch64, so a new machine downloads it instead of building it:
 
-On Debian and Ubuntu, the installer leaves the whole base system marked as installed by hand, so the first scan would list hundreds of packages. Mark them all as dependencies once with `apt-mark auto`, then mark the type's packages and built packages with `apt-mark manual`, and remove the rest with `apt-get autoremove --purge`.
+```sh
+curl -fLo mothership https://github.com/TagCopperLight/mothership/releases/latest/download/mothership-$(uname -m)
+chmod +x mothership
+```
+
+`sudo ./mothership install` then asks for the fleet's repository, the machine's type and options, and its hostname. For a private fleet, it logs in to GitHub with `gh`. Every answer also comes as a flag, so cloud-init can run it with no questions:
+
+```sh
+sudo ./mothership install --fleet https://github.com/me/fleet --type server --hostname box
+```
+
+Install creates the users the type lists, then the machine's keys. For each list that already holds keys, it prints the `trust` command to run on the machines named in it. You run them, commit and push, and answer **d**: install pulls the fleet. You can also type the recovery key instead, the key named `recovery` in every list, and install trusts the new keys itself. Then it applies the fleet. When the network drops, install waits for it and goes on.
+
+On Debian and Ubuntu, the installer leaves the whole base system marked as installed by hand. After the apply, install marks every package the type doesn't list as a dependency, and offers to remove the ones nothing needs.
 
 The fleet lives in `/var/lib/mothership/fleet`. Whoever owns that folder is the machine's admin: they commit and push from it, and every file mothership writes there goes to them. The file `/etc/mothership/machine.toml` tells mothership the machine's type:
 
@@ -86,6 +99,16 @@ recipientsFile = "/var/lib/mothership/fleet/types/workstation/users/tag/recipien
 [data]
 user = "tag"
 ```
+
+### From the Arch ISO
+
+On a workstation, start the Arch ISO in UEFI mode, with Secure Boot in Setup Mode (its keys cleared in the firmware setup) and a TPM 2.0. Install checks all three before it touches the disk. Then it asks for the time zone, the disk, and whether to erase the whole disk (`wipe`) or use its largest free space next to Windows (`beside`). It changes the disk only once you type the disk's name.
+
+The root partition is encrypted with LUKS, and systemd finds it by its partition type, so no file names it. With `wipe`, the boot partition holds systemd-boot and the kernel. With `beside`, systemd-boot goes in Windows' EFI partition, and the kernel in a new boot partition.
+
+Install then runs inside the new system: it asks which of the type's users is the admin and their password, applies the fleet, builds the kernel image, and signs it and systemd-boot with new Secure Boot keys, which keep Microsoft's for Windows. The type's mkinitcpio preset must build that image as a UKI in `/boot/EFI/Linux`, with the `systemd` and `sd-encrypt` hooks.
+
+At the next start, you type the disk's passphrase. Install finishes on the console: it checks Secure Boot is on, has the TPM open the disk from then on, and applies what needs a running system, such as user services.
 
 ## Writing a fleet
 

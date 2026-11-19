@@ -85,13 +85,28 @@ struct Block {
     etc: Vec<PathBuf>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Machine {
+pub struct Machine {
     #[serde(rename = "type")]
-    device_type: String,
-    #[serde(default)]
-    options: Vec<String>,
+    pub device_type: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+}
+
+impl Machine {
+    pub fn load() -> Result<Machine> {
+        toml::from_str(&fs::read_to_string(MACHINE).with_context(|| format!("reading {MACHINE}"))?)
+            .with_context(|| format!("parsing {MACHINE}"))
+    }
+
+    /// `root` is where the machine's system sits: `/`, or the new disk during an install.
+    pub fn save(&self, root: &Path) -> Result<()> {
+        let path = root.join(MACHINE.trim_start_matches('/'));
+        fs::create_dir_all(path.parent().context("no parent folder")?)?;
+        fs::write(&path, toml::to_string(self)?)
+            .with_context(|| format!("writing {}", path.display()))
+    }
 }
 
 pub const MACHINE: &str = "/etc/mothership/machine.toml";
@@ -197,10 +212,7 @@ const USERS: &str = "users";
 
 impl Fleet {
     pub fn load() -> Result<Self> {
-        let machine: Machine = toml::from_str(
-            &fs::read_to_string(MACHINE).with_context(|| format!("reading {MACHINE}"))?,
-        )
-        .with_context(|| format!("parsing {MACHINE}"))?;
+        let machine = Machine::load()?;
         let dir = PathBuf::from(DIR);
         let meta = fs::metadata(&dir)
             .with_context(|| format!("reading {DIR}: clone the fleet there as its admin"))?;
@@ -353,6 +365,11 @@ impl Fleet {
         })
     }
 
+    /// The options a machine of this type can turn on, for a machine that turns on none yet.
+    pub fn options(&self) -> Vec<String> {
+        self.system.options.keys().cloned().collect()
+    }
+
     pub fn ignore_path(&self) -> PathBuf {
         self.type_dir.join(IGNORE)
     }
@@ -452,6 +469,20 @@ impl Fleet {
         }
         Ok(())
     }
+}
+
+/// The device types a fleet checkout describes.
+pub fn types(dir: &Path) -> Result<Vec<String>> {
+    let types = dir.join("types");
+    let mut names = Vec::new();
+    for entry in fs::read_dir(&types).with_context(|| format!("reading {}", types.display()))? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    names.sort();
+    Ok(names)
 }
 
 impl Member {

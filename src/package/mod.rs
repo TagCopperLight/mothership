@@ -1,6 +1,8 @@
 mod dpkg;
 mod pacman;
 
+pub use dpkg::keep_only;
+
 use crate::fleet::Fleet;
 use anyhow::{Context, Result, bail};
 use md5::{Digest, Md5};
@@ -63,6 +65,14 @@ impl Distro {
             Distro::Debian => &["/etc/apt"],
         };
         config.iter().any(|dir| path.starts_with(dir))
+    }
+
+    /// Installs what install needs before the machine has a fleet, such as git.
+    pub fn bootstrap(self, names: &[&str]) -> Result<()> {
+        match self {
+            Distro::Arch => pacman::bootstrap(names),
+            Distro::Debian => dpkg::install(names),
+        }
     }
 
     pub fn install(self, fleet: &Fleet, names: &[&str]) -> Result<()> {

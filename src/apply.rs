@@ -12,11 +12,20 @@ use std::path::Path;
 
 pub fn run() -> Result<()> {
     let mut prompt = Prompt::new();
-    while round(&mut prompt)? {}
+    while round(&mut || prompt.confirm("Apply"), &|_, _| false)? {}
     Ok(())
 }
 
-fn round(prompt: &mut Prompt) -> Result<bool> {
+/// For install, which already has the go-ahead: applies everything but what `skip` names.
+pub fn unasked(skip: &dyn Fn(Option<usize>, &Revert) -> bool) -> Result<()> {
+    while round(&mut || Ok(true), skip)? {}
+    Ok(())
+}
+
+fn round(
+    approve: &mut dyn FnMut() -> Result<bool>,
+    skip: &dyn Fn(Option<usize>, &Revert) -> bool,
+) -> Result<bool> {
     let fleet = Fleet::load()?;
     let db = Db::load()?;
     let record_path = Path::new(record::PATH);
@@ -25,8 +34,12 @@ fn round(prompt: &mut Prompt) -> Result<bool> {
     scan::sort(&fleet, &mut items);
 
     let (mut todo, mut edited, mut locked, mut left) = (Vec::new(), Vec::new(), Vec::new(), 0);
+    let mut skipped: Vec<Owned> = Vec::new();
     for item in &items {
         match &item.revert {
+            Some(revert) if item.section == Section::Fleet && skip(item.member, revert) => {
+                skipped.push((item.member, revert))
+            }
             _ if item.section == Section::Fleet => todo.push(item),
             _ if scan::ignored(&fleet, item) => {}
             _ if item.secret == Secret::Locked => locked.push(item),
@@ -55,7 +68,7 @@ fn round(prompt: &mut Prompt) -> Result<bool> {
     }
     if todo.is_empty() {
         println!("Nothing to apply.");
-    } else if prompt.confirm("Apply")? {
+    } else if approve()? {
         let reverts: Vec<Owned> = todo
             .iter()
             .map(|item| (item.member, item.revert.as_ref().expect("filtered above")))
@@ -64,7 +77,7 @@ fn round(prompt: &mut Prompt) -> Result<bool> {
     } else {
         return Ok(false);
     }
-    Record::after(&fleet, &record, Path::new("/etc"))?.save(record_path)?;
+    Record::after(&fleet, &record, Path::new("/etc"), &skipped)?.save(record_path)?;
     Ok(todo
         .iter()
         .any(|item| matches!(item.revert, Some(Revert::CreateUser | Revert::InitChezmoi))))

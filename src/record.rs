@@ -1,7 +1,7 @@
 use crate::{
     fleet::{Fleet, Tools},
     package::{self, Db},
-    revert::Revert,
+    revert::{Owned, Revert},
     walk,
 };
 use anyhow::{Context, Result};
@@ -114,7 +114,14 @@ impl Record {
         Ok(self.etc.contains_key(path) && hash(path)?.as_ref() == self.etc.get(path))
     }
 
-    pub fn after(fleet: &Fleet, before: &Record, etc_root: &Path) -> Result<Record> {
+    /// What the fleet says now, except for the `skipped` changes, which keep what the record
+    /// said before so the next apply still brings them.
+    pub fn after(
+        fleet: &Fleet,
+        before: &Record,
+        etc_root: &Path,
+        skipped: &[Owned],
+    ) -> Result<Record> {
         let mut etc = BTreeMap::new();
         for rel in &fleet.etc {
             let path = etc_root.join(rel);
@@ -128,16 +135,18 @@ impl Record {
                 etc.insert(path, entry);
             }
         }
+        let empty = UserRecord::default();
         let users = fleet
             .members
             .iter()
-            .filter_map(|member| {
+            .enumerate()
+            .filter_map(|(i, member)| {
                 if member.user.is_none() {
                     let old = before.users.get(&member.name)?;
                     return Some((member.name.clone(), old.clone()));
                 }
                 let config = &member.config;
-                let record = UserRecord {
+                let mut record = UserRecord {
                     groups: config.groups.iter().cloned().collect(),
                     shell: config.shell.clone(),
                     linger: config.linger,
@@ -145,6 +154,20 @@ impl Record {
                     tools: config.tools.clone(),
                     installers: config.installers.iter().map(|i| i.name.clone()).collect(),
                 };
+                let old = before.users.get(&member.name).unwrap_or(&empty);
+                for (_, revert) in skipped.iter().filter(|(owner, _)| *owner == Some(i)) {
+                    match revert {
+                        Revert::Linger(_) => record.linger = old.linger,
+                        Revert::Enable { unit, .. } | Revert::Disable { unit, .. } => {
+                            if old.user_services.contains(unit) {
+                                record.user_services.insert(unit.clone());
+                            } else {
+                                record.user_services.remove(unit);
+                            }
+                        }
+                        _ => unreachable!("apply skips only user units and linger"),
+                    }
+                }
                 Some((member.name.clone(), record))
             })
             .collect();

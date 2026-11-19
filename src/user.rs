@@ -1,3 +1,4 @@
+use crate::{cmd, fleet::Member};
 use anyhow::{Context, Result, bail};
 use std::{
     fs,
@@ -20,6 +21,14 @@ impl User {
             .with_context(|| format!("giving {} to {}", path.display(), self.name))
     }
 
+    pub fn own_all(&self, dir: &Path) -> Result<()> {
+        let owner = format!("{}:{}", self.uid, self.gid);
+        cmd::root(
+            "chown",
+            &["-R", "--no-dereference", &owner, &dir.to_string_lossy()],
+        )
+    }
+
     pub fn create_dir_all(&self, dir: &Path) -> Result<()> {
         let missing: Vec<&Path> = dir.ancestors().take_while(|d| !d.exists()).collect();
         fs::create_dir_all(dir)?;
@@ -39,6 +48,16 @@ impl User {
             Err(_) => path.display().to_string(),
         }
     }
+}
+
+/// Creates a user the type lists and the machine lacks, with no password.
+pub fn create(member: &Member) -> Result<()> {
+    let mut args = vec!["--create-home"];
+    if let Some(shell) = &member.config.shell {
+        args.extend(["--shell", shell]);
+    }
+    args.push(&member.name);
+    cmd::root("useradd", &args)
 }
 
 pub fn is_root() -> bool {

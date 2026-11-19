@@ -1,0 +1,43 @@
+name: Release
+
+# A new machine downloads mothership instead of building it, so each version tag publishes a
+# static binary that runs on Arch, Debian and Ubuntu alike.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch }}-unknown-linux-musl
+      - run: sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target ${{ matrix.arch }}-unknown-linux-musl
+      - run: cp target/${{ matrix.arch }}-unknown-linux-musl/release/mothership mothership-${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mothership-${{ matrix.arch }}
+          path: mothership-${{ matrix.arch }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - run: gh release create "$GITHUB_REF_NAME" mothership-* --repo "$GITHUB_REPOSITORY" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

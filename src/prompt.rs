@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 
 pub struct Prompt {
@@ -88,10 +88,107 @@ impl Prompt {
         }
         Ok(self.ask(&question, &['y', 'n', '\r', '\n'])? == Some('y'))
     }
+
+    /// A typed answer, which can't be empty. The input ending stops whoever asked.
+    pub fn line(&mut self, question: &str) -> Result<String> {
+        self.typed(question, true)
+    }
+
+    /// A typed answer the terminal doesn't show, such as a passphrase, kept as typed.
+    pub fn hidden(&mut self, question: &str) -> Result<String> {
+        self.typed(question, false)
+    }
+
+    /// One of `choices`, by its number or its name. A single choice needs no question.
+    pub fn choose(&mut self, question: &str, choices: &[String]) -> Result<usize> {
+        match choices {
+            [] => bail!("{question}: there is nothing to choose from"),
+            [only] => {
+                println!("{question}: {only}");
+                return Ok(0);
+            }
+            _ => {}
+        }
+        println!("{question}:");
+        for (i, choice) in choices.iter().enumerate() {
+            println!("  {}  {choice}", i + 1);
+        }
+        loop {
+            let answer = self.line("  ›")?;
+            let picked = answer
+                .parse::<usize>()
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .filter(|i| *i < choices.len())
+                .or_else(|| choices.iter().position(|c| *c == answer));
+            if let Some(i) = picked {
+                return Ok(i);
+            }
+        }
+    }
+
+    fn typed(&mut self, question: &str, shown: bool) -> Result<String> {
+        loop {
+            print!("{question} ");
+            io::stdout().flush()?;
+            let answer = match &mut self.input {
+                Input::Keys if shown => read_line()?,
+                // Ctrl-C arrives as a character, so the terminal gets its echo back first.
+                Input::Keys => {
+                    let answer = with_terminal(libc::ECHO | libc::ISIG, read_line)?;
+                    println!();
+                    if answer
+                        .as_deref()
+                        .is_some_and(|a| a.contains(char::from(CTRL_C)))
+                    {
+                        bail!("stopped at \"{question}\"");
+                    }
+                    answer
+                }
+                Input::Lines(lines, echo) => {
+                    let answer = lines.next().transpose()?;
+                    if *echo {
+                        println!(
+                            "{}",
+                            if shown {
+                                answer.as_deref().unwrap_or_default()
+                            } else {
+                                ""
+                            }
+                        );
+                    }
+                    answer
+                }
+            };
+            let Some(answer) = answer else {
+                bail!("the input ended before an answer to \"{question}\"");
+            };
+            let answer = match shown {
+                true => answer.trim(),
+                false => answer.trim_end_matches(['\r', '\n']),
+            };
+            if !answer.is_empty() {
+                return Ok(answer.to_owned());
+            }
+        }
+    }
 }
 
-/// Reads one key with the terminal's line editing and echo off, then puts them back.
+fn read_line() -> Result<Option<String>> {
+    let mut line = String::new();
+    Ok((io::stdin().lock().read_line(&mut line)? > 0).then_some(line))
+}
+
+/// Reads one key with the terminal's line editing and echo off.
 fn read_key() -> Result<Option<u8>> {
+    with_terminal(libc::ICANON | libc::ECHO | libc::ISIG, || {
+        let mut byte = [0u8];
+        Ok((io::stdin().lock().read(&mut byte)? == 1).then_some(byte[0]))
+    })
+}
+
+/// Runs `read` with the terminal's `off` flags cleared, then puts them back.
+fn with_terminal<T>(off: libc::tcflag_t, read: impl FnOnce() -> Result<T>) -> Result<T> {
     let fd = libc::STDIN_FILENO;
     // SAFETY: termios is plain data, filled in by tcgetattr before use.
     let mut saved: libc::termios = unsafe { std::mem::zeroed() };
@@ -99,14 +196,13 @@ fn read_key() -> Result<Option<u8>> {
         return Err(io::Error::last_os_error().into());
     }
     let mut raw = saved;
-    raw.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
+    raw.c_lflag &= !off;
     raw.c_cc[libc::VMIN] = 1;
     raw.c_cc[libc::VTIME] = 0;
     if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) } != 0 {
         return Err(io::Error::last_os_error().into());
     }
-    let mut byte = [0u8];
-    let read = io::stdin().lock().read(&mut byte);
+    let result = read();
     unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) };
-    Ok((read? == 1).then_some(byte[0]))
+    result
 }

@@ -17,11 +17,14 @@ pub const RECIPIENTS: &str = "recipients.txt";
 pub const ROOT_KEY: &str = "/etc/mothership/key.txt";
 pub const SECRETS: &str = "secrets";
 pub const AGE: &str = ".age";
+/// The name of the recovery key, kept on paper, which every list holds.
+pub const RECOVERY: &str = "recovery";
 
 pub fn key_path(user: &User) -> PathBuf {
     user.home.join(".config/mothership/key.txt")
 }
 
+#[derive(Clone)]
 pub struct Keys(Vec<x25519::Identity>);
 
 impl Keys {
@@ -31,6 +34,17 @@ impl Keys {
             keys.extend(read_key(&path)?);
         }
         Ok(Keys(keys))
+    }
+
+    /// Adds a key typed in, such as the recovery key, and returns its public half.
+    pub fn add(&mut self, secret: &str) -> Result<String> {
+        let key: x25519::Identity = secret
+            .trim()
+            .parse()
+            .map_err(|e: &str| anyhow!("that isn't an age secret key: {e}"))?;
+        let public = key.to_public().to_string();
+        self.0.push(key);
+        Ok(public)
     }
 
     pub fn decrypt(&self, path: &Path) -> Result<Vec<u8>> {
@@ -124,6 +138,15 @@ fn format(list: &[Recipient]) -> String {
         .join("\n")
 }
 
+/// The names of the keys in a list, which are the machines that open it, plus the recovery key.
+pub fn names(list: &Path) -> Result<Vec<String>> {
+    Ok(read(list)?.into_iter().map(|r| r.name).collect())
+}
+
+pub fn holds(list: &Path, public: &str) -> Result<bool> {
+    Ok(read(list)?.iter().any(|r| r.key == public))
+}
+
 fn read(path: &Path) -> Result<Vec<Recipient>> {
     match fs::read_to_string(path) {
         Ok(text) => parse(&text).with_context(|| format!("parsing {}", path.display())),
@@ -132,32 +155,56 @@ fn read(path: &Path) -> Result<Vec<Recipient>> {
     }
 }
 
-pub fn key(fleet: &Fleet) -> Result<()> {
+/// One of the machine's keys: root's or a user's.
+pub struct Owner {
+    pub name: String,
+    pub public: String,
+    /// What `trust` takes, such as `workstation/root`.
+    pub target: String,
+    pub list: PathBuf,
+    pub trusted: bool,
+}
+
+/// Creates root's key and each user's when they have none.
+pub fn keys(fleet: &Fleet) -> Result<Vec<Owner>> {
     let mut owners = vec![("root".to_owned(), None, fleet.recipients())];
     for member in &fleet.members {
         if let Some(user) = &member.user {
             owners.push((member.name.clone(), Some(user), member.recipients()));
         }
     }
-    let mut untrusted = Vec::new();
-    for (name, user, list) in owners {
-        let path = user.map_or_else(|| PathBuf::from(ROOT_KEY), key_path);
-        if read_key(&path)?.is_none() {
-            make_key(&path, user)?;
-        }
-        let public = read_key(&path)?.expect("just made").to_public().to_string();
-        println!("{name:6}  {public}");
-        if !opens(&list, &path)? {
-            untrusted.push(format!(
-                "  sudo mothership trust {}/{name} <name> {public}",
-                fleet.type_name
-            ));
-        }
+    owners
+        .into_iter()
+        .map(|(name, user, list)| {
+            let path = user.map_or_else(|| PathBuf::from(ROOT_KEY), key_path);
+            if read_key(&path)?.is_none() {
+                make_key(&path, user)?;
+            }
+            let public = read_key(&path)?.expect("just made").to_public().to_string();
+            Ok(Owner {
+                target: format!("{}/{name}", fleet.type_name),
+                trusted: opens(&list, &path)?,
+                name,
+                public,
+                list,
+            })
+        })
+        .collect()
+}
+
+pub fn key(fleet: &Fleet) -> Result<()> {
+    let owners = keys(fleet)?;
+    for owner in &owners {
+        println!("{:6}  {}", owner.name, owner.public);
     }
+    let untrusted: Vec<&Owner> = owners.iter().filter(|o| !o.trusted).collect();
     if !untrusted.is_empty() {
         println!("Add them from a machine that opens the secrets, or here for the first one:");
-        for line in untrusted {
-            println!("{line}");
+        for owner in untrusted {
+            println!(
+                "  sudo mothership trust {} <name> {}",
+                owner.target, owner.public
+            );
         }
     }
     Ok(())
@@ -225,6 +272,11 @@ fn target(fleet: &Fleet, text: &str) -> Result<Target> {
 }
 
 pub fn trust(fleet: &Fleet, text: &str, name: &str, key: &str) -> Result<()> {
+    trust_with(fleet, fleet.keys(), text, name, key)
+}
+
+/// `keys` open the list's secrets, to encrypt them again for the new key.
+pub fn trust_with(fleet: &Fleet, keys: &Keys, text: &str, name: &str, key: &str) -> Result<()> {
     let target = target(fleet, text)?;
     key.parse::<x25519::Recipient>()
         .map_err(|e| anyhow!("{key}: {e}"))?;
@@ -236,7 +288,7 @@ pub fn trust(fleet: &Fleet, text: &str, name: &str, key: &str) -> Result<()> {
         name: name.to_owned(),
         key: key.to_owned(),
     });
-    let rewritten = rewrite(fleet, &target, &list)?;
+    let rewritten = rewrite(fleet, keys, &target, &list)?;
     println!(
         "{name} opens the {} secrets of {text} now. Commit and push the fleet.",
         rewritten.len()
@@ -255,7 +307,7 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str) -> Result<()> {
     if list.is_empty() {
         bail!("{name} is the last key of {text}: trust another one first");
     }
-    let rewritten = rewrite(fleet, &target, &list)?;
+    let rewritten = rewrite(fleet, fleet.keys(), &target, &list)?;
     println!("{name} is gone from {text}. Commit and push the fleet.");
     if !rewritten.is_empty() {
         println!("git history keeps the versions {name} opens, so change these:");
@@ -266,11 +318,11 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn rewrite(fleet: &Fleet, target: &Target, list: &[Recipient]) -> Result<Vec<String>> {
+fn rewrite(fleet: &Fleet, keys: &Keys, target: &Target, list: &[Recipient]) -> Result<Vec<String>> {
     let all = secrets_of(fleet, target)?;
     let sealed = all
         .values()
-        .map(|source| encrypt_for(list, &fleet.keys().decrypt(source)?))
+        .map(|source| encrypt_for(list, &keys.decrypt(source)?))
         .collect::<Result<Vec<_>>>()?;
     fs::write(&target.list, format(list))
         .with_context(|| format!("writing {}", target.list.display()))?;

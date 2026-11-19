@@ -1,5 +1,9 @@
 use super::{Archive, Backup, Distro, Origin, Package, in_parallel};
-use crate::cmd::{self, As};
+use crate::{
+    cmd::{self, As},
+    fleet::Fleet,
+    prompt::Prompt,
+};
 use anyhow::{Context, Result, bail};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -338,6 +342,37 @@ pub fn uninstall(names: &[&str]) -> Result<()> {
         return Ok(());
     }
     apt_get(&[&["purge", "-y"], &unneeded[..]].concat())
+}
+
+/// Debian's installer marks the whole base system as installed by hand. Only the type's packages
+/// stay so, and apt removes what nothing else needs once I agree to the list.
+pub fn keep_only(fleet: &Fleet, prompt: &mut Prompt) -> Result<()> {
+    let keep: BTreeSet<&str> = fleet
+        .system
+        .packages
+        .iter()
+        .chain(&fleet.system.built_packages)
+        .map(String::as_str)
+        .collect();
+    let manual = cmd::stdout(As::Root, "apt-mark", &["showmanual"])?;
+    let unmark: Vec<&str> = manual.lines().filter(|n| !keep.contains(n)).collect();
+    if unmark.is_empty() {
+        return Ok(());
+    }
+    cmd::root("apt-mark", &[&["auto"], &unmark[..]].concat())?;
+    let unneeded = autoremovable()?;
+    if unneeded.is_empty() {
+        return Ok(());
+    }
+    println!("The fleet's packages don't need these {}:", unneeded.len());
+    for name in &unneeded {
+        println!("  {name}");
+    }
+    if prompt.confirm("Remove them")? {
+        apt_get(&["autoremove", "--purge", "-y"])
+    } else {
+        cmd::root("apt-mark", &[&["manual"], &unmark[..]].concat())
+    }
 }
 
 fn autoremovable() -> Result<BTreeSet<String>> {

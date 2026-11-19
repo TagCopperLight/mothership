@@ -1,0 +1,8 @@
+# What `mothership scan` never reports on the VM. Install sets the first group.
+etc /etc/{hostname,localtime,machine-id}
+etc /etc/pacman.d/{gnupg,mirrorlist}
+etc /etc/{.pwd.lock,ld.so.cache,os-release,.updated}
+etc /etc/{passwd,group,shadow,gshadow,subuid,subgid}-
+etc /etc/ssl/certs/**
+etc /etc/ca-certificates/extracted/*
+etc /etc/{sudoers,sudoers.d,default/useradd,libaudit.conf,credstore,credstore.encrypted,cryptsetup-keys.d,ssl/private}

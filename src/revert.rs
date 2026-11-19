@@ -2,7 +2,7 @@ use crate::{
     cmd::{self, As},
     fleet::{self, Fleet, Manager, Member, Mode, Tool},
     package::{Archive, Distro},
-    tools,
+    tools, user,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -122,12 +122,7 @@ fn run_machine(fleet: &Fleet, reverts: &[&Revert]) -> Result<()> {
 
 fn run_member(member: &Member, reverts: &[&Revert]) -> Result<()> {
     if reverts.iter().any(|r| matches!(r, Revert::CreateUser)) {
-        let mut args = vec!["--create-home"];
-        if let Some(shell) = &member.config.shell {
-            args.extend(["--shell", shell]);
-        }
-        args.push(&member.name);
-        return cmd::root("useradd", &args);
+        return user::create(member);
     }
     let user = member.user();
     let name = &user.name;
@@ -190,6 +185,12 @@ fn run_member(member: &Member, reverts: &[&Revert]) -> Result<()> {
         )?;
     }
     if !units.is_empty() {
+        // --machine talks to the user's manager, which only runs once someone logs in or linger
+        // is on. At a machine's first start, nobody has logged in yet.
+        cmd::root(
+            "systemctl",
+            &["start", &format!("user@{}.service", user.uid)],
+        )?;
         let machine = format!("{name}@");
         let scope = ["--user", "--machine", &machine];
         cmd::root("systemctl", &[&scope[..], &["daemon-reload"]].concat())?;
