@@ -10,18 +10,27 @@ use crate::{
 use anyhow::Result;
 use std::path::Path;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ServiceManager {
+    Running,
+    Missing,
+}
+
 pub fn run() -> Result<()> {
     let mut prompt = Prompt::new();
-    while round(&mut || prompt.confirm("Apply"), true)? {}
+    while round(&mut || prompt.confirm("Apply"), ServiceManager::Running)? {}
     Ok(())
 }
 
-pub fn unasked(service_manager: bool) -> Result<()> {
+pub fn unasked(service_manager: ServiceManager) -> Result<()> {
     while round(&mut || Ok(true), service_manager)? {}
     Ok(())
 }
 
-fn round(approve: &mut dyn FnMut() -> Result<bool>, service_manager: bool) -> Result<bool> {
+fn round(
+    approve: &mut dyn FnMut() -> Result<bool>,
+    service_manager: ServiceManager,
+) -> Result<bool> {
     let fleet = Fleet::load()?;
     let db = Db::load()?;
     let record_path = Path::new(record::PATH);
@@ -41,7 +50,7 @@ fn round(approve: &mut dyn FnMut() -> Result<bool>, service_manager: bool) -> Re
     for item in &items {
         match (&item.revert, item.member) {
             (Some(Revert::User(User::Service(service))), Some(i))
-                if item.section == Section::Fleet && !service_manager =>
+                if item.section == Section::Fleet && service_manager == ServiceManager::Missing =>
             {
                 skipped.push((i, service))
             }

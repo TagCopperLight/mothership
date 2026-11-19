@@ -9,7 +9,7 @@ mod repo;
 mod trust;
 
 use crate::{
-    apply,
+    apply::{self, ServiceManager},
     cmd::{self, As},
     fleet::{self, Fleet, Machine},
     hardware,
@@ -91,7 +91,10 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
         _ => None,
     };
     net::retry("Applying the fleet", &Needs::mirror(distro)?, || {
-        apply::unasked(!chroot)
+        apply::unasked(match chroot {
+            true => ServiceManager::Missing,
+            false => ServiceManager::Running,
+        })
     })?;
     drop(sudo);
     if distro == Distro::Debian {

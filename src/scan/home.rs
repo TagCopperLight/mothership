@@ -3,7 +3,8 @@ use crate::{
     edit::Add,
     fleet::{Manager, Member},
     preview::{Preview, Seen},
-    secrets, systemd, walk,
+    secrets::{self, Storage},
+    systemd, walk,
 };
 use anyhow::Result;
 use std::{
@@ -56,7 +57,7 @@ pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
             Item::new(Kind::Home, Change::Added, user.tilde(path), "new")
                 .with(Add::Track {
                     path: path.clone(),
-                    encrypt: false,
+                    storage: Storage::Clear,
                 })
                 .showing(Preview::Home {
                     path: path.clone(),

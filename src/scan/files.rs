@@ -6,6 +6,7 @@ use crate::{
     fleet::{Fleet, Member},
     preview::{Preview, Seen},
     revert::User,
+    secrets::Storage,
 };
 use anyhow::{Context, Result};
 use std::{collections::BTreeSet, path::PathBuf, thread};
@@ -65,7 +66,7 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
         } else {
             Add::Update {
                 path: path.clone(),
-                encrypt: false,
+                storage: Storage::Clear,
             }
         };
         let item = Item::new(Kind::File, change, user.tilde(&path), detail)
@@ -100,7 +101,7 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
         }
         let add = Add::Update {
             path: path.clone(),
-            encrypt: false,
+            storage: Storage::Clear,
         };
         let item = looks_secret(
             member,

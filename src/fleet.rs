@@ -5,7 +5,7 @@ use crate::{
     homes,
     ignore::{Ignore, Level, Paths},
     package::aur,
-    secrets::{self, Keys},
+    secrets::{self, Keys, Storage},
     style,
     user::{self, User},
     walk,
@@ -113,9 +113,12 @@ pub const MACHINE: &str = "/etc/mothership/machine.toml";
 pub struct Mode(pub u32);
 
 impl Mode {
-    pub fn default_for(executable: bool, secret: bool) -> Mode {
+    pub fn default_for(executable: bool, storage: Storage) -> Mode {
         let mode = if executable { 0o755 } else { 0o644 };
-        Mode(if secret { mode & 0o700 } else { mode })
+        Mode(match storage {
+            Storage::Clear => mode,
+            Storage::Encrypted => mode & 0o700,
+        })
     }
 }
 
@@ -433,9 +436,13 @@ impl Fleet {
         }
         let path = self.etc_source(rel);
         let meta = fs::metadata(&path).with_context(|| format!("reading {}", path.display()))?;
+        let storage = match self.secret_etc.contains(rel) {
+            true => Storage::Encrypted,
+            false => Storage::Clear,
+        };
         Ok(Mode::default_for(
             meta.permissions().mode() & 0o111 != 0,
-            self.secret_etc.contains(rel),
+            storage,
         ))
     }
 

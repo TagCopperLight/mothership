@@ -6,7 +6,8 @@ use crate::{
     package::Distro,
     pref,
     prompt::Prompt,
-    revert, secrets,
+    revert,
+    secrets::{self, Storage},
     snapshot::Snapshot,
     style, walk,
 };
@@ -77,16 +78,16 @@ pub enum Add {
     Linger(bool),
     Track {
         path: PathBuf,
-        encrypt: bool,
+        storage: Storage,
     },
     Update {
         path: PathBuf,
-        encrypt: bool,
+        storage: Storage,
     },
     Forget(PathBuf),
     CopyEtc {
         path: PathBuf,
-        encrypt: bool,
+        storage: Storage,
     },
     RemoveEtc(PathBuf),
     Pref {
@@ -100,10 +101,10 @@ impl Add {
     pub fn encrypted(&self) -> Option<Add> {
         let mut add = self.clone();
         match &mut add {
-            Add::Track { encrypt, .. }
-            | Add::Update { encrypt, .. }
-            | Add::CopyEtc { encrypt, .. } => {
-                *encrypt = true;
+            Add::Track { storage, .. }
+            | Add::Update { storage, .. }
+            | Add::CopyEtc { storage, .. } => {
+                *storage = Storage::Encrypted;
                 Some(add)
             }
             _ => None,
@@ -132,17 +133,17 @@ impl Add {
             Add::Shell(shell) => format!("make {shell} the user's shell"),
             Add::Linger(true) => "set `linger = true` in user.toml".into(),
             Add::Linger(false) => "remove `linger` from user.toml".into(),
-            Add::Track { encrypt, .. } => {
-                format!("add it to chezmoi{}", encrypted_suffix(*encrypt))
+            Add::Track { storage, .. } => {
+                format!("add it to chezmoi{}", encrypted_suffix(*storage))
             }
-            Add::Update { encrypt, .. } => {
+            Add::Update { storage, .. } => {
                 format!(
                     "copy this machine's version into chezmoi{}",
-                    encrypted_suffix(*encrypt)
+                    encrypted_suffix(*storage)
                 )
             }
-            Add::CopyEtc { encrypt, .. } => {
-                format!("copy it into the type's etc/{}", encrypted_suffix(*encrypt))
+            Add::CopyEtc { storage, .. } => {
+                format!("copy it into the type's etc/{}", encrypted_suffix(*storage))
             }
             Add::Forget(_) => "remove it from chezmoi".into(),
             Add::RemoveEtc(_) => "remove it from the type's etc/".into(),
@@ -197,7 +198,7 @@ impl Add {
                 }
                 Ok(())
             })?,
-            Add::Track { path, encrypt } => {
+            Add::Track { path, storage } => {
                 let member = member()?;
                 let root = chezmoi::Root::new(fleet, member);
                 let snapshot = taken(member, path, seen)?;
@@ -208,9 +209,9 @@ impl Add {
                         return Ok(false);
                     }
                 }
-                chezmoi_add(fleet, member, &root, &snapshot, path, *encrypt)?;
+                chezmoi_add(fleet, member, &root, &snapshot, path, *storage)?;
             }
-            Add::Update { path, encrypt } => {
+            Add::Update { path, storage } => {
                 let member = member()?;
                 let root = chezmoi::Root::new(fleet, member);
                 let source = root.source_path(path)?;
@@ -221,7 +222,7 @@ impl Add {
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().starts_with("encrypted_"));
                 let link = fs::symlink_metadata(&source)?.is_symlink();
-                if link && *encrypt && clear {
+                if link && *storage == Storage::Encrypted && clear {
                     bail!(
                         "{} is shared: encrypt it in {} by hand",
                         source.display(),
@@ -234,11 +235,11 @@ impl Add {
                 let snapshot = taken(member, path, seen)?;
                 if link {
                     update_shared(fleet, &root, &snapshot, &source, path)?;
-                } else if !encrypt {
+                } else if *storage == Storage::Clear {
                     let args = ["re-add", &path.to_string_lossy()];
                     root.run(&own_list(fleet, member)?, &snapshot, &args)?;
                 } else {
-                    chezmoi_add(fleet, member, &root, &snapshot, path, true)?;
+                    chezmoi_add(fleet, member, &root, &snapshot, path, Storage::Encrypted)?;
                     if clear {
                         println!("  git history keeps the version in clear, so change it.");
                     }
@@ -251,7 +252,7 @@ impl Add {
                 let args = ["forget", "--force", &path.to_string_lossy()];
                 root.run(&own_list(fleet, member)?, &empty, &args)?
             }
-            Add::CopyEtc { path, encrypt } => copy_etc(fleet, etc_rel(path), path, *encrypt)?,
+            Add::CopyEtc { path, storage } => copy_etc(fleet, etc_rel(path), path, *storage)?,
             Add::RemoveEtc(path) => remove_etc(fleet, etc_rel(path))?,
             Add::Pref {
                 user_js,
@@ -276,8 +277,11 @@ impl Add {
     }
 }
 
-fn encrypted_suffix(encrypt: bool) -> &'static str {
-    if encrypt { ", encrypted" } else { "" }
+fn encrypted_suffix(storage: Storage) -> &'static str {
+    match storage {
+        Storage::Clear => "",
+        Storage::Encrypted => ", encrypted",
+    }
 }
 
 fn taken(member: &Member, path: &Path, seen: Option<&str>) -> Result<Snapshot> {
@@ -333,11 +337,11 @@ fn chezmoi_add(
     root: &chezmoi::Root,
     snapshot: &Snapshot,
     path: &Path,
-    encrypt: bool,
+    storage: Storage,
 ) -> Result<()> {
     let path = path.to_string_lossy();
     let recipients = own_list(fleet, member)?;
-    if !encrypt {
+    if storage == Storage::Clear {
         return root.run(&recipients, snapshot, &["add", &path]);
     }
     if !member.open {
@@ -570,7 +574,7 @@ fn etc_rel(path: &Path) -> &Path {
         .expect("the /etc scan reports paths under /etc")
 }
 
-fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()> {
+fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage) -> Result<()> {
     if fleet.etc_elsewhere.contains(rel) {
         bail!(
             "etc/{} belongs to hardware or an option this machine doesn't have",
@@ -581,15 +585,14 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()>
     let mut sealed = clear.clone().into_os_string();
     sealed.push(secrets::AGE);
     let sealed = PathBuf::from(sealed);
-    let (dest, other) = if encrypt {
-        (sealed.as_path(), clear.as_path())
-    } else {
-        (clear.as_path(), sealed.as_path())
+    let (dest, other) = match storage {
+        Storage::Clear => (clear.as_path(), sealed.as_path()),
+        Storage::Encrypted => (sealed.as_path(), clear.as_path()),
     };
     fs::create_dir_all(dest.parent().expect("under etc/"))?;
     let meta = fs::symlink_metadata(path)?;
     if meta.is_symlink() {
-        if encrypt {
+        if storage == Storage::Encrypted {
             bail!("{} is a link, which holds no secret", path.display());
         }
         match fs::remove_file(dest) {
@@ -609,7 +612,7 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()>
             }
             read => read?,
         };
-        if encrypt {
+        if storage == Storage::Encrypted {
             if !fleet.etc_open() {
                 bail!(
                     "root's key isn't in {}: `mothership trust` it first",
@@ -623,9 +626,9 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()>
         let executable = mode & 0o111 != 0;
         fs::set_permissions(
             dest,
-            fs::Permissions::from_mode(Mode::default_for(executable, false).0),
+            fs::Permissions::from_mode(Mode::default_for(executable, Storage::Clear).0),
         )?;
-        let default = Mode::default_for(executable, encrypt);
+        let default = Mode::default_for(executable, storage);
         let rel = rel.to_string_lossy().into_owned();
         edit_toml(&fleet.system_path(), |doc| {
             if Mode(mode) == default {
@@ -643,7 +646,7 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, encrypt: bool) -> Result<()>
         })?;
     }
     match fs::remove_file(other) {
-        Ok(()) if encrypt => {
+        Ok(()) if storage == Storage::Encrypted => {
             println!("  git history keeps the version in clear, so change it.");
             Ok(())
         }

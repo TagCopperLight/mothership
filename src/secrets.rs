@@ -29,6 +29,12 @@ pub fn key_path(user: &User) -> PathBuf {
     user.home.join(".config/mothership/key.txt")
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Storage {
+    Clear,
+    Encrypted,
+}
+
 #[derive(Clone, Default)]
 pub struct Keys(Vec<x25519::Identity>);
 

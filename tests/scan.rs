@@ -1,4 +1,5 @@
 use super::*;
+use crate::secrets::Storage;
 
 fn owner_only(path: &Path) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
@@ -77,12 +78,15 @@ fn a_secret_is_added_encrypted() {
     let item = Item::new(Kind::Home, Change::Added, "x", "new")
         .with(Add::Track {
             path,
-            encrypt: false,
+            storage: Storage::Clear,
         })
         .secret(Secret::Guessed);
     assert!(matches!(
         item.add,
-        Adding::Offered(Add::Track { encrypt: true, .. })
+        Adding::Offered(Add::Track {
+            storage: Storage::Encrypted,
+            ..
+        })
     ));
 }
 

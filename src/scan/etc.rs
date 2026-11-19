@@ -5,7 +5,8 @@ use crate::{
     package::{self, Backup, Db, Origin, Package},
     preview::Preview,
     revert::Etc,
-    secrets, systemd, walk,
+    secrets::{self, Storage},
+    systemd, walk,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -49,7 +50,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                 item(Change::Edited, "edited")
                     .with(Add::CopyEtc {
                         path: path.clone(),
-                        encrypt: false,
+                        storage: Storage::Clear,
                     })
                     .reverting(Etc::Write(path.clone()))
                     .showing(Preview::Diff {
@@ -122,7 +123,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         Item::new(Kind::Etc, Change::Added, path.display().to_string(), "new")
             .with(Add::CopyEtc {
                 path: path.clone(),
-                encrypt: false,
+                storage: Storage::Clear,
             })
             .reverting(Etc::Delete(path.clone()))
             .showing(Preview::Contents(path.clone()))
@@ -181,7 +182,7 @@ fn edited(package: &Package, backup: &Backup) -> Result<Option<Item>> {
     }
     let item = item(Change::Edited, "edited").with(Add::CopyEtc {
         path: path.clone(),
-        encrypt: false,
+        storage: Storage::Clear,
     });
     let item = match backup.origin {
         Origin::Archive if package.archive.cached() => item
