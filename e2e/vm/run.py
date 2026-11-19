@@ -6,6 +6,7 @@
 
 
 import http.server
+import re
 import shutil
 import subprocess
 import sys
@@ -31,9 +32,17 @@ PASSPHRASE = "disk-passphrase"
 PASSWORD = "tester-password"
 HOST = "10.0.2.2"
 INSTALL_TIMEOUT = 3600
+NO_PASSWORD = "/etc/sudoers.d/zz-mothership-install"
+TOOLS = ["qemu-system-x86_64", "qemu-img", "swtpm", "bsdtar", "cargo"]
 
 
 def main() -> int:
+    if not Path("/etc/arch-release").exists():
+        sys.exit("the VM test needs an Arch host: it serves the host's pacman cache to the VM")
+    if missing := [tool for tool in TOOLS if not shutil.which(tool)]:
+        sys.exit(f"the VM test needs {', '.join(missing)}")
+    if not (OVMF / "OVMF_CODE.secboot.4m.fd").exists():
+        sys.exit(f"the VM test needs edk2-ovmf, for {OVMF}")
     if not ISO.exists():
         sys.exit(f"{ISO} is missing")
     subprocess.run(["cargo", "build", "--release", "--locked", "--quiet"], cwd=ROOT, check=True)
@@ -224,6 +233,11 @@ def install(args: list[str], port: int, log) -> None:
         wait(vm, "Secure Boot holds this machine's keys now.", timeout=INSTALL_TIMEOUT)
         wait(vm, "The system is installed.", timeout=300)
         vm.expect("VM# ")
+        shell(vm, f"echo -n {PASSPHRASE} | cryptsetup open --key-file - /dev/vda2 check"
+                  f" && mount /dev/mapper/check /mnt && test ! -e /mnt{NO_PASSWORD}"
+                  " && echo SUDO-RULE-'GONE'; umount /mnt; cryptsetup close check")
+        if "SUDO-RULE-GONE" not in vm.before:
+            sys.exit("the install left its sudo rule behind")
         vm.sendline("poweroff")
         vm.expect(pexpect.EOF, timeout=120)
 
@@ -244,6 +258,9 @@ def first_start(args: list[str], log) -> None:
         shell(vm, "sudo systemd-cryptenroll /dev/vda2")
         if "tpm2" not in vm.before:
             sys.exit("the TPM holds no key for the disk")
+        shell(vm, f"test ! -e {NO_PASSWORD} && echo SUDO-RULE-'GONE'")
+        if "SUDO-RULE-GONE" not in vm.before:
+            sys.exit("the first start left the install's sudo rule behind")
         vm.sendline("sudo poweroff")
         vm.expect(pexpect.EOF, timeout=120)
 
@@ -254,6 +271,10 @@ def tpm_start(args: list[str], log) -> None:
         if found == 1:
             sys.exit("the disk asked for its passphrase: the TPM didn't open it")
         login(vm)
+        shell(vm, "cat /sys/class/tpm/tpm0/pcr-sha256/15")
+        pcr = re.search(r"\b[0-9A-Fa-f]{64}\b", vm.before)
+        if not pcr or set(pcr.group()) == {"0"}:
+            sys.exit("PCR 15 is zero after boot: systemd didn't measure the root it opened")
         vm.sendline(f"sudo -S poweroff <<< {PASSWORD}")
         vm.expect(pexpect.EOF, timeout=120)
 
