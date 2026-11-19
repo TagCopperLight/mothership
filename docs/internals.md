@@ -5,6 +5,8 @@
 - `arch-chroot` shares the ISO's `/run` with the new system, so `/run/archiso` shows inside it. The ISO sets `MOTHERSHIP_FROM_ISO` for the inner run, and that decides.
 - Without `/etc/kernel/cmdline`, mkinitcpio puts the running kernel's command line in the UKI. In the chroot, that's the ISO's.
 - The TPM key is bound to PCR 7 (Secure Boot state) and to PCR 15 being zero. systemd extends PCR 15 when it opens a root, so a fake root partition someone adds can't unseal this disk's key.
+- PCR 7 lets every UKI this machine ever signed unseal the key, and a dbx update changes it. A signed PCR 11 policy (ukify with a PCR key, `--tpm2-public-key`) survives dbx updates but still trusts old UKIs; revoking them takes systemd's pcrlock.
+- archiso names its device on the kernel command line (`archisodevice`, `archisolabel`, `archisosearchuuid`), which still holds after `copytoram` unmounts it. An isohybrid stick carries the ISO's filesystem on the whole disk.
 - systemd's gpt-auto finds the partitions by type code (ESP `ef00`, XBOOTLDR `ea00`, root `8304`) and opens the root as `root`. No fstab or crypttab names them.
 - `sbctl enroll-keys --microsoft` also enrolls Microsoft's third-party CA, which signs graphics cards' option ROMs. `--tpm-eventlog` finds no event log inside the chroot.
 - `beside` puts the kernel in its own XBOOTLDR partition, since Windows' EFI partition is often too small.
@@ -12,7 +14,7 @@
 - A disk name ending in a digit takes a `p` before the partition number: `nvme0n1p2`.
 - zram shows in lsblk as a disk, with no `/sys/block/<name>/device`.
 - `gh auth token` works offline, `gh auth status` doesn't.
-- git fails the same way for a private repository and a dropped network, so a fleet only counts as private once github.com answers.
+- GitHub asks for a login both for a private repository and for one that doesn't exist, so with prompts off git says `terminal prompts disabled` for either.
 - Debian's installer names the machine in `/etc/hosts` (`127.0.1.1`), and sudo warns on every run when that name is gone.
 
 ## Packages

@@ -35,7 +35,7 @@ curl -fLO $base/mothership-x86_64 -fLO $base/SHA256SUMS
 sha256sum -c SHA256SUMS && install -m 755 mothership-x86_64 mothership
 ```
 
-`sudo ./mothership install` asks for the fleet, the type, its options and the hostname. Each answer can also be a flag, for cloud-init (`--fleet`, `--type`, `--option`, `--hostname`, `--admin`). It then prints the `trust` commands to run on your other machines for the new keys, or takes the recovery key, and applies the fleet.
+`sudo ./mothership install` asks for the fleet, the type, its options and the hostname. Each answer can also be a flag, for cloud-init (`--fleet`, `--type`, `--option`, `--hostname`, `--admin`, and `--remove-unlisted yes|no` on Debian); with `--type`, only the options given with `--option` turn on. Passwords and keys are always typed. Install then prints the `trust` commands to run on your other machines for the new keys, or takes the recovery key, and applies the fleet.
 
 On Debian and Ubuntu, install offers to remove every package the type doesn't list, so the type lists what the machine needs: the kernel, `openssh-server`, `sudo`, git and chezmoi.
 
@@ -43,7 +43,7 @@ From the Arch ISO, install also partitions and encrypts the disk:
 
 - Start the ISO in UEFI mode, with Secure Boot in Setup Mode and a TPM 2.0.
 - New Secure Boot keys make BitLocker ask for its recovery key: suspend it first.
-- The type lists `linux`, `sbctl` and `tpm2-tss`, holds `/etc/kernel/cmdline`, and has a mkinitcpio preset that builds a UKI with the `systemd` and `sd-encrypt` hooks.
+- The type lists `linux`, `sbctl` and `tpm2-tss`, holds `/etc/kernel/cmdline`, and has a mkinitcpio preset that builds a UKI with the `systemd` and `sd-encrypt` hooks, plus `sd-vconsole` when `vconsole.conf` sets a keymap. Install checks this before it touches the disk.
 - At the next start, type the disk's passphrase once. After that, the TPM opens the disk.
 
 ## Writing a fleet
