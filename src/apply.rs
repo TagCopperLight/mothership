@@ -4,7 +4,7 @@ use crate::{
     prompt::Prompt,
     record::{self, Record},
     revert::{self, Owned, Revert},
-    scan::{self, Checks, Secret, Section},
+    scan::{self, Change, Checks, Secret, Section},
     style::Style,
 };
 use anyhow::Result;
@@ -29,7 +29,8 @@ fn round(approve: &mut dyn FnMut() -> Result<bool>, service_manager: bool) -> Re
     let mut items = scan::checks(&fleet, &db, &record, Checks::Apply)?;
     scan::sort(&fleet, &mut items);
 
-    let (mut todo, mut edited, mut locked, mut left) = (Vec::new(), Vec::new(), Vec::new(), 0);
+    let (mut todo, mut edited, mut locked, mut unread, mut left) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
     let mut skipped: Vec<Owned> = Vec::new();
     for item in &items {
         match &item.revert {
@@ -43,6 +44,7 @@ fn round(approve: &mut dyn FnMut() -> Result<bool>, service_manager: bool) -> Re
             _ if item.section == Section::Fleet => todo.push(item),
             _ if scan::ignored(&fleet, item) => {}
             _ if item.secret == Secret::Locked => locked.push(item),
+            _ if item.change == Change::Unreadable => unread.push(item),
             Some(Revert::WriteEtc(_) | Revert::ApplyFile { .. }) => edited.push(item),
             _ => left += 1,
         }
@@ -59,13 +61,14 @@ fn round(approve: &mut dyn FnMut() -> Result<bool>, service_manager: bool) -> Re
     for (items, why) in [
         (&edited, "they were edited on this machine"),
         (&locked, "this machine's key can't open them"),
+        (&unread, "mothership couldn't read them"),
     ] {
         if !items.is_empty() {
             println!("Left alone, since {why}:");
             scan::print_groups(&fleet, items, style, &|_| None);
         }
     }
-    let review = left + edited.len() + locked.len();
+    let review = left + edited.len() + locked.len() + unread.len();
     if review > 0 {
         println!(
             "{review} changed on this machine, for {}",

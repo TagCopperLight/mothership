@@ -55,19 +55,22 @@ pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
 pub fn scan_user(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
     let mut dirs = vec![member.user().home.join(".config/systemd/user")];
     dirs.extend(systemd::paths(&USER_DIRS));
-    check(
-        Unit {
-            kind: Kind::UserService,
-            key: Key::UserServices,
-            dirs: &dirs,
-            own: &dirs[0],
-            shared: Some(&dirs[1]),
-            defaults: &Defaults::load(ships.db.distro, Scope::User)?,
-            member: Some(member),
-        },
-        &member.config.user_services,
-        ships,
-    )
+    let defaults = Defaults::load(ships.db.distro, Scope::User)?;
+    member.user().with_rights(|| {
+        check(
+            Unit {
+                kind: Kind::UserService,
+                key: Key::UserServices,
+                dirs: &dirs,
+                own: &dirs[0],
+                shared: Some(&dirs[1]),
+                defaults: &defaults,
+                member: Some(member),
+            },
+            &member.config.user_services,
+            ships,
+        )
+    })
 }
 
 pub fn global_defaults(distro: Distro) -> Result<Vec<PathBuf>> {

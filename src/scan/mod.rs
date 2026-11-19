@@ -403,18 +403,26 @@ fn member(fleet: &Fleet, ships: &Ships, i: usize, which: Checks) -> Result<Vec<I
             )
             .reverting(Revert::CreateUser),
         ),
-        Some(_) => {
-            let parts = thread::scope(|s| {
-                let handles = [
-                    s.spawn(|| account::scan(member, ships)),
+        Some(_) => thread::scope(|s| {
+            let parts = [
+                (Kind::Account, s.spawn(|| account::scan(member, ships))),
+                (
+                    Kind::UserService,
                     s.spawn(|| services::scan_user(member, ships)),
-                    s.spawn(|| tools::scan(member)),
-                    s.spawn(|| tracked(fleet, member, which)),
-                ];
-                handles.into_iter().map(join).collect::<Result<Vec<_>>>()
-            })?;
-            items.extend(parts.into_iter().flatten());
-        }
+                ),
+                (Kind::Tool, s.spawn(|| tools::scan(member))),
+                (Kind::File, s.spawn(|| tracked(fleet, member, which))),
+            ];
+            for (kind, part) in parts {
+                match join(part) {
+                    Ok(found) => items.extend(found),
+                    Err(e) => items.push(
+                        Item::new(kind, Change::Unreadable, kind.area().title(), "not scanned")
+                            .noting(format!("{e:#}")),
+                    ),
+                }
+            }
+        }),
     }
     for item in &mut items {
         item.member = Some(i);
@@ -654,43 +662,54 @@ fn finish(fleet: &Fleet, mut item: Item) -> Item {
     let Some(path) = item.guess.take() else {
         return item;
     };
-    let found = Found::at(&path);
+    let (found, not_secret) = match item.member.map(|i| &fleet.members[i]) {
+        None => (Found::at(&path, Path::new("/etc")), &fleet.not_secret),
+        Some(member) => {
+            let user = member.user();
+            let found = user
+                .with_rights(|| Ok(Found::at(&path, &user.home)))
+                .unwrap_or_else(Found::Unreadable);
+            (found, &member.not_secret)
+        }
+    };
     if item.change == Change::Added && item.note.is_empty() {
         item.note = found.describe();
     }
-    let not_secret = match item.member {
-        None => &fleet.not_secret,
-        Some(i) => &fleet.members[i].not_secret,
-    };
     judge_secret(not_secret, item, &found)
 }
 
 enum Found {
     Missing,
     Link(PathBuf),
-    Folder(Vec<fs::Metadata>),
-    File(fs::Metadata),
+    Folder { files: usize, private: bool },
+    File { private: bool },
     Unreadable(anyhow::Error),
 }
 
 impl Found {
-    fn at(path: &Path) -> Found {
+    fn at(path: &Path, base: &Path) -> Found {
         let found = match fs::symlink_metadata(path) {
             Err(e) if e.kind() == ErrorKind::NotFound => return Found::Missing,
             found => found,
         };
         let found = found.map_err(anyhow::Error::from).and_then(|meta| {
-            Ok(if meta.is_symlink() {
-                Found::Link(fs::read_link(path)?)
-            } else if meta.is_dir() {
-                Found::Folder(
-                    walk::files_with_metadata(path)?
-                        .into_iter()
-                        .map(|(_, meta)| meta)
-                        .collect(),
-                )
-            } else {
-                Found::File(meta)
+            if meta.is_symlink() {
+                return Ok(Found::Link(fs::read_link(path)?));
+            }
+            let hidden = hidden_below(path, base)?;
+            if !meta.is_dir() {
+                return Ok(Found::File {
+                    private: hidden || private(&meta),
+                });
+            }
+            let files = walk::files_with_metadata(path)?;
+            let mut private = hidden || closed(&meta);
+            for (rel, meta) in &files {
+                private |= self::private(meta) || hidden_below(&path.join(rel), path)?;
+            }
+            Ok(Found::Folder {
+                files: files.len(),
+                private,
             })
         });
         found.unwrap_or_else(Found::Unreadable)
@@ -699,8 +718,8 @@ impl Found {
     fn describe(&self) -> String {
         match self {
             Found::Link(target) => format!("→ {}", target.display()),
-            Found::Folder(files) => style::count(files.len(), "file"),
-            Found::Missing | Found::File(_) => String::new(),
+            Found::Folder { files, .. } => style::count(*files, "file"),
+            Found::Missing | Found::File { .. } => String::new(),
             Found::Unreadable(e) => format!("can't read it: {e:#}"),
         }
     }
@@ -708,15 +727,34 @@ impl Found {
     fn private(&self) -> bool {
         match self {
             Found::Missing | Found::Link(_) => false,
-            Found::Folder(files) => files.iter().any(private),
-            Found::File(meta) => private(meta),
+            Found::Folder { private, .. } | Found::File { private } => *private,
             Found::Unreadable(_) => true,
         }
     }
 }
 
-fn looks_secret(not_secret: &Paths, item: Item, path: &Path) -> Item {
-    judge_secret(not_secret, item, &Found::at(path))
+fn hidden_below(path: &Path, base: &Path) -> Result<bool> {
+    for dir in path.ancestors().skip(1).take_while(|dir| *dir != base) {
+        if !dir.starts_with(base) {
+            break;
+        }
+        if closed(&fs::metadata(dir)?) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn closed(dir: &fs::Metadata) -> bool {
+    dir.permissions().mode() & 0o001 == 0
+}
+
+fn looks_secret(member: &Member, item: Item, path: &Path) -> Item {
+    let user = member.user();
+    let found = user
+        .with_rights(|| Ok(Found::at(path, &user.home)))
+        .unwrap_or_else(Found::Unreadable);
+    judge_secret(&member.not_secret, item, &found)
 }
 
 fn judge_secret(not_secret: &Paths, item: Item, found: &Found) -> Item {

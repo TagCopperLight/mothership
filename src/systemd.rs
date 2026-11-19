@@ -146,7 +146,8 @@ pub fn install_values(unit: &str, unit_dirs: &[PathBuf], key: &str) -> Result<Ve
     let Some(path) = unit_file(unit, unit_dirs) else {
         return Ok(Vec::new());
     };
-    let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let bytes = walk::read(&path)?.with_context(|| format!("{} vanished", path.display()))?;
+    let text = String::from_utf8_lossy(&bytes);
     let mut install = false;
     let mut values = Vec::new();
     for line in text.lines().map(str::trim) {

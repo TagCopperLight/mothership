@@ -20,11 +20,11 @@ fn a_secret_shows_no_contents_but_other_files_do() {
     let notes = dir.path().join("notes");
     fs::write(&notes, "hello").unwrap();
     let item = |path: &Path| {
-        looks_secret(
+        judge_secret(
             &not_secret,
             Item::new(Kind::Home, Change::Added, "x", "new")
                 .showing(Preview::Contents(path.to_path_buf())),
-            path,
+            &Found::at(path, dir.path()),
         )
     };
     let secret = item(&key);
@@ -40,9 +40,26 @@ fn a_folder_is_secret_when_one_of_its_files_is() {
     fs::create_dir_all(app.join("deep")).unwrap();
     fs::write(app.join("settings"), "").unwrap();
     fs::write(app.join("deep/token"), "").unwrap();
-    assert!(!Found::at(&app).private());
+    assert!(!Found::at(&app, dir.path()).private());
     owner_only(&app.join("deep/token"));
-    assert!(Found::at(&app).private());
+    assert!(Found::at(&app, dir.path()).private());
+}
+
+#[test]
+fn a_file_in_a_closed_folder_is_secret() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::TempDir::new().unwrap();
+    let token = dir.path().join(".config/app/token");
+    fs::create_dir_all(token.parent().unwrap()).unwrap();
+    fs::write(&token, "").unwrap();
+    assert!(!Found::at(&token, dir.path()).private());
+    let app = token.parent().unwrap();
+    fs::set_permissions(app, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(Found::at(&token, dir.path()).private());
+    assert!(Found::at(&dir.path().join(".config"), dir.path()).private());
+    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(app, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!Found::at(&token, dir.path()).private());
 }
 
 #[test]
@@ -65,10 +82,10 @@ fn not_secret_txt_clears_the_guess() {
     fs::write(&settings, "{}").unwrap();
     owner_only(&settings);
     let item = |subject: &str| {
-        looks_secret(
+        judge_secret(
             &not_secret,
             Item::new(Kind::Home, Change::Added, subject, "new"),
-            &settings,
+            &Found::at(&settings, dir.path()),
         )
     };
     assert_eq!(item("~/.config/zed/settings.json").secret, Secret::No);

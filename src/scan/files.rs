@@ -103,7 +103,7 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
             encrypt: false,
         };
         let item = looks_secret(
-            &member.not_secret,
+            member,
             Item::new(
                 Kind::File,
                 Change::InClear,
