@@ -2,7 +2,6 @@
 name = "mothership"
 version = "0.1.0"
 edition = "2024"
-# tests/ holds unit tests that the modules include, not standalone test crates.
 autotests = false
 
 [dependencies]

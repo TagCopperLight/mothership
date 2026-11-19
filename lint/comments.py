@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import ast
 import io
+import re
 import subprocess
 import sys
 import tokenize
@@ -8,8 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ("e2e/fleet/", "e2e/vm/fleet/", "e2e/debian-packages/")
-HASH_FILES = {"ci.sh", "PKGBUILD", ".gitignore"}
-HASH_SUFFIXES = {".sh", ".yml", ".yaml", ".Dockerfile"}
+SHELL_FILES = {"PKGBUILD"}
+HASH_FILES = {".gitignore"}
+HASH_SUFFIXES = {".yml", ".yaml", ".toml", ".Dockerfile"}
 UV_BLOCK = ("# /// script", "# ///")
 
 
@@ -112,9 +114,13 @@ def python(text: str) -> list[tuple[int, int]]:
 def hashes(text: str) -> list[tuple[int, int]]:
     spans, start = [], 0
     for number, line in enumerate(text.splitlines(keepends=True), 1):
-        quote = None
+        quote, escaped = None, False
         for col, c in enumerate(line):
-            if quote:
+            if escaped:
+                escaped = False
+            elif c == "\\" and quote != "'":
+                escaped = True
+            elif quote:
                 quote = None if c == quote else quote
             elif c in "'\"":
                 quote = c
@@ -126,17 +132,62 @@ def hashes(text: str) -> list[tuple[int, int]]:
     return spans
 
 
+HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def shell(text: str) -> list[tuple[int, int]]:
+    spans, i, n = [], 0, len(text)
+    quote, pending = None, []
+    if text.startswith("#!"):
+        i = text.find("\n")
+        i = n if i < 0 else i
+    while i < n:
+        c = text[i]
+        if c == "\\" and quote != "'":
+            i += 2
+        elif quote:
+            quote = None if c == quote else quote
+            i += 1
+        elif c in "'\"":
+            quote = c
+            i += 1
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;"):
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            spans.append((i, end))
+            i = end
+        elif c == "<" and (match := HEREDOC.match(text, i)):
+            pending.append((match.group(1) == "-", match.group(3)))
+            i = match.end()
+        elif c == "\n" and pending:
+            i += 1
+            while pending:
+                strip_tabs, word = pending.pop(0)
+                while i < n:
+                    end = text.find("\n", i)
+                    end = n if end < 0 else end
+                    line = text[i:end]
+                    i = end + 1
+                    if (line.lstrip("\t") if strip_tabs else line) == word:
+                        break
+        else:
+            i += 1
+    return spans
+
+
 def finder(path: Path):
     name = path.name
     if path.suffix == ".rs":
         return rust
     if path.suffix == ".py":
         return python
+    if name in SHELL_FILES or path.suffix == ".sh":
+        return shell
     if name in HASH_FILES or path.suffix in HASH_SUFFIXES or name.endswith(".Dockerfile"):
         return hashes
     first = path.read_text(errors="replace").split("\n", 1)[0]
     if first.startswith("#!") and ("sh" in first.split("/")[-1]):
-        return hashes
+        return shell
     return None
 
 
