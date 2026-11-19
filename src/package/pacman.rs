@@ -1,7 +1,6 @@
-use super::{Archive, Backup, Distro, Origin, Package, aur};
+use super::{Archive, Aur, Backup, Distro, Origin, Package, aur};
 use crate::{
     cmd::{self, As},
-    fleet::Fleet,
     parallel,
 };
 use anyhow::{Context, Result, bail};
@@ -94,18 +93,16 @@ fn in_repos() -> Result<BTreeSet<String>> {
         .collect())
 }
 
-pub fn cannot_install(fleet: &Fleet, name: &str) -> Result<Option<String>> {
+pub fn cannot_install(aur: &Aur, name: &str) -> Result<Option<String>> {
     if in_repos()?.contains(name) {
         return Ok(None);
     }
-    let why = match fleet.system.aur_helper {
+    let why = match aur.helper {
         None => "system.toml sets no aur_helper".to_owned(),
-        Some(helper) => {
-            match cmd::stdout(As::User(fleet.admin()), helper.command(), &["-Si", name]) {
-                Ok(_) => return Ok(None),
-                Err(e) => format!("{e:#}"),
-            }
-        }
+        Some(helper) => match cmd::stdout(As::User(aur.admin), helper.command(), &["-Si", name]) {
+            Ok(_) => return Ok(None),
+            Err(e) => format!("{e:#}"),
+        },
     };
     Ok(Some(format!(
         "It is in neither pacman's repos nor the AUR: {why}"
@@ -131,25 +128,25 @@ pub fn bootstrap(names: &[&str]) -> Result<()> {
     )
 }
 
-pub fn install(fleet: &Fleet, names: &[&str]) -> Result<()> {
-    let install = split_install(names, &in_repos()?, fleet.system.aur_helper)?;
+pub fn install(aur: &Aur, names: &[&str]) -> Result<()> {
+    let install = split_install(names, &in_repos()?, aur.helper)?;
     if let Some((helper, _)) = &install.aur
-        && !helper.installed(fleet.admin())
+        && !helper.installed(aur.admin)
     {
         bail!(
             "system.toml names {helper} as the AUR helper, but {} has no {helper}",
-            fleet.admin().name
+            aur.admin.name
         );
     }
     if !install.repo.is_empty() {
         let args = [&["-S", "--needed", "--noconfirm"], &install.repo[..]].concat();
         cmd::root("pacman", &args)?;
     }
-    if let Some((helper, aur)) = &install.aur {
+    if let Some((helper, names)) = &install.aur {
         cmd::run(
-            As::User(fleet.admin()),
+            As::User(aur.admin),
             helper.command(),
-            &[&["-S", "--needed"], &aur[..]].concat(),
+            &[&["-S", "--needed"], &names[..]].concat(),
         )?;
     }
     Ok(())

@@ -4,7 +4,7 @@ mod pacman;
 
 pub use dpkg::keep_only;
 
-use crate::{cmd, fleet::Fleet};
+use crate::{cmd, user::User};
 use anyhow::{Context, Result, bail};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -18,6 +18,11 @@ const OS_RELEASE: &str = "/etc/os-release";
 pub enum Distro {
     Arch,
     Debian,
+}
+
+pub struct Aur<'a> {
+    pub helper: Option<aur::Helper>,
+    pub admin: &'a User,
 }
 
 impl Distro {
@@ -46,9 +51,9 @@ impl Distro {
         }
     }
 
-    pub fn cannot_install(self, fleet: &Fleet, name: &str) -> Result<Option<String>> {
+    pub fn cannot_install(self, aur: &Aur, name: &str) -> Result<Option<String>> {
         match self {
-            Distro::Arch => pacman::cannot_install(fleet, name),
+            Distro::Arch => pacman::cannot_install(aur, name),
             Distro::Debian => dpkg::cannot_install(name),
         }
     }
@@ -75,16 +80,15 @@ impl Distro {
         }
     }
 
-    pub fn install(self, fleet: &Fleet, names: &[&str]) -> Result<()> {
+    pub fn install(self, aur: &Aur, names: &[&str]) -> Result<()> {
         match self {
-            Distro::Arch => pacman::install(fleet, names),
+            Distro::Arch => pacman::install(aur, names),
             Distro::Debian => dpkg::install(names),
         }
     }
 
-    pub fn uninstall(self, fleet: &Fleet, names: &[&str]) -> Result<()> {
+    pub fn uninstall(self, listed: &BTreeSet<String>, names: &[&str]) -> Result<()> {
         let db = Db::load()?;
-        let listed = fleet.listed_packages();
         let keep: Vec<&str> = db
             .packages
             .iter()

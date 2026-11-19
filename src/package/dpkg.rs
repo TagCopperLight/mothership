@@ -1,9 +1,7 @@
 use super::{Archive, Backup, Db, Distro, Origin, Package};
 use crate::{
     cmd::{self, As},
-    fleet::{self, Fleet},
     parallel,
-    prompt::Prompt,
     systemd::{self, SYSTEM_DIRS, USER_DIRS},
     walk,
 };
@@ -99,7 +97,7 @@ fn claim_written(packages: &mut [Package]) -> Result<()> {
             .chain(names.iter().map(|n| Path::new("/etc/alternatives").join(n)));
         claims.extend(links.map(|link| (target.clone(), link)));
     }
-    for dir in walk::children(Path::new(fleet::ETC))? {
+    for dir in walk::children(Path::new(walk::ETC))? {
         let is_rc = dir
             .file_name()
             .and_then(|n| n.to_str())
@@ -468,9 +466,11 @@ fn unedited(backup: &Backup) -> Result<bool> {
     Ok(bytes.is_some_and(|bytes| crate::hash::md5(&bytes) == backup.md5))
 }
 
-pub fn keep_only(fleet: &Fleet, answer: Option<bool>, prompt: &mut Prompt) -> Result<()> {
+pub fn keep_only(
+    mut keep: BTreeSet<String>,
+    confirm: &mut dyn FnMut() -> Result<bool>,
+) -> Result<()> {
     let db = Db::load()?;
-    let mut keep = fleet.listed_packages();
     keep.extend(db.needing(&runs_the_machine(&db)?));
     let manual = cmd::stdout(As::Root, "apt-mark", &["showmanual"])?;
     let unmark: Vec<&str> = manual.lines().filter(|n| !keep.contains(*n)).collect();
@@ -492,11 +492,7 @@ pub fn keep_only(fleet: &Fleet, answer: Option<bool>, prompt: &mut Prompt) -> Re
     for name in &unneeded {
         println!("  {name}");
     }
-    let confirmed = match answer {
-        Some(answer) => answer,
-        None => prompt.confirm("Remove them")?,
-    };
-    if !confirmed {
+    if !confirm()? {
         return Ok(());
     }
     cmd::root("apt-mark", &[&["auto"], &unmark[..]].concat())?;

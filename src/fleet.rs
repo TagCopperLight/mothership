@@ -5,7 +5,7 @@ use crate::{
     homes,
     ignore::{Ignore, Paths},
     kind::Level,
-    package::aur,
+    package::{self, aur},
     secrets::{self, Keys, Storage},
     style,
     user::{self, User},
@@ -224,7 +224,6 @@ impl Tool {
 pub const TYPES: &str = "types";
 pub const SYSTEM_TOML: &str = "system.toml";
 pub const USER_TOML: &str = "user.toml";
-pub const ETC: &str = "/etc";
 const ETC_DIR: &str = "etc";
 const IGNORE: &str = "ignore.txt";
 const NOT_SECRET: &str = "not-secret.txt";
@@ -461,6 +460,13 @@ impl Fleet {
 
     pub fn packages(&self) -> BTreeSet<String> {
         self.system.packages.iter().cloned().collect()
+    }
+
+    pub fn aur(&self) -> package::Aur<'_> {
+        package::Aur {
+            helper: self.system.aur_helper,
+            admin: self.admin(),
+        }
     }
 
     pub fn listed_packages(&self) -> BTreeSet<String> {

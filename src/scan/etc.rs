@@ -33,12 +33,12 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     let declared = &fleet.etc;
     let declared_paths: HashSet<PathBuf> = declared
         .iter()
-        .map(|rel| Path::new(fleet::ETC).join(rel))
+        .map(|rel| Path::new(walk::ETC).join(rel))
         .collect();
 
     let mut items = Vec::new();
     for rel in declared {
-        let path = Path::new(fleet::ETC).join(rel);
+        let path = Path::new(walk::ETC).join(rel);
         let secret = fleet.secret_etc.contains(rel);
         if secret && !fleet.etc_open() {
             items.push(Item::locked(Kind::Etc, path.display().to_string()));
@@ -83,7 +83,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     for package in &db.packages {
         for backup in &package.backups {
             let path = &backup.path;
-            if let Ok(rel) = path.strip_prefix(fleet::ETC)
+            if let Ok(rel) = path.strip_prefix(walk::ETC)
                 && !declared_paths.contains(path)
                 && !ACCOUNT_FILES.contains(&path.to_string_lossy().as_ref())
             {
@@ -112,14 +112,14 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         .map(|dir| PathBuf::from(dir.trim_end_matches('/')))
         .collect();
     let walk = walk::unknown(
-        Path::new(fleet::ETC),
+        Path::new(walk::ETC),
         &known,
         &known_dirs,
         &systemd::is_enablement,
         &|path: &Path| fleet.ignore.matches(Kind::Etc, &path.display().to_string()),
     )?;
     for path in &walk.unknown {
-        let rel = path.strip_prefix(fleet::ETC)?.to_path_buf();
+        let rel = path.strip_prefix(walk::ETC)?.to_path_buf();
         items.push(
             Item::new(Kind::Etc, Change::Added, path.display().to_string(), "new")
                 .with(Add::CopyEtc {

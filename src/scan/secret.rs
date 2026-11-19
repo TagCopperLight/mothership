@@ -1,5 +1,5 @@
 use crate::{
-    fleet::{self, Fleet, Member},
+    fleet::{Fleet, Member},
     ignore::Paths,
     item::{Change, Item, Secret},
     style, walk,
@@ -17,7 +17,7 @@ pub fn finish(fleet: &Fleet, mut item: Item) -> Item {
         return item;
     };
     let (found, not_secret) = match item.member.map(|i| &fleet.members[i]) {
-        None => (Found::at(&path, Path::new(fleet::ETC)), &fleet.not_secret),
+        None => (Found::at(&path, Path::new(walk::ETC)), &fleet.not_secret),
         Some(member) => {
             let user = member.user();
             let found = user

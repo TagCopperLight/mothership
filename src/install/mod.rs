@@ -90,7 +90,11 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     })?;
     drop(sudo);
     if distro == Distro::Debian {
-        package::keep_only(&Fleet::load()?, flags.remove_unlisted, prompt)?;
+        let listed = Fleet::load()?.listed_packages();
+        package::keep_only(listed, &mut || match flags.remove_unlisted {
+            Some(answer) => Ok(answer),
+            None => prompt.confirm("Remove them"),
+        })?;
     }
     if chroot {
         return boot::setup();

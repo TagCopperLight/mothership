@@ -7,6 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub const ETC: &str = "/etc";
 const READ_LIMIT: u64 = 64 << 20;
 
 pub struct Walk {

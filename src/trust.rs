@@ -274,7 +274,7 @@ fn secrets_of(fleet: &Fleet, target: &Target) -> Result<BTreeMap<String, Source>
         Scope::Root => {
             for file in fleet::etc_files(&type_dir)? {
                 if file.storage == Storage::Encrypted {
-                    let path = Path::new(fleet::ETC).join(&file.rel);
+                    let path = Path::new(walk::ETC).join(&file.rel);
                     all.insert(path.display().to_string(), Source::List(file.source));
                 }
             }

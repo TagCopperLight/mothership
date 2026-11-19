@@ -13,7 +13,7 @@ pub use print::{Columns, heading, line, print_groups, print_section};
 
 use crate::{
     chezmoi,
-    fleet::{self, Fleet, Member},
+    fleet::{Fleet, Member},
     item::{Change, Item, Section},
     kind::Kind,
     later::{self, Later},
@@ -198,7 +198,7 @@ impl<'a> Ships<'a> {
             },
             _ => return Ok(false),
         };
-        if let Ok(rel) = resolved.strip_prefix(fleet::ETC)
+        if let Ok(rel) = resolved.strip_prefix(walk::ETC)
             && self.fleet.etc.contains(rel)
         {
             return Ok(true);

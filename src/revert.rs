@@ -1,7 +1,7 @@
 use crate::{
     chezmoi,
     cmd::{self, As},
-    fleet::{self, Fleet, Manager, Member, Mode, Tool},
+    fleet::{Fleet, Manager, Member, Mode, Tool},
     package::{Archive, Distro},
     tools, walk,
 };
@@ -196,10 +196,10 @@ fn run_machine(fleet: &Fleet, changes: &[&Machine]) -> Result<()> {
         change_etc(fleet, change)?;
     }
     if !install.is_empty() {
-        distro.install(fleet, &install)?;
+        distro.install(&fleet.aur(), &install)?;
     }
     if !uninstall.is_empty() {
-        distro.uninstall(fleet, &uninstall)?;
+        distro.uninstall(&fleet.listed_packages(), &uninstall)?;
     }
     for change in &etc {
         change_etc(fleet, change)?;
@@ -305,7 +305,7 @@ fn change_etc(fleet: &Fleet, change: &Etc) -> Result<()> {
     let path = change.path();
     let run = || match change {
         Etc::Write(_) => {
-            let rel = path.strip_prefix(fleet::ETC)?;
+            let rel = path.strip_prefix(walk::ETC)?;
             let source = fleet.etc_source(rel);
             if fs::symlink_metadata(&source)?.is_symlink() {
                 walk::link(path, &fs::read_link(&source)?)

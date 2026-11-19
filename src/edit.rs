@@ -260,7 +260,7 @@ impl Add {
                 root.run(&own_list(fleet, member)?, &empty, &args)?
             }
             Add::CopyEtc { rel, storage } => {
-                copy_etc(fleet, rel, &Path::new(fleet::ETC).join(rel), *storage)?
+                copy_etc(fleet, rel, &Path::new(walk::ETC).join(rel), *storage)?
             }
             Add::RemoveEtc(rel) => remove_etc(fleet, rel)?,
             Add::Pref {
@@ -399,7 +399,7 @@ fn one_line(line: &str) -> Result<&str> {
 }
 
 fn package_key(fleet: &Fleet, name: &str) -> Result<Key> {
-    let Some(why) = Distro::here()?.cannot_install(fleet, name)? else {
+    let Some(why) = Distro::here()?.cannot_install(&fleet.aur(), name)? else {
         return Ok(Key::Packages);
     };
     println!("  {why}");
