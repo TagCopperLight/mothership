@@ -1,6 +1,6 @@
 use crate::{
     chezmoi,
-    fleet::{Fleet, Manager, Member, Mode, Tool},
+    fleet::{Fleet, Manager, Member, Mode, Table, Tool},
     homes,
     ignore::Level,
     package::Distro,
@@ -31,14 +31,21 @@ pub enum Key {
 }
 
 impl Key {
-    fn path(self) -> Vec<&'static str> {
+    fn path(self) -> (Option<&'static str>, &'static str) {
         match self {
-            Key::Packages => vec!["packages"],
-            Key::BuiltPackages => vec!["built_packages"],
-            Key::Services => vec!["services"],
-            Key::UserServices => vec!["user_services"],
-            Key::Groups => vec!["groups"],
-            Key::Tools(manager) => vec!["tools", manager.name()],
+            Key::Packages => (None, "packages"),
+            Key::BuiltPackages => (None, "built_packages"),
+            Key::Services => (None, "services"),
+            Key::UserServices => (None, "user_services"),
+            Key::Groups => (None, "groups"),
+            Key::Tools(manager) => (Some("tools"), manager.name()),
+        }
+    }
+
+    fn dotted(self) -> String {
+        match self.path() {
+            (Some(table), name) => format!("{table}.{name}"),
+            (None, name) => name.into(),
         }
     }
 
@@ -86,7 +93,7 @@ pub enum Add {
     },
     Forget(PathBuf),
     CopyEtc {
-        path: PathBuf,
+        rel: PathBuf,
         storage: Storage,
     },
     RemoveEtc(PathBuf),
@@ -116,18 +123,14 @@ impl Add {
             Add::ListPackage(_) => "add it to `packages` in system.toml".into(),
             Add::UnlistPackage(_) => "remove it from system.toml".into(),
             Add::Declare { key, .. } => {
-                format!("add it to `{}` in {}", key.path().join("."), key.file())
+                format!("add it to `{}` in {}", key.dotted(), key.file())
             }
             Add::DeclareTool { manager, .. } => {
-                let path = Key::Tools(*manager).path().join(".");
+                let path = Key::Tools(*manager).dotted();
                 format!("write this machine's source into `{path}` in user.toml")
             }
             Add::Undeclare { key, .. } => {
-                format!(
-                    "remove it from `{}` in {}",
-                    key.path().join("."),
-                    key.file()
-                )
+                format!("remove it from `{}` in {}", key.dotted(), key.file())
             }
             Add::UndeclareInstaller(_) => "remove its installer from user.toml".into(),
             Add::Shell(shell) => format!("make {shell} the user's shell"),
@@ -252,8 +255,10 @@ impl Add {
                 let args = ["forget", "--force", &path.to_string_lossy()];
                 root.run(&own_list(fleet, member)?, &empty, &args)?
             }
-            Add::CopyEtc { path, storage } => copy_etc(fleet, etc_rel(path), path, *storage)?,
-            Add::RemoveEtc(path) => remove_etc(fleet, etc_rel(path))?,
+            Add::CopyEtc { rel, storage } => {
+                copy_etc(fleet, rel, &Path::new("/etc").join(rel), *storage)?
+            }
+            Add::RemoveEtc(rel) => remove_etc(fleet, rel)?,
             Add::Pref {
                 user_js,
                 key,
@@ -393,11 +398,14 @@ fn package_key(fleet: &Fleet, name: &str) -> Result<Key> {
     Ok(Key::BuiltPackages)
 }
 
-fn file(fleet: &Fleet, member: Option<&Member>, key: Key) -> Result<(PathBuf, Vec<Vec<String>>)> {
+fn file(fleet: &Fleet, member: Option<&Member>, key: Key) -> Result<(PathBuf, Vec<Table>)> {
     match (key.level(), member) {
-        (Level::Machine, _) => Ok((fleet.system_path(), fleet.tables.clone())),
-        (Level::User, Some(member)) => Ok((member.path(), vec![vec![]])),
-        (Level::User, None) => bail!("`{}` belongs to a user", key.path().join(".")),
+        (Level::Machine, _) => {
+            let tables = [vec![Table::Top], fleet.blocks.clone()].concat();
+            Ok((fleet.system_path(), tables))
+        }
+        (Level::User, Some(member)) => Ok((member.path(), vec![Table::Top])),
+        (Level::User, None) => bail!("`{}` belongs to a user", key.dotted()),
     }
 }
 
@@ -407,16 +415,15 @@ fn undeclare(fleet: &Fleet, member: Option<&Member>, keys: &[Key], name: &str) -
         let mut found = false;
         for table in &tables {
             for key in keys {
-                if let Some(array) = find_array(doc, table, &key.path()) {
+                let (parent, last) = key.path();
+                let path: Vec<&str> = parent.into_iter().chain([last]).collect();
+                if let Some(array) = find_array(doc, table, &path) {
                     found |= remove(array, name);
                 }
             }
         }
         if !found {
-            let keys: Vec<String> = keys
-                .iter()
-                .map(|k| format!("`{}`", k.path().join(".")))
-                .collect();
+            let keys: Vec<String> = keys.iter().map(|k| format!("`{}`", k.dotted())).collect();
             bail!(
                 "{name} is in no {} of {}",
                 keys.join(" or "),
@@ -471,10 +478,9 @@ fn edit_toml(path: &Path, change: impl FnOnce(&mut DocumentMut) -> Result<()>) -
 }
 
 fn array(doc: &mut DocumentMut, key: Key) -> Result<&mut Array> {
-    let path = key.path();
-    let (last, parents) = path.split_last().expect("paths are not empty");
+    let (parent, name) = key.path();
     let mut table = doc.as_table_mut();
-    for parent in parents {
+    if let Some(parent) = parent {
         table = table
             .entry(parent)
             .or_insert(toml_edit::table())
@@ -482,25 +488,15 @@ fn array(doc: &mut DocumentMut, key: Key) -> Result<&mut Array> {
             .with_context(|| format!("`{parent}` in {} is not a table", key.file()))?;
     }
     table
-        .entry(last)
+        .entry(name)
         .or_insert(value(Array::new()))
         .as_array_mut()
-        .with_context(|| {
-            format!(
-                "`{}` in {} is not an array",
-                key.path().join("."),
-                key.file()
-            )
-        })
+        .with_context(|| format!("`{}` in {} is not an array", key.dotted(), key.file()))
 }
 
-fn find_array<'a>(
-    doc: &'a mut DocumentMut,
-    table: &[String],
-    key: &[&str],
-) -> Option<&'a mut Array> {
+fn find_array<'a>(doc: &'a mut DocumentMut, table: &Table, key: &[&str]) -> Option<&'a mut Array> {
     let mut item = doc.as_item_mut();
-    for part in table.iter().map(String::as_str).chain(key.iter().copied()) {
+    for part in table.path().into_iter().chain(key.iter().copied()) {
         item = item.get_mut(part)?;
     }
     item.as_array_mut()
@@ -567,11 +563,6 @@ fn names(entry: &Value, name: &str) -> bool {
             .and_then(|t| t.get("name"))
             .and_then(Value::as_str)
             == Some(name)
-}
-
-fn etc_rel(path: &Path) -> &Path {
-    path.strip_prefix("/etc")
-        .expect("the /etc scan reports paths under /etc")
 }
 
 fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage) -> Result<()> {
@@ -667,7 +658,7 @@ fn remove_etc(fleet: &Fleet, rel: &Path) -> Result<()> {
     }
     let rel = rel.to_string_lossy();
     edit_toml(&fleet.system_path(), |doc| {
-        for table in &fleet.tables[1..] {
+        for table in &fleet.blocks {
             if let Some(array) = find_array(doc, table, &["etc"]) {
                 remove(array, &rel);
             }

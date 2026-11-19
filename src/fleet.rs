@@ -26,7 +26,7 @@ pub struct Fleet {
     pub type_name: String,
     pub type_dir: PathBuf,
     pub system: System,
-    pub tables: Vec<Vec<String>>,
+    pub blocks: Vec<Table>,
     pub etc: BTreeSet<PathBuf>,
     pub etc_elsewhere: BTreeSet<PathBuf>,
     pub secret_etc: BTreeSet<PathBuf>,
@@ -40,6 +40,23 @@ struct Local {
     admin: User,
     keys: Keys,
     etc_open: bool,
+}
+
+#[derive(Clone)]
+pub enum Table {
+    Top,
+    Hardware(Hardware),
+    Option(String),
+}
+
+impl Table {
+    pub fn path(&self) -> Vec<&str> {
+        match self {
+            Table::Top => Vec::new(),
+            Table::Hardware(piece) => vec!["hardware", piece.name()],
+            Table::Option(name) => vec!["options", name],
+        }
+    }
 }
 
 pub struct Member {
@@ -290,7 +307,7 @@ impl Fleet {
         let system_path = type_dir.join("system.toml");
         let mut system: System = read_toml(&system_path)?;
 
-        let mut tables = vec![vec![]];
+        let mut blocks = Vec::new();
         let mut active = Vec::new();
         for piece in hardware {
             let block = system.hardware.remove(piece).with_context(|| {
@@ -300,7 +317,7 @@ impl Fleet {
                     system_path.display()
                 )
             })?;
-            tables.push(vec!["hardware".into(), piece.name().into()]);
+            blocks.push(Table::Hardware(*piece));
             active.push(block);
         }
         for option in options {
@@ -310,7 +327,7 @@ impl Fleet {
                     system_path.display()
                 )
             })?;
-            tables.push(vec!["options".into(), option.clone()]);
+            blocks.push(Table::Option(option.clone()));
             active.push(block);
         }
         let inactive: Vec<&Block> = system
@@ -377,7 +394,7 @@ impl Fleet {
             type_name: device_type.to_owned(),
             type_dir,
             system,
-            tables,
+            blocks,
             etc,
             etc_elsewhere,
             secret_etc,

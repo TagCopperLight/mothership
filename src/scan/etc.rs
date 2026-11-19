@@ -49,7 +49,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
             Compare::Differs => Some(
                 item(Change::Edited, "edited")
                     .with(Add::CopyEtc {
-                        path: path.clone(),
+                        rel: rel.clone(),
                         storage: Storage::Clear,
                     })
                     .reverting(Etc::Write(path.clone()))
@@ -61,7 +61,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
             ),
             Compare::Missing => Some(
                 item(Change::Removed, "deleted")
-                    .with(Add::RemoveEtc(path.clone()))
+                    .with(Add::RemoveEtc(rel.clone()))
                     .reverting(Etc::Write(path.clone()))
                     .showing(Preview::Contents(source)),
             ),
@@ -80,11 +80,11 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     for package in &db.packages {
         for backup in &package.backups {
             let path = &backup.path;
-            if path.starts_with("/etc")
+            if let Ok(rel) = path.strip_prefix("/etc")
                 && !declared_paths.contains(path)
                 && !ACCOUNT_FILES.contains(&path.to_string_lossy().as_ref())
             {
-                changed.extend(edited(package, backup)?);
+                changed.extend(edited(package, backup, rel)?);
             }
         }
     }
@@ -119,16 +119,19 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                 .matches_subject(Kind::Etc, &path.display().to_string())
         },
     )?;
-    items.extend(walk.unknown.iter().map(|path| {
-        Item::new(Kind::Etc, Change::Added, path.display().to_string(), "new")
-            .with(Add::CopyEtc {
-                path: path.clone(),
-                storage: Storage::Clear,
-            })
-            .reverting(Etc::Delete(path.clone()))
-            .showing(Preview::Contents(path.clone()))
-            .guessing(path)
-    }));
+    for path in &walk.unknown {
+        let rel = path.strip_prefix("/etc")?.to_path_buf();
+        items.push(
+            Item::new(Kind::Etc, Change::Added, path.display().to_string(), "new")
+                .with(Add::CopyEtc {
+                    rel,
+                    storage: Storage::Clear,
+                })
+                .reverting(Etc::Delete(path.clone()))
+                .showing(Preview::Contents(path.clone()))
+                .guessing(path),
+        );
+    }
     items.extend(walk.unreadable.into_iter().map(|place| {
         Item::new(
             Kind::Etc,
@@ -166,7 +169,7 @@ fn compare(fleet: &Fleet, rel: &Path, path: &Path) -> Result<Compare> {
     })
 }
 
-fn edited(package: &Package, backup: &Backup) -> Result<Option<Item>> {
+fn edited(package: &Package, backup: &Backup, rel: &Path) -> Result<Option<Item>> {
     let path = &backup.path;
     let item = |change, detail| Item::new(Kind::Etc, change, path.display().to_string(), detail);
     let bytes = match fs::read(path) {
@@ -181,7 +184,7 @@ fn edited(package: &Package, backup: &Backup) -> Result<Option<Item>> {
         return Ok(None);
     }
     let item = item(Change::Edited, "edited").with(Add::CopyEtc {
-        path: path.clone(),
+        rel: rel.to_path_buf(),
         storage: Storage::Clear,
     });
     let item = match backup.origin {

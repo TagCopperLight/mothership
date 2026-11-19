@@ -296,7 +296,7 @@ pub fn prepare(disk: &Disk, prompt: &mut Prompt) -> Result<()> {
     }
     let name = Path::new(path)
         .file_name()
-        .expect("lsblk names disks by path")
+        .with_context(|| format!("{path} names no device"))?
         .to_string_lossy()
         .into_owned();
     if prompt.line(&format!("Type {name} to go on:"))? != name {
