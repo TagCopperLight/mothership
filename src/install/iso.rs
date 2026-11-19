@@ -7,7 +7,7 @@ use super::{
     repo,
 };
 use crate::{
-    cmd::{self, As, Cmd},
+    cmd::{self, As},
     file,
     fleet::{self, Repo},
     package::Distro,
@@ -139,6 +139,6 @@ fn pull_as_owner(origin: &str, copy: &Path, token: Option<&str>) -> Result<()> {
         if let Some(token) = token {
             git.env("GH_TOKEN", token);
         }
-        Cmd::from(git)
+        git
     })
 }

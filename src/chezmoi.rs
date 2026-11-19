@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{self, As, Cmd},
+    cmd::{self, As},
     secrets,
     snapshot::Snapshot,
     user::{self, User},
@@ -120,7 +120,7 @@ impl Root {
         recipients: Option<&str>,
         snapshot: &Snapshot,
         args: &[S],
-    ) -> Result<(Cmd, Run)> {
+    ) -> Result<(Command, Run)> {
         let dir = TempDir::new()?;
         let mut config = ChezmoiConfig {
             identity: dir.path().join("key.txt"),
@@ -137,7 +137,7 @@ impl Root {
         let config_path = dir.path().join("chezmoi.toml");
         fs::write(&config_path, config_text(&config)?)?;
         let home = self.user.home.to_string_lossy().into_owned();
-        let mut command = Cmd::from(Command::new("unshare"));
+        let mut command = Command::new("unshare");
         command
             .args(["--mount", "--propagation", "private", "--", "sh", "-c"])
             .arg("mount --bind \"$1\" \"$2\" && shift 2 && exec \"$@\"")

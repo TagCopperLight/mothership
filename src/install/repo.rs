@@ -3,11 +3,11 @@ use super::{
     net::{self, Needs, Scheme},
 };
 use crate::{
-    cmd::{self, As, Cmd},
+    cmd::{self, As},
     package::Distro,
 };
 use anyhow::{Context, Result, bail};
-use std::{fs, path::Path};
+use std::{fs, path::Path, process::Command};
 
 pub const GITHUB: &str = "https://github.com";
 const GH_LOGIN: [&str; 4] = ["auth", "login", "--hostname", "github.com"];
@@ -106,7 +106,7 @@ pub fn log_in(who: As, token: &str) -> Result<()> {
     })
 }
 
-pub fn origin(dir: &Path, git: impl Fn() -> Cmd) -> Result<String> {
+pub fn origin(dir: &Path, git: impl Fn() -> Command) -> Result<String> {
     let path = dir.to_string_lossy();
     let get = ["-C", &path, "remote", "get-url", "origin"];
     let mut command = git();
@@ -116,7 +116,7 @@ pub fn origin(dir: &Path, git: impl Fn() -> Cmd) -> Result<String> {
         .to_owned())
 }
 
-pub fn pull(dir: &Path, expected: Option<&str>, git: impl Fn() -> Cmd) -> Result<()> {
+pub fn pull(dir: &Path, expected: Option<&str>, git: impl Fn() -> Command) -> Result<()> {
     let path = dir.to_string_lossy();
     let origin = origin(dir, &git)?;
     let origin = origin.as_str();

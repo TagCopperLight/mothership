@@ -3,7 +3,6 @@ use anyhow::{Context, Result, bail};
 use std::{
     ffi::OsStr,
     io::{self, Read, Write},
-    ops::{Deref, DerefMut},
     os::unix::process::CommandExt,
     process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio},
     sync::mpsc,
@@ -12,6 +11,7 @@ use std::{
 };
 
 const USER_QUERY_LIMIT: Duration = Duration::from_secs(60);
+const USER_RUN_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
 const DRAIN_AFTER_EXIT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy)]
@@ -20,38 +20,10 @@ pub enum As<'a> {
     User(&'a User),
 }
 
-pub struct Cmd {
-    command: Command,
-    user: bool,
-}
-
-impl Deref for Cmd {
-    type Target = Command;
-
-    fn deref(&self) -> &Command {
-        &self.command
-    }
-}
-
-impl DerefMut for Cmd {
-    fn deref_mut(&mut self) -> &mut Command {
-        &mut self.command
-    }
-}
-
-impl From<Command> for Cmd {
-    fn from(command: Command) -> Cmd {
-        Cmd {
-            command,
-            user: false,
-        }
-    }
-}
-
 impl As<'_> {
-    pub fn command<S: AsRef<OsStr>>(self, program: &str, args: &[S]) -> Cmd {
-        let mut cmd = match self {
-            As::Root => Cmd::from(Command::new(program)),
+    pub fn command<S: AsRef<OsStr>>(self, program: &str, args: &[S]) -> Command {
+        let mut command = match self {
+            As::Root => Command::new(program),
             As::User(user) => {
                 let mut runuser = Command::new("runuser");
                 runuser
@@ -68,14 +40,18 @@ impl As<'_> {
                         _ => Ok(()),
                     });
                 }
-                Cmd {
-                    command: runuser,
-                    user: true,
-                }
+                runuser
             }
         };
-        cmd.args(args);
-        cmd
+        command.args(args);
+        command
+    }
+
+    fn limit(self, user_limit: Duration) -> Option<Duration> {
+        match self {
+            As::Root => None,
+            As::User(_) => Some(user_limit),
+        }
     }
 }
 
@@ -84,24 +60,39 @@ pub fn stdout<S: AsRef<OsStr>>(who: As, program: &str, args: &[S]) -> Result<Str
 }
 
 pub fn bytes<S: AsRef<OsStr>>(who: As, program: &str, args: &[S]) -> Result<Vec<u8>> {
-    output(who.command(program, args), program, args)
+    let limit = who.limit(USER_QUERY_LIMIT);
+    capture(who.command(program, args), program, args, limit, None)
 }
 
-pub fn output<S: AsRef<OsStr>>(
-    command: impl Into<Cmd>,
+pub fn bytes_allowing_exit<S: AsRef<OsStr>>(
+    who: As,
     program: &str,
     args: &[S],
+    code: i32,
 ) -> Result<Vec<u8>> {
-    let mut cmd = command.into();
-    let limit = cmd.user.then(|| Instant::now() + USER_QUERY_LIMIT);
-    let child = cmd
+    let limit = who.limit(USER_QUERY_LIMIT);
+    capture(who.command(program, args), program, args, limit, Some(code))
+}
+
+pub fn output<S: AsRef<OsStr>>(command: Command, program: &str, args: &[S]) -> Result<Vec<u8>> {
+    capture(command, program, args, None, None)
+}
+
+fn capture<S: AsRef<OsStr>>(
+    mut command: Command,
+    program: &str,
+    args: &[S],
+    limit: Option<Duration>,
+    also_ok: Option<i32>,
+) -> Result<Vec<u8>> {
+    let child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("running {program}"))?;
     let (status, out, err) = finish(child, limit, Sink::Keep)?;
-    if !status.success() {
+    if !status.success() && status.code() != also_ok {
         bail!(
             "{program} {} failed: {}",
             shown(args),
@@ -116,7 +107,12 @@ pub fn found(who: As, program: &str) -> bool {
 }
 
 pub fn run<S: AsRef<OsStr>>(who: As, program: &str, args: &[S]) -> Result<()> {
-    status(who.command(program, args), program, args)
+    show(
+        who.command(program, args),
+        program,
+        args,
+        who.limit(USER_RUN_LIMIT),
+    )
 }
 
 pub fn root<S: AsRef<OsStr>>(program: &str, args: &[S]) -> Result<()> {
@@ -130,16 +126,25 @@ pub fn with_input<S: AsRef<OsStr>>(who: As, program: &str, args: &[S], input: &[
     let previous = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
     let written = child.stdin.take().expect("piped above").write_all(input);
     unsafe { libc::signal(libc::SIGPIPE, previous) };
-    let (status, ..) = finish(child, None, Sink::Show)?;
+    let (status, ..) = finish(child, who.limit(USER_RUN_LIMIT), Sink::Show)?;
     if !status.success() {
         bail!("{program} {} failed", shown(args));
     }
     written.with_context(|| format!("writing to {program}"))
 }
 
-pub fn status<S: AsRef<OsStr>>(command: impl Into<Cmd>, program: &str, args: &[S]) -> Result<()> {
-    let child = spawn(command.into(), program)?;
-    let (status, ..) = finish(child, None, Sink::Show)?;
+pub fn status<S: AsRef<OsStr>>(command: Command, program: &str, args: &[S]) -> Result<()> {
+    show(command, program, args, None)
+}
+
+fn show<S: AsRef<OsStr>>(
+    command: Command,
+    program: &str,
+    args: &[S],
+    limit: Option<Duration>,
+) -> Result<()> {
+    let child = spawn(command, program)?;
+    let (status, ..) = finish(child, limit, Sink::Show)?;
     if !status.success() {
         bail!("{program} {} failed", shown(args));
     }
@@ -151,7 +156,7 @@ fn shown<S: AsRef<OsStr>>(args: &[S]) -> String {
     style::clean(&args.join(" "))
 }
 
-fn spawn(mut cmd: Cmd, program: &str) -> Result<Child> {
+fn spawn(mut cmd: Command, program: &str) -> Result<Child> {
     cmd.spawn().with_context(|| format!("running {program}"))
 }
 
@@ -169,7 +174,7 @@ enum Chunk {
 
 fn finish(
     mut child: Child,
-    limit: Option<Instant>,
+    limit: Option<Duration>,
     sink: Sink,
 ) -> Result<(ExitStatus, Vec<u8>, Vec<u8>)> {
     let (tx, chunks) = mpsc::channel();
@@ -188,11 +193,11 @@ fn finish(
     thread::spawn(move || done.send(child.wait()));
     let status = match limit {
         None => exited.recv()?,
-        Some(limit) => match exited.recv_timeout(limit.saturating_duration_since(Instant::now())) {
+        Some(limit) => match exited.recv_timeout(limit) {
             Ok(status) => status,
             Err(_) => {
                 unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
-                bail!("it took longer than {} s", USER_QUERY_LIMIT.as_secs());
+                bail!("it took longer than {} s", limit.as_secs());
             }
         },
     }?;
@@ -273,3 +278,7 @@ fn show_lines(pending: &mut Vec<u8>, to_err: bool, all: bool) {
     };
     drop(written);
 }
+
+#[cfg(test)]
+#[path = "../tests/cmd.rs"]
+mod tests;

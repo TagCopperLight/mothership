@@ -4,7 +4,7 @@ use crate::{
     parallel,
 };
 use anyhow::{Context, Result, bail};
-use std::{collections::BTreeSet, fs, path::Path, process::Command};
+use std::{collections::BTreeSet, fs, path::Path};
 
 const LOCAL: &str = "/var/lib/pacman/local";
 const CACHE: &str = "/var/cache/pacman/pkg";
@@ -192,17 +192,7 @@ pub fn uninstall(keep: &[&str], names: &[&str]) -> Result<BTreeSet<String>> {
 }
 
 fn remove_unneeded(names: &[&str]) -> Result<BTreeSet<String>> {
-    let out = Command::new("pacman")
-        .arg("-Qdtq")
-        .output()
-        .context("running pacman")?;
-    if !matches!(out.status.code(), Some(0 | 1)) {
-        bail!(
-            "pacman -Qdtq failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-    let unneeded = String::from_utf8(out.stdout)?;
+    let unneeded = String::from_utf8(cmd::bytes_allowing_exit(As::Root, "pacman", &["-Qdtq"], 1)?)?;
     let unneeded: Vec<&str> = names
         .iter()
         .copied()
