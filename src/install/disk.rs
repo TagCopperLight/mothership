@@ -435,11 +435,10 @@ fn free_space(disk: &Device) -> Result<Space> {
         bound("--first-aligned-in-largest")?,
         bound("--end-of-largest")?,
     );
-    let boot_end = start + BOOT_SIZE / sector - 1;
-    if end < boot_end || (end - boot_end) * sector < ROOT_MIN {
+    let Some(boot_end) = boot_end(start, end, sector) else {
         let needed = (BOOT_SIZE + ROOT_MIN) / GIB;
         bail!("{path}'s largest free space is under {needed} GiB: shrink Windows first");
-    }
+    };
     let next = disk
         .children
         .iter()
@@ -453,6 +452,11 @@ fn free_space(disk: &Device) -> Result<Space> {
         boot_end,
         end,
     })
+}
+
+fn boot_end(start: u64, end: u64, sector: u64) -> Option<u64> {
+    let boot_end = start + BOOT_SIZE / sector - 1;
+    (end >= boot_end && (end - boot_end) * sector >= ROOT_MIN).then_some(boot_end)
 }
 
 fn beside(disk: &str, esp: String, space: Space) -> Result<Partitions> {

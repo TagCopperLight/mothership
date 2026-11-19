@@ -69,3 +69,14 @@ fn a_disk_in_use_is_refused() {
         Some("crypt is open as /dev/mapper/old")
     );
 }
+
+#[test]
+fn the_free_space_holds_a_1_gib_boot_and_at_least_20_gib_of_root() {
+    for sector in [512, 4096] {
+        let (start, boot, root) = (2048, GIB / sector, ROOT_MIN / sector);
+        let fits = start + boot + root - 1;
+        assert_eq!(boot_end(start, fits, sector), Some(start + boot - 1));
+        assert_eq!(boot_end(start, fits - 1, sector), None);
+        assert_eq!(boot_end(start, start, sector), None);
+    }
+}
