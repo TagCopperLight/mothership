@@ -25,7 +25,7 @@ fn a_secret_keeps_its_preview() {
             &not_secret,
             Item::new(Kind::Home, Change::Added, "x", "new")
                 .showing(Preview::Contents(path.to_path_buf())),
-            &Found::at(path, dir.path()),
+            &Found::at(path, Some(dir.path())),
         )
     };
     let secret = item(&key);
@@ -41,9 +41,9 @@ fn a_folder_is_secret_when_one_of_its_files_is() {
     fs::create_dir_all(app.join("deep")).unwrap();
     fs::write(app.join("settings"), "").unwrap();
     fs::write(app.join("deep/token"), "").unwrap();
-    assert!(!Found::at(&app, dir.path()).private());
+    assert!(!Found::at(&app, Some(dir.path())).private());
     owner_only(&app.join("deep/token"));
-    assert!(Found::at(&app, dir.path()).private());
+    assert!(Found::at(&app, Some(dir.path())).private());
 }
 
 #[test]
@@ -53,14 +53,29 @@ fn a_file_in_a_closed_folder_is_secret() {
     let token = dir.path().join(".config/app/token");
     fs::create_dir_all(token.parent().unwrap()).unwrap();
     fs::write(&token, "").unwrap();
-    assert!(!Found::at(&token, dir.path()).private());
+    assert!(!Found::at(&token, Some(dir.path())).private());
     let app = token.parent().unwrap();
     fs::set_permissions(app, fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(Found::at(&token, dir.path()).private());
-    assert!(Found::at(&dir.path().join(".config"), dir.path()).private());
+    assert!(Found::at(&token, Some(dir.path())).private());
+    assert!(Found::at(&dir.path().join(".config"), Some(dir.path())).private());
     fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
     fs::set_permissions(app, fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(!Found::at(&token, dir.path()).private());
+    assert!(!Found::at(&token, Some(dir.path())).private());
+}
+
+#[test]
+fn a_tracked_file_counts_only_its_own_rights() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::TempDir::new().unwrap();
+    let font = dir.path().join(".local/share/fonts/a.otf");
+    fs::create_dir_all(font.parent().unwrap()).unwrap();
+    fs::write(&font, "").unwrap();
+    let share = dir.path().join(".local/share");
+    fs::set_permissions(&share, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(Found::at(&font, Some(dir.path())).private());
+    assert!(!Found::at(&font, None).private());
+    owner_only(&font);
+    assert!(Found::at(&font, None).private());
 }
 
 #[test]
@@ -74,7 +89,7 @@ fn not_secret_txt_clears_the_guess() {
         judge_secret(
             &not_secret,
             Item::new(Kind::Home, Change::Added, subject, "new"),
-            &Found::at(&settings, dir.path()),
+            &Found::at(&settings, Some(dir.path())),
         )
     };
     assert_eq!(item("~/.config/zed/settings.json").secret, Secret::No);

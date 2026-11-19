@@ -95,7 +95,7 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
         items.push(if encrypted.contains(&path) {
             item.secret(Secret::Fleet)
         } else {
-            item.guessing(&path)
+            item.guessing_tracked(&path)
         });
         listed.insert(path);
     }

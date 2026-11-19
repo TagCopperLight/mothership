@@ -2,7 +2,7 @@ use crate::{
     file,
     fleet::{Fleet, Member},
     ignore::Paths,
-    item::{Change, Item, Secret},
+    item::{Change, Guess, Item, Secret},
     style, walk,
 };
 use anyhow::Result;
@@ -14,15 +14,23 @@ use std::{
 };
 
 pub fn finish(fleet: &Fleet, mut item: Item) -> Item {
-    let Some(path) = item.guess.take() else {
+    let Some(guess) = item.guess.take() else {
         return item;
     };
+    let (path, folders) = match &guess {
+        Guess::New(path) => (path, true),
+        Guess::Tracked(path) => (path, false),
+    };
     let (found, not_secret) = match item.member.map(|i| &fleet.members[i]) {
-        None => (Found::at(&path, Path::new(file::ETC)), &fleet.not_secret),
+        None => {
+            let base = folders.then_some(Path::new(file::ETC));
+            (Found::at(path, base), &fleet.not_secret)
+        }
         Some(member) => {
             let user = member.user();
+            let base = folders.then_some(user.home.as_path());
             let found = user
-                .with_rights(|| Ok(Found::at(&path, &user.home)))
+                .with_rights(|| Ok(Found::at(path, base)))
                 .unwrap_or_else(Found::Unreadable);
             (found, &member.not_secret)
         }
@@ -42,7 +50,7 @@ enum Found {
 }
 
 impl Found {
-    fn at(path: &Path, base: &Path) -> Found {
+    fn at(path: &Path, base: Option<&Path>) -> Found {
         let found = match fs::symlink_metadata(path) {
             Err(e) if e.kind() == ErrorKind::NotFound => return Found::Missing,
             found => found,
@@ -51,16 +59,20 @@ impl Found {
             if meta.is_symlink() {
                 return Ok(Found::Link(fs::read_link(path)?));
             }
-            let hidden = hidden_below(path, base)?;
+            let hidden = match base {
+                Some(base) => hidden_below(path, base)?,
+                None => false,
+            };
             if !meta.is_dir() {
                 return Ok(Found::File {
                     private: hidden || walk::private(&meta),
                 });
             }
             let files = walk::files_with_metadata(path)?;
-            let mut private = hidden || closed(&meta);
+            let mut private = hidden || (base.is_some() && closed(&meta));
             for (rel, meta) in &files {
-                private |= walk::private(meta) || hidden_below(&path.join(rel), path)?;
+                private |=
+                    walk::private(meta) || (base.is_some() && hidden_below(&path.join(rel), path)?);
             }
             Ok(Found::Folder {
                 files: files.len(),
@@ -107,7 +119,7 @@ fn closed(dir: &fs::Metadata) -> bool {
 pub fn looks_secret(member: &Member, item: Item, path: &Path) -> Item {
     let user = member.user();
     let found = user
-        .with_rights(|| Ok(Found::at(path, &user.home)))
+        .with_rights(|| Ok(Found::at(path, None)))
         .unwrap_or_else(Found::Unreadable);
     judge_secret(&member.not_secret, item, &found)
 }

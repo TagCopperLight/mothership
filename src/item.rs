@@ -58,6 +58,11 @@ pub enum Adding {
     Never,
 }
 
+pub enum Guess {
+    New(PathBuf),
+    Tracked(PathBuf),
+}
+
 pub struct Item {
     pub kind: Kind,
     pub change: Change,
@@ -71,7 +76,7 @@ pub struct Item {
     pub revert: Option<Revert>,
     pub preview: Preview,
     pub seen: Seen,
-    pub guess: Option<PathBuf>,
+    pub guess: Option<Guess>,
 }
 
 impl Item {
@@ -142,7 +147,12 @@ impl Item {
     }
 
     pub fn guessing(mut self, path: &Path) -> Self {
-        self.guess = Some(path.to_path_buf());
+        self.guess = Some(Guess::New(path.to_path_buf()));
+        self
+    }
+
+    pub fn guessing_tracked(mut self, path: &Path) -> Self {
+        self.guess = Some(Guess::Tracked(path.to_path_buf()));
         self
     }
 
