@@ -204,6 +204,17 @@ fn writes_over_a_file_only_while_it_is_as_apply_or_its_package_left_it() {
         )
         .unwrap();
     assert!(!edited_package_file);
+
+    let restored_by_hand = record(|r| {
+        r.etc.insert(path.clone(), md5("fleet"));
+    })
+    .fleet_changed(
+        &Etc::Write(path.clone()).into(),
+        None,
+        &shipping(&path, "old"),
+    )
+    .unwrap();
+    assert!(!restored_by_hand);
 }
 
 #[test]

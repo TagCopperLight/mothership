@@ -93,20 +93,25 @@ fn in_repos() -> Result<BTreeSet<String>> {
         .collect())
 }
 
-pub fn cannot_install(aur: &Aur, name: &str) -> Result<Option<String>> {
-    if in_repos()?.contains(name) {
-        return Ok(None);
+pub fn cannot_install<'a>(aur: &Aur, names: &[&'a str]) -> Result<Vec<(&'a str, String)>> {
+    let repos = in_repos()?;
+    let mut missing = Vec::new();
+    for &name in names.iter().filter(|name| !repos.contains(**name)) {
+        let why = match aur.helper {
+            None => "system.toml sets no aur_helper".to_owned(),
+            Some(helper) => {
+                match cmd::stdout(As::User(aur.admin), helper.command(), &["-Si", name]) {
+                    Ok(_) => continue,
+                    Err(e) => format!("{e:#}"),
+                }
+            }
+        };
+        missing.push((
+            name,
+            format!("It is in neither pacman's repos nor the AUR: {why}"),
+        ));
     }
-    let why = match aur.helper {
-        None => "system.toml sets no aur_helper".to_owned(),
-        Some(helper) => match cmd::stdout(As::User(aur.admin), helper.command(), &["-Si", name]) {
-            Ok(_) => return Ok(None),
-            Err(e) => format!("{e:#}"),
-        },
-    };
-    Ok(Some(format!(
-        "It is in neither pacman's repos nor the AUR: {why}"
-    )))
+    Ok(missing)
 }
 
 pub fn shipped(archive: &Path, member: &Path) -> Result<Vec<u8>> {
@@ -180,8 +185,17 @@ fn split_install<'a>(
     })
 }
 
-pub fn uninstall(names: &[&str]) -> Result<BTreeSet<String>> {
+pub fn uninstall(keep: &[&str], names: &[&str]) -> Result<BTreeSet<String>> {
+    if !keep.is_empty() {
+        cmd::root("pacman", &[&["-D", "--asexplicit"], keep].concat())?;
+    }
     cmd::root("pacman", &[&["-D", "--asdeps"], names].concat())?;
+    super::or_restore(remove_unneeded(names), || {
+        cmd::root("pacman", &[&["-D", "--asexplicit"], names].concat())
+    })
+}
+
+fn remove_unneeded(names: &[&str]) -> Result<BTreeSet<String>> {
     let out = Command::new("pacman")
         .arg("-Qdtq")
         .output()

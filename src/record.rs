@@ -80,9 +80,10 @@ impl Record {
             Machine::Unit(Unit::Disable(unit)) => self.services.contains(unit),
             Machine::Etc(Etc::Write(path)) => match hash(path)? {
                 None => !self.etc.contains_key(path),
-                Some(actual) => {
-                    self.etc.get(path) == Some(&actual) || shipped(db, path) == Some(&actual)
-                }
+                Some(actual) => match self.etc.get(path) {
+                    Some(written) => *written == actual,
+                    None => shipped(db, path) == Some(&actual),
+                },
             },
             Machine::Etc(Etc::Restore { path, .. }) => self.unchanged(path)?,
             Machine::Etc(Etc::Delete(path)) if path.is_dir() => {

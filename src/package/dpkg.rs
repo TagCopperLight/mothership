@@ -389,12 +389,21 @@ fn is_auto(auto: &BTreeSet<(String, String)>, name: &str, arch: &str) -> bool {
         .any(|(n, a)| n == name && (a == arch || arch == "all"))
 }
 
-pub fn cannot_install(name: &str) -> Result<Option<String>> {
-    let offered = cmd::stdout(As::Root, "apt-cache", &["madison", name])?;
-    Ok(offered
-        .trim()
-        .is_empty()
-        .then(|| "It is in none of apt's sources.".to_owned()))
+pub fn cannot_install<'a>(names: &[&'a str]) -> Result<Vec<(&'a str, String)>> {
+    let out = cmd::stdout(As::Root, "apt-cache", &[&["madison"], names].concat())?;
+    let offered = offered(&out);
+    Ok(names
+        .iter()
+        .filter(|name| !offered.contains(**name))
+        .map(|name| (*name, "It is in none of apt's sources.".to_owned()))
+        .collect())
+}
+
+fn offered(madison: &str) -> BTreeSet<&str> {
+    madison
+        .lines()
+        .filter_map(|line| Some(line.split('|').next()?.trim()))
+        .collect()
 }
 
 pub fn shipped(archive: &Path, member: &Path) -> Result<Vec<u8>> {
@@ -431,11 +440,20 @@ pub fn install(names: &[&str]) -> Result<()> {
     apt_get(&[&["install", "-y"], &restore_config[..], names].concat())
 }
 
-pub fn uninstall(db: &Db, names: &[&str]) -> Result<BTreeSet<String>> {
+pub fn uninstall(db: &Db, keep: &[&str], names: &[&str]) -> Result<BTreeSet<String>> {
+    if !keep.is_empty() {
+        cmd::root("apt-mark", &[&["manual"], keep].concat())?;
+    }
     let before = autoremovable(&[])?;
     cmd::root("apt-mark", &[&["auto"], names].concat())?;
+    super::or_restore(remove_unneeded(db, &before), || {
+        cmd::root("apt-mark", &[&["manual"], names].concat())
+    })
+}
+
+fn remove_unneeded(db: &Db, before: &BTreeSet<String>) -> Result<BTreeSet<String>> {
     let after = autoremovable(&[])?;
-    let unneeded: BTreeSet<String> = after.difference(&before).cloned().collect();
+    let unneeded: BTreeSet<String> = after.difference(before).cloned().collect();
     remove(db, &unneeded)?;
     Ok(unneeded)
 }

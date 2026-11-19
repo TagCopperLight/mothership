@@ -66,3 +66,16 @@ fn finds_every_package_that_leads_to_a_needed_one() {
     assert_eq!(db.needed_by("sh"), ["task-laptop"]);
     assert_eq!(db.resolve("sh").unwrap().name, "bash");
 }
+
+#[test]
+fn a_failed_removal_marks_the_packages_again_and_keeps_its_error() {
+    let mut restored = false;
+    let err = or_restore(Err::<(), _>(anyhow::anyhow!("removal failed")), || {
+        restored = true;
+        Ok(())
+    })
+    .unwrap_err();
+    assert!(restored);
+    assert_eq!(err.to_string(), "removal failed");
+    assert_eq!(or_restore(Ok(1), || unreachable!()).unwrap(), 1);
+}

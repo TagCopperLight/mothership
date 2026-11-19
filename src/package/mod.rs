@@ -4,7 +4,7 @@ mod pacman;
 
 pub use dpkg::keep_only;
 
-use crate::{cmd, user::User};
+use crate::user::User;
 use anyhow::{Context, Result, bail};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -52,9 +52,20 @@ impl Distro {
     }
 
     pub fn cannot_install(self, aur: &Aur, name: &str) -> Result<Option<String>> {
+        Ok(self
+            .cannot_install_all(aur, &[name])?
+            .pop()
+            .map(|(_, why)| why))
+    }
+
+    pub fn cannot_install_all<'a>(
+        self,
+        aur: &Aur,
+        names: &[&'a str],
+    ) -> Result<Vec<(&'a str, String)>> {
         match self {
-            Distro::Arch => pacman::cannot_install(aur, name),
-            Distro::Debian => dpkg::cannot_install(name),
+            Distro::Arch => pacman::cannot_install(aur, names),
+            Distro::Debian => dpkg::cannot_install(names),
         }
     }
 
@@ -96,24 +107,23 @@ impl Distro {
             .filter(|name| listed.contains(*name))
             .collect();
         let removed = match self {
-            Distro::Arch => {
-                if !keep.is_empty() {
-                    cmd::root("pacman", &[&["-D", "--asexplicit"], &keep[..]].concat())?;
-                }
-                pacman::uninstall(names)?
-            }
-            Distro::Debian => {
-                if !keep.is_empty() {
-                    cmd::root("apt-mark", &[&["manual"], &keep[..]].concat())?;
-                }
-                dpkg::uninstall(&db, names)?
-            }
+            Distro::Arch => pacman::uninstall(&keep, names)?,
+            Distro::Debian => dpkg::uninstall(&db, &keep, names)?,
         };
         for name in names.iter().filter(|name| !removed.contains(**name)) {
             println!("{}", stays(name, &db.needed_by(name)));
         }
         Ok(())
     }
+}
+
+fn or_restore<T>(result: Result<T>, restore: impl FnOnce() -> Result<()>) -> Result<T> {
+    result.map_err(|error| match restore() {
+        Ok(()) => error,
+        Err(restore) => error.context(format!(
+            "and marking them as installed by hand again failed: {restore:#}"
+        )),
+    })
 }
 
 fn stays(name: &str, users: &[&str]) -> String {

@@ -112,12 +112,8 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
     if let Some(shared) = shared {
         running.extend(systemd::enabled(&[shared], dirs)?);
     }
-    let declared: Vec<(&String, String)> = declared
-        .iter()
-        .map(|unit| Ok((unit, systemd::real_name(unit, dirs)?)))
-        .collect::<Result<_>>()?;
-    let real: Vec<String> = declared.iter().map(|(_, real)| real.clone()).collect();
-    let covered = with_also(&real, dirs)?;
+    refuse_aliases(declared, dirs)?;
+    let covered = with_also(declared, dirs)?;
     let mut items = Vec::new();
     for unit in enabled.iter().filter(|unit| !covered.contains(*unit)) {
         if defaults.enables(unit, dirs)? {
@@ -146,17 +142,27 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
     items.extend(
         declared
             .iter()
-            .filter(|(_, real)| !running.contains(real))
-            .map(|(unit, _)| {
-                Item::new(kind, Change::Removed, *unit, "disabled")
+            .filter(|unit| !running.contains(*unit))
+            .map(|unit| {
+                Item::new(kind, Change::Removed, unit, "disabled")
                     .with(Add::Undeclare {
                         key,
-                        name: unit.to_string(),
+                        name: unit.clone(),
                     })
-                    .reverting(unit_revert(kind, revert::Unit::Enable(unit.to_string())))
+                    .reverting(unit_revert(kind, revert::Unit::Enable(unit.clone())))
             }),
     );
     Ok(items)
+}
+
+fn refuse_aliases(declared: &[String], unit_dirs: &[PathBuf]) -> Result<()> {
+    for unit in declared {
+        let real = systemd::real_name(unit, unit_dirs)?;
+        if real != *unit {
+            bail!("{unit} is an alias of {real}: list {real} instead");
+        }
+    }
+    Ok(())
 }
 
 fn with_also(declared: &[String], unit_dirs: &[PathBuf]) -> Result<BTreeSet<String>> {

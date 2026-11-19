@@ -28,6 +28,20 @@ fn an_earlier_folder_hides_the_same_unit_in_a_later_one() {
     assert!(also("a.service", &dirs).unwrap().is_empty());
 }
 
+#[test]
+fn a_listed_alias_is_refused_with_the_real_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let dirs = [dir.path().to_path_buf()];
+    unit(dir.path(), "ssh.service", "[Install]\n");
+    std::os::unix::fs::symlink("ssh.service", dir.path().join("sshd.service")).unwrap();
+    refuse_aliases(&["ssh.service".to_owned()], &dirs).unwrap();
+    let err = refuse_aliases(&["sshd.service".to_owned()], &dirs).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "sshd.service is an alias of ssh.service: list ssh.service instead"
+    );
+}
+
 fn presets(text: &str) -> Presets {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("90-test.preset"), text).unwrap();
