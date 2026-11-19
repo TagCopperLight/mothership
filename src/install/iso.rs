@@ -80,10 +80,7 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
         0o644,
     )?;
     let localtime = root.join("etc/localtime");
-    if fs::symlink_metadata(&localtime).is_ok() {
-        fs::remove_file(&localtime)?;
-    }
-    unix::fs::symlink(answers::zoneinfo(&timezone), &localtime)?;
+    walk::link(&localtime, &answers::zoneinfo(&timezone))?;
     machine.save(root)?;
     let token = match private {
         true => Some(

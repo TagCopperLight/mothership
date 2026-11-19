@@ -7,7 +7,6 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use std::{
     fs,
-    io::ErrorKind,
     path::Path,
     process,
     sync::mpsc::{self, RecvTimeoutError},
@@ -53,11 +52,8 @@ fn unit() -> String {
 
 fn efi_var(name: &str) -> Result<Option<u8>> {
     let path = format!("/sys/firmware/efi/efivars/{name}-{EFI_GLOBAL}");
-    match fs::read(&path) {
-        Ok(bytes) => Ok(bytes.get(4).copied()),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e).with_context(|| format!("reading {path}")),
-    }
+    let bytes = walk::if_found(fs::read(&path)).with_context(|| format!("reading {path}"))?;
+    Ok(bytes.and_then(|bytes| bytes.get(4).copied()))
 }
 
 pub fn check_firmware() -> Result<()> {

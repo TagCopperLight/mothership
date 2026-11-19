@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -190,11 +189,14 @@ fn wanted(fleet: &Fleet, rel: &Path) -> Result<Option<String>> {
 }
 
 fn hash(path: &Path) -> Result<Option<String>> {
-    let bytes = match fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_symlink() => fs::read_link(path)?.into_os_string().into_encoded_bytes(),
-        Ok(_) => fs::read(path)?,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    let meta = walk::if_found(fs::symlink_metadata(path))
+        .with_context(|| format!("reading {}", path.display()))?;
+    let bytes = match meta {
+        Some(meta) if meta.is_symlink() => {
+            fs::read_link(path)?.into_os_string().into_encoded_bytes()
+        }
+        Some(_) => fs::read(path)?,
+        None => return Ok(None),
     };
     Ok(Some(package::md5(&bytes)))
 }

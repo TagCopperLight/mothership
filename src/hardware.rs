@@ -1,7 +1,7 @@
 use crate::walk;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Deserializer, de};
-use std::{collections::BTreeSet, fs, io::ErrorKind, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Hardware {
@@ -100,9 +100,8 @@ fn battery(root: &Path) -> Result<bool> {
         if read(&supply.join("type"))? != "Battery" {
             continue;
         }
-        match fs::read_to_string(supply.join("scope")) {
-            Ok(scope) if scope.trim() == "Device" => continue,
-            Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
+        match walk::read_if_any(&supply.join("scope"))? {
+            Some(scope) if scope.trim() == "Device" => continue,
             _ => return Ok(true),
         }
     }

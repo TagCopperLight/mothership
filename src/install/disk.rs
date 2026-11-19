@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use std::{fs, io::ErrorKind, path::Path, str::FromStr};
+use std::{fs, path::Path, str::FromStr};
 
 pub const ROOT: &str = "/mnt";
 pub const MAPPER: &str = "root";
@@ -189,13 +189,12 @@ impl Iso {
 }
 
 fn canonical(path: &str) -> Result<String> {
-    match fs::canonicalize(path) {
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(path.to_owned()),
-        found => Ok(found
-            .with_context(|| format!("finding {path}"))?
-            .to_string_lossy()
-            .into_owned()),
-    }
+    let found =
+        walk::if_found(fs::canonicalize(path)).with_context(|| format!("finding {path}"))?;
+    Ok(match found {
+        Some(found) => found.to_string_lossy().into_owned(),
+        None => path.to_owned(),
+    })
 }
 
 fn disks() -> Result<Vec<Device>> {

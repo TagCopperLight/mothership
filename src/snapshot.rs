@@ -1,8 +1,8 @@
-use crate::{package, user::User};
+use crate::{package, user::User, walk};
 use anyhow::{Context, Result, bail};
 use std::{
     fs::{self, File},
-    io::{self, Read},
+    io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
     path::{Component, Path, PathBuf},
     sync::mpsc,
@@ -99,9 +99,10 @@ fn send(home: &Path, target: &Path, tx: &mpsc::SyncSender<Entry>) -> Result<()> 
 }
 
 fn copy(path: &Path, rel: &Path, tx: &mpsc::SyncSender<Entry>) -> Result<()> {
-    let meta = match fs::symlink_metadata(path) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        meta => meta.with_context(|| format!("reading {}", path.display()))?,
+    let Some(meta) = walk::if_found(fs::symlink_metadata(path))
+        .with_context(|| format!("reading {}", path.display()))?
+    else {
+        return Ok(());
     };
     let rel = rel.to_path_buf();
     let mode = meta.mode() & 0o7777;

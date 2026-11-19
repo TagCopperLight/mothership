@@ -11,7 +11,6 @@ use anyhow::{Context, Result, bail};
 use std::{
     collections::{BTreeSet, HashMap},
     fs,
-    io::ErrorKind,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -90,10 +89,10 @@ fn claim_written(packages: &mut [Package]) -> Result<()> {
             continue;
         };
         let master = Path::new("/etc/alternatives").join(name);
-        let target = match fs::read_link(&master) {
-            Ok(target) => target,
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            Err(e) => return Err(e).with_context(|| format!("reading {}", master.display())),
+        let Some(target) = walk::if_found(fs::read_link(&master))
+            .with_context(|| format!("reading {}", master.display()))?
+        else {
+            continue;
         };
         let target = resolve.listed(&target)?;
         let links = std::iter::once(master)
@@ -296,11 +295,9 @@ impl Resolve {
             Some((dir, name)) => self.dir(dir)?.join(name),
             None => path.to_path_buf(),
         };
-        let is_dir = match fs::symlink_metadata(path) {
-            Ok(meta) => meta.is_dir(),
-            Err(e) if e.kind() == ErrorKind::NotFound => false,
-            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-        };
+        let is_dir = walk::if_found(fs::symlink_metadata(path))
+            .with_context(|| format!("reading {}", path.display()))?
+            .is_some_and(|meta| meta.is_dir());
         let text = resolved.to_string_lossy();
         Ok(if is_dir {
             format!("{text}/")
@@ -311,11 +308,9 @@ impl Resolve {
 
     fn dir(&mut self, dir: &Path) -> Result<&PathBuf> {
         if !self.dirs.contains_key(dir) {
-            let resolved = match fs::canonicalize(dir) {
-                Ok(resolved) => resolved,
-                Err(e) if e.kind() == ErrorKind::NotFound => dir.to_path_buf(),
-                Err(e) => return Err(e).with_context(|| format!("reading {}", dir.display())),
-            };
+            let resolved = walk::if_found(fs::canonicalize(dir))
+                .with_context(|| format!("reading {}", dir.display()))?
+                .unwrap_or_else(|| dir.to_path_buf());
             self.dirs.insert(dir.to_path_buf(), resolved);
         }
         Ok(&self.dirs[dir])
@@ -468,11 +463,9 @@ fn remove(db: &Db, names: &BTreeSet<String>) -> Result<()> {
 }
 
 fn unedited(backup: &Backup) -> Result<bool> {
-    match fs::read(&backup.path) {
-        Ok(bytes) => Ok(super::md5(&bytes) == backup.md5),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e).with_context(|| format!("reading {}", backup.path.display())),
-    }
+    let bytes = walk::if_found(fs::read(&backup.path))
+        .with_context(|| format!("reading {}", backup.path.display()))?;
+    Ok(bytes.is_some_and(|bytes| super::md5(&bytes) == backup.md5))
 }
 
 pub fn keep_only(fleet: &Fleet, answer: Option<bool>, prompt: &mut Prompt) -> Result<()> {

@@ -8,7 +8,7 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use std::{
     fs,
-    os::unix::{self, fs::PermissionsExt},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -302,7 +302,7 @@ fn change_etc(fleet: &Fleet, change: &Etc) -> Result<()> {
             let rel = path.strip_prefix(fleet::ETC)?;
             let source = fleet.etc_source(rel);
             if fs::symlink_metadata(&source)?.is_symlink() {
-                link(path, &fs::read_link(&source)?)
+                walk::link(path, &fs::read_link(&source)?)
             } else {
                 walk::write(path, &fleet.etc_contents(rel)?, fleet.etc_mode(rel)?.0)
             }
@@ -316,20 +316,3 @@ fn change_etc(fleet: &Fleet, change: &Etc) -> Result<()> {
     };
     run().with_context(|| format!("changing {}", path.display()))
 }
-
-pub fn link(path: &Path, target: &Path) -> Result<()> {
-    let dir = path.parent().context("no parent folder")?;
-    fs::create_dir_all(dir)?;
-    let name = path.file_name().context("no file name")?.to_string_lossy();
-    let temp = dir.join(format!(".{name}.mothership"));
-    if fs::symlink_metadata(&temp).is_ok() {
-        fs::remove_file(&temp)?;
-    }
-    unix::fs::symlink(target, &temp)?;
-    fs::rename(&temp, path)?;
-    Ok(())
-}
-
-#[cfg(test)]
-#[path = "../tests/revert.rs"]
-mod tests;

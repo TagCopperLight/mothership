@@ -4,7 +4,7 @@ use crate::{
     hardware::Hardware,
     ignore::{Ignore, Level},
 };
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, os::unix};
 use tempfile::TempDir;
 
 const SYSTEM: &str = r#"# What a workstation has outside $HOME.

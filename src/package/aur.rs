@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use serde::Deserialize;
-use std::{ffi::CStr, fmt, fs, io::ErrorKind, path::Path};
+use std::{ffi::CStr, fmt, fs, path::Path};
 
 pub const URL: &str = "https://aur.archlinux.org";
 
@@ -75,10 +75,8 @@ extern "C" fn remove_and_leave(signal: libc::c_int) {
 
 impl NoPassword {
     pub fn remove_leftover() -> Result<()> {
-        match fs::remove_file(no_password_path()) {
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-            removed => Ok(removed?),
-        }
+        walk::remove_if_found(no_password_path())?;
+        Ok(())
     }
 
     pub fn grant(admin: &User) -> Result<NoPassword> {

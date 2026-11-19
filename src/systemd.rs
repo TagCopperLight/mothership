@@ -3,7 +3,6 @@ use anyhow::{Context, Result, bail};
 use std::{
     collections::BTreeSet,
     fs,
-    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -128,10 +127,10 @@ pub fn real_name(unit: &str, unit_dirs: &[PathBuf]) -> Result<String> {
 fn first_present(unit: &str, unit_dirs: &[PathBuf]) -> Result<Option<PathBuf>> {
     for dir in unit_dirs {
         let path = dir.join(unit);
-        match fs::symlink_metadata(&path) {
-            Ok(_) => return Ok(Some(path)),
-            Err(e) if e.kind() == ErrorKind::NotFound => {}
-            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+        let found = walk::if_found(fs::symlink_metadata(&path))
+            .with_context(|| format!("reading {}", path.display()))?;
+        if found.is_some() {
+            return Ok(Some(path));
         }
     }
     Ok(None)

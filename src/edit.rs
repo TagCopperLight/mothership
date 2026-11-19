@@ -6,7 +6,6 @@ use crate::{
     package::Distro,
     pref,
     prompt::Prompt,
-    revert,
     secrets::{self, Storage},
     snapshot::Snapshot,
     style, walk,
@@ -15,7 +14,7 @@ use anyhow::{Context, Result, bail};
 use std::{
     fs,
     io::ErrorKind,
-    os::unix::{self, fs::PermissionsExt},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 use toml_edit::{Array, DocumentMut, InlineTable, Value, value};
@@ -333,7 +332,7 @@ fn update_shared(
     let recipients = secrets::home_list(&fleet.dir, source)?;
     root.run(&recipients, snapshot, &["re-add", &path.to_string_lossy()])?;
     fs::rename(source, &shared)?;
-    revert::link(source, &link)
+    walk::link(source, &link)
 }
 
 fn chezmoi_add(
@@ -360,10 +359,7 @@ fn chezmoi_add(
 }
 
 fn append_line(path: &Path, line: &str) -> Result<()> {
-    let mut text = match fs::read_to_string(path) {
-        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
-        text => text.with_context(|| format!("reading {}", path.display()))?,
-    };
+    let mut text = walk::read_if_any(path)?.unwrap_or_default();
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
@@ -586,11 +582,7 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage) -> Result<
         if storage == Storage::Encrypted {
             bail!("{} is a link, which holds no secret", path.display());
         }
-        match fs::remove_file(dest) {
-            Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
-            _ => {}
-        }
-        unix::fs::symlink(fs::read_link(path)?, dest)?;
+        walk::link(dest, &fs::read_link(path)?)?;
     } else if meta.is_dir() {
         bail!(
             "{} is a folder: copy the files you want one by one",
@@ -636,14 +628,10 @@ fn copy_etc(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage) -> Result<
             Ok(())
         })?;
     }
-    match fs::remove_file(other) {
-        Ok(()) if storage == Storage::Encrypted => {
-            println!("  git history keeps the version in clear, so change it.");
-            Ok(())
-        }
-        Err(e) if e.kind() != ErrorKind::NotFound => Err(e.into()),
-        _ => Ok(()),
+    if walk::remove_if_found(other)? && storage == Storage::Encrypted {
+        println!("  git history keeps the version in clear, so change it.");
     }
+    Ok(())
 }
 
 fn remove_etc(fleet: &Fleet, rel: &Path) -> Result<()> {

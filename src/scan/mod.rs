@@ -10,7 +10,7 @@ pub mod tools;
 use crate::{
     chezmoi,
     edit::Add,
-    fleet::{Fleet, Member},
+    fleet::{self, Fleet, Member},
     ignore::{Level, Paths},
     later::{self, Later},
     package::Db,
@@ -479,14 +479,13 @@ impl<'a> Ships<'a> {
 
     pub fn path(&self, path: &Path, member: Option<&Member>) -> Result<bool> {
         let resolved = match (path.parent(), path.file_name()) {
-            (Some(dir), Some(name)) => match fs::canonicalize(dir) {
-                Ok(dir) => dir.join(name),
-                Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
-                Err(e) => return Err(e.into()),
+            (Some(dir), Some(name)) => match walk::if_found(fs::canonicalize(dir))? {
+                Some(dir) => dir.join(name),
+                None => return Ok(false),
             },
             _ => return Ok(false),
         };
-        if let Ok(rel) = resolved.strip_prefix("/etc")
+        if let Ok(rel) = resolved.strip_prefix(fleet::ETC)
             && self.fleet.etc.contains(rel)
         {
             return Ok(true);

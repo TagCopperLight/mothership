@@ -174,10 +174,35 @@ pub fn files_with_metadata(root: &Path) -> Result<Vec<(PathBuf, fs::Metadata)>> 
     Ok(found)
 }
 
+pub fn if_found<T>(result: io::Result<T>) -> io::Result<Option<T>> {
+    match result {
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        result => result.map(Some),
+    }
+}
+
+pub fn remove_if_found(path: &Path) -> Result<bool> {
+    Ok(if_found(fs::remove_file(path))
+        .with_context(|| format!("removing {}", path.display()))?
+        .is_some())
+}
+
+pub fn link(path: &Path, target: &Path) -> Result<()> {
+    let dir = path.parent().context("no parent folder")?;
+    fs::create_dir_all(dir)?;
+    let name = path.file_name().context("no file name")?.to_string_lossy();
+    let temp = dir.join(format!(".{name}.mothership"));
+    remove_if_found(&temp)?;
+    std::os::unix::fs::symlink(target, &temp)?;
+    fs::rename(&temp, path)?;
+    Ok(())
+}
+
 pub fn children(dir: &Path) -> Result<Vec<PathBuf>> {
-    let entries = match fs::read_dir(dir) {
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        entries => entries.with_context(|| format!("reading {}", dir.display()))?,
+    let Some(entries) =
+        if_found(fs::read_dir(dir)).with_context(|| format!("reading {}", dir.display()))?
+    else {
+        return Ok(Vec::new());
     };
     let mut paths = entries
         .map(|entry| Ok(entry?.path()))
@@ -187,11 +212,7 @@ pub fn children(dir: &Path) -> Result<Vec<PathBuf>> {
 }
 
 pub fn read_if_any(path: &Path) -> Result<Option<String>> {
-    match fs::read_to_string(path) {
-        Ok(text) => Ok(Some(text)),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-    }
+    if_found(fs::read_to_string(path)).with_context(|| format!("reading {}", path.display()))
 }
 
 #[cfg(test)]
@@ -204,16 +225,14 @@ pub fn write(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
     let mut file = tempfile::NamedTempFile::new_in(dir)?;
     file.write_all(bytes)?;
     let temp = file.as_file();
-    match fs::symlink_metadata(path) {
-        Ok(old) if old.is_file() => {
-            let new = temp.metadata()?;
-            if (old.uid(), old.gid()) != (new.uid(), new.gid()) {
-                std::os::unix::fs::fchown(temp, Some(old.uid()), Some(old.gid()))
-                    .with_context(|| format!("keeping the owner of {}", path.display()))?;
-            }
+    if let Some(old) = if_found(fs::symlink_metadata(path))?
+        && old.is_file()
+    {
+        let new = temp.metadata()?;
+        if (old.uid(), old.gid()) != (new.uid(), new.gid()) {
+            std::os::unix::fs::fchown(temp, Some(old.uid()), Some(old.gid()))
+                .with_context(|| format!("keeping the owner of {}", path.display()))?;
         }
-        Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
-        _ => {}
     }
     temp.set_permissions(fs::Permissions::from_mode(mode))?;
     temp.sync_all()?;
@@ -226,9 +245,9 @@ pub fn read(path: &Path) -> Result<Option<Vec<u8>>> {
         .read(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
         .open(path);
-    let mut file = match file {
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-        file => file.with_context(|| format!("opening {}", path.display()))?,
+    let Some(mut file) = if_found(file).with_context(|| format!("opening {}", path.display()))?
+    else {
+        return Ok(None);
     };
     let meta = file.metadata()?;
     if !meta.is_file() {
@@ -253,12 +272,11 @@ pub fn under(root: &Path, absolute: &str) -> PathBuf {
 }
 
 pub fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> Result<T> {
-    match fs::read_to_string(path) {
-        Ok(text) => {
+    match read_if_any(path)? {
+        Some(text) => {
             serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
         }
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(T::default()),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+        None => Ok(T::default()),
     }
 }
 

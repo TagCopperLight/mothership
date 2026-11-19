@@ -13,7 +13,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use std::{
     collections::BTreeMap,
     fs,
-    io::{ErrorKind, Read, Write},
+    io::{Read, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
@@ -84,9 +84,10 @@ fn parse_key(text: &[u8], shown: &Path) -> Result<x25519::Identity> {
 
 pub fn root_key() -> Result<Option<x25519::Identity>> {
     let path = Path::new(ROOT_KEY);
-    let meta = match fs::symlink_metadata(path) {
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-        meta => meta.with_context(|| format!("reading {ROOT_KEY}"))?,
+    let Some(meta) = walk::if_found(fs::symlink_metadata(path))
+        .with_context(|| format!("reading {ROOT_KEY}"))?
+    else {
+        return Ok(None);
     };
     if !meta.is_file() || meta.uid() != 0 || meta.mode() & 0o077 != 0 {
         bail!(
@@ -173,10 +174,9 @@ pub fn holds(list: &Path, public: &str) -> Result<bool> {
 }
 
 fn read(path: &Path) -> Result<Vec<Recipient>> {
-    match fs::read_to_string(path) {
-        Ok(text) => parse(&text).with_context(|| format!("parsing {}", path.display())),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(Vec::new()),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    match walk::read_if_any(path)? {
+        Some(text) => parse(&text).with_context(|| format!("parsing {}", path.display())),
+        None => Ok(Vec::new()),
     }
 }
 
