@@ -80,7 +80,10 @@ fn a_secret_is_added_encrypted() {
             encrypt: false,
         })
         .secret(Secret::Guessed);
-    assert!(matches!(item.add, Some(Add::Track { encrypt: true, .. })));
+    assert!(matches!(
+        item.add,
+        Adding::Offered(Add::Track { encrypt: true, .. })
+    ));
 }
 
 #[test]

@@ -167,6 +167,12 @@ pub enum Secret {
     Locked,
 }
 
+pub enum Adding {
+    Offered(Add),
+    Refused(&'static str),
+    Never,
+}
+
 pub struct Item {
     pub kind: Kind,
     pub change: Change,
@@ -176,8 +182,7 @@ pub struct Item {
     pub detail: String,
     pub note: String,
     pub secret: Secret,
-    pub add: Option<Add>,
-    pub no_add: Option<&'static str>,
+    pub add: Adding,
     pub revert: Option<Revert>,
     pub preview: Preview,
     pub guess: Option<PathBuf>,
@@ -203,8 +208,7 @@ impl Item {
             detail: detail.into(),
             note: String::new(),
             secret: Secret::No,
-            add: None,
-            no_add: None,
+            add: Adding::Never,
             revert: None,
             preview: Preview::None,
             guess: None,
@@ -222,7 +226,11 @@ impl Item {
         self.secret = secret;
         self.preview = Preview::None;
         self.guess = None;
-        self.add = self.add.map(|add| add.encrypted().unwrap_or(add));
+        if let Adding::Offered(add) = &mut self.add
+            && let Some(encrypted) = add.encrypted()
+        {
+            *add = encrypted;
+        }
         self
     }
 
@@ -242,7 +250,7 @@ impl Item {
     }
 
     fn with(mut self, add: Add) -> Self {
-        self.add = Some(add);
+        self.add = Adding::Offered(add);
         self
     }
 
@@ -251,9 +259,8 @@ impl Item {
         self
     }
 
-    fn because(mut self, no_add: &'static str) -> Self {
-        self.add = None;
-        self.no_add = Some(no_add);
+    fn because(mut self, why: &'static str) -> Self {
+        self.add = Adding::Refused(why);
         self
     }
 

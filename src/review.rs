@@ -5,7 +5,7 @@ use crate::{
     prompt::{self, Prompt},
     record::{self, Record},
     revert::{self, Etc, Machine, Revert},
-    scan::{self, Columns, Item, Secret, Section},
+    scan::{self, Adding, Columns, Item, Secret, Section},
     style::{self, Paint, Style},
     walk,
 };
@@ -140,13 +140,15 @@ fn ask(report: &scan::Report) -> Result<()> {
         }
         item.preview.show(style.color);
 
-        let encrypted = item
-            .add
-            .as_ref()
+        let add = match &item.add {
+            Adding::Offered(add) => Some(add),
+            Adding::Refused(_) | Adding::Never => None,
+        };
+        let encrypted = add
             .filter(|_| item.secret == Secret::No)
             .and_then(Add::encrypted);
         let mut choices: Vec<(Answer, String)> = Vec::new();
-        if let Some(add) = &item.add {
+        if let Some(add) = add {
             choices.push((Answer::Add(add), add.describe()));
         }
         if let Some(encrypted) = &encrypted {
@@ -163,7 +165,7 @@ fn ask(report: &scan::Report) -> Result<()> {
         for (answer, what) in &choices {
             println!("  {}  {:10}  {what}", key(*answer), answer.name());
         }
-        if let Some(why) = item.no_add {
+        if let Adding::Refused(why) = item.add {
             let why = format!("can't add: {why}");
             println!("  {}", style.paint(why, &[Paint::Dim]));
         }

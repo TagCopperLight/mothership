@@ -3,7 +3,7 @@ use crate::{
     package::Db,
     prompt::Prompt,
     record::{self, Record},
-    revert::{self, Owned, Revert, Service, User},
+    revert::{self, Revert, Service, User},
     scan::{self, Change, Checks, Secret, Section},
     style::Style,
 };
@@ -29,8 +29,14 @@ fn round(approve: &mut dyn FnMut() -> Result<bool>, service_manager: bool) -> Re
     let mut items = scan::checks(&fleet, &db, &record, Checks::Apply)?;
     scan::sort(&fleet, &mut items);
 
-    let (mut todo, mut edited, mut locked, mut unread, mut left) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
+    let (mut todo, mut reverts, mut edited, mut locked, mut unread, mut left) = (
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        0,
+    );
     let mut skipped: Vec<(usize, &Service)> = Vec::new();
     for item in &items {
         match (&item.revert, item.member) {
@@ -39,7 +45,10 @@ fn round(approve: &mut dyn FnMut() -> Result<bool>, service_manager: bool) -> Re
             {
                 skipped.push((i, service))
             }
-            _ if item.section == Section::Fleet => todo.push(item),
+            (Some(revert), member) if item.section == Section::Fleet => {
+                todo.push(item);
+                reverts.push((member, revert));
+            }
             _ if scan::ignored(&fleet, item) => {}
             _ if item.secret == Secret::Locked => locked.push(item),
             _ if item.change == Change::Unreadable => unread.push(item),
@@ -76,10 +85,6 @@ fn round(approve: &mut dyn FnMut() -> Result<bool>, service_manager: bool) -> Re
     if todo.is_empty() {
         println!("Nothing to apply.");
     } else if approve()? {
-        let reverts: Vec<Owned> = todo
-            .iter()
-            .map(|item| (item.member, item.revert.as_ref().expect("filtered above")))
-            .collect();
         revert::run(&fleet, &reverts)?;
     } else {
         return Ok(false);
