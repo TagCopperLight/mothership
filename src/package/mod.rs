@@ -6,7 +6,6 @@ pub use dpkg::keep_only;
 
 use crate::{cmd, fleet::Fleet};
 use anyhow::{Context, Result, bail};
-use md5::{Digest, Md5};
 use std::{
     collections::{BTreeSet, HashMap},
     fs,
@@ -258,13 +257,6 @@ impl Db {
         }
         users
     }
-}
-
-pub fn md5(bytes: &[u8]) -> String {
-    Md5::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
 }
 
 #[cfg(test)]

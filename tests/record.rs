@@ -1,14 +1,14 @@
 use super::*;
 use crate::{
     fleet::{Manager, Tool},
-    package::{self, Archive, Backup, Distro, Origin, Package},
+    package::{Archive, Backup, Distro, Origin, Package},
     revert,
 };
 use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn md5(text: &str) -> String {
-    package::md5(text.as_bytes())
+    crate::hash::md5(text.as_bytes())
 }
 
 struct Machine {

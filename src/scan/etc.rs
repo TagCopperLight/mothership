@@ -4,7 +4,8 @@ use crate::kind::Kind;
 use crate::{
     edit::Add,
     fleet::{self, Fleet},
-    package::{self, Backup, Db, Origin, Package},
+    hash,
+    package::{Backup, Db, Origin, Package},
     preview::Preview,
     revert::Etc,
     secrets::{self, Storage},
@@ -178,7 +179,7 @@ fn edited(package: &Package, backup: &Backup, rel: &Path) -> Result<Option<Item>
         }
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    if package::md5(&bytes) == backup.md5 {
+    if hash::md5(&bytes) == backup.md5 {
         return Ok(None);
     }
     let item = item(Change::Edited, "edited").with(Add::CopyEtc {

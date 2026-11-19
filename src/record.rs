@@ -1,6 +1,7 @@
 use crate::{
     fleet::{Fleet, Tools},
-    package::{self, Db},
+    hash,
+    package::Db,
     revert::{Account, Etc, Machine, Revert, Service, ToolChange, Unit, User},
     walk,
 };
@@ -185,7 +186,7 @@ fn wanted(fleet: &Fleet, rel: &Path) -> Result<Option<String>> {
     if !fleet.etc_open() {
         return Ok(None);
     }
-    Ok(Some(package::md5(&fleet.etc_contents(rel)?)))
+    Ok(Some(hash::md5(&fleet.etc_contents(rel)?)))
 }
 
 fn hash(path: &Path) -> Result<Option<String>> {
@@ -198,7 +199,7 @@ fn hash(path: &Path) -> Result<Option<String>> {
         Some(_) => fs::read(path)?,
         None => return Ok(None),
     };
-    Ok(Some(package::md5(&bytes)))
+    Ok(Some(hash::md5(&bytes)))
 }
 
 fn shipped<'a>(db: &'a Db, path: &Path) -> Option<&'a String> {

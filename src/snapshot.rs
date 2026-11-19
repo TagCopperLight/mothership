@@ -1,9 +1,12 @@
-use crate::{package, user::User, walk};
+use crate::{hash::Fields, user::User, walk};
 use anyhow::{Context, Result, bail};
 use std::{
     fs::{self, File},
     io::Read,
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
+    },
     path::{Component, Path, PathBuf},
     sync::mpsc,
     thread,
@@ -29,7 +32,7 @@ impl Snapshot {
         let home = dir.path().join("home");
         fs::create_dir(&home)?;
         let (tx, entries) = mpsc::sync_channel(16);
-        let mut sums = Vec::new();
+        let mut fields = Fields::new();
         thread::scope(|s| {
             let reader = s.spawn(move || {
                 user.with_rights(|| {
@@ -39,7 +42,7 @@ impl Snapshot {
                 })
             });
             let written = entries.iter().try_for_each(|entry| {
-                sums.push(write(&home, entry)?);
+                write(&home, entry, &mut fields)?;
                 Ok::<_, anyhow::Error>(())
             });
             drop(entries);
@@ -49,7 +52,7 @@ impl Snapshot {
             written.and(read)
         })?;
         Ok(Snapshot {
-            digest: package::md5(sums.join("\n").as_bytes()),
+            digest: fields.finish(),
             dir,
         })
     }
@@ -143,17 +146,21 @@ fn emit(tx: &mpsc::SyncSender<Entry>, entry: Entry) -> Result<()> {
     tx.send(entry).context("the snapshot stopped")
 }
 
-fn write(home: &Path, entry: Entry) -> Result<String> {
+fn write(home: &Path, entry: Entry, fields: &mut Fields) -> Result<()> {
     match entry {
         Entry::Dir { rel, mode } => {
             let path = home.join(&rel);
             fs::create_dir_all(&path)?;
             fs::set_permissions(&path, fs::Permissions::from_mode(mode))?;
-            Ok(format!("d {mode:o} {}", rel.display()))
+            fields.add(b"d");
+            fields.add(rel.as_os_str().as_bytes());
+            fields.add(&mode.to_le_bytes());
         }
         Entry::Link { rel, target } => {
             symlink(&target, home.join(&rel))?;
-            Ok(format!("l {} {}", rel.display(), target.display()))
+            fields.add(b"l");
+            fields.add(rel.as_os_str().as_bytes());
+            fields.add(target.as_os_str().as_bytes());
         }
         Entry::File { rel, mode, file } => {
             let mut bytes = Vec::new();
@@ -164,13 +171,13 @@ fn write(home: &Path, entry: Entry) -> Result<String> {
             let path = home.join(&rel);
             fs::write(&path, &bytes)?;
             fs::set_permissions(&path, fs::Permissions::from_mode(mode))?;
-            Ok(format!(
-                "f {mode:o} {} {}",
-                rel.display(),
-                package::md5(&bytes)
-            ))
+            fields.add(b"f");
+            fields.add(rel.as_os_str().as_bytes());
+            fields.add(&mode.to_le_bytes());
+            fields.add(&bytes);
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -57,3 +57,21 @@ fn special_files_are_left_out_and_paths_stay_in_the_home() {
     assert!(Snapshot::take(&user, &[&home.join("../escape")]).is_err());
     assert!(Snapshot::take(&user, &[Path::new("/etc/passwd")]).is_err());
 }
+
+#[test]
+fn the_digest_tells_apart_names_that_print_the_same() {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+    let digest = |name: &[u8]| {
+        let dir = tempfile::TempDir::new().unwrap();
+        let home = dir.path().join("home");
+        fs::create_dir_all(home.join("app")).unwrap();
+        fs::write(home.join("app").join(OsStr::from_bytes(name)), "x").unwrap();
+        let user = me(&home);
+        Snapshot::take(&user, &[&home.join("app")])
+            .unwrap()
+            .digest()
+            .to_owned()
+    };
+    assert_ne!(digest(b"caf\xe9"), digest(b"caf\xe8"));
+    assert_ne!(digest(b"a"), digest(b"a\nf 644 b"));
+}

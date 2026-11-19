@@ -465,7 +465,7 @@ fn remove(db: &Db, names: &BTreeSet<String>) -> Result<()> {
 fn unedited(backup: &Backup) -> Result<bool> {
     let bytes = walk::if_found(fs::read(&backup.path))
         .with_context(|| format!("reading {}", backup.path.display()))?;
-    Ok(bytes.is_some_and(|bytes| super::md5(&bytes) == backup.md5))
+    Ok(bytes.is_some_and(|bytes| crate::hash::md5(&bytes) == backup.md5))
 }
 
 pub fn keep_only(fleet: &Fleet, answer: Option<bool>, prompt: &mut Prompt) -> Result<()> {

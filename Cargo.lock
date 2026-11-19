@@ -920,6 +920,7 @@ dependencies = [
  "md-5",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "strum",
  "tempfile",
  "terminal_size",
