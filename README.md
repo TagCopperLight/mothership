@@ -49,22 +49,21 @@ From the Arch ISO, install also partitions and encrypts the disk:
 ## Writing a fleet
 
 ```text
-homes/
-├── tag/                  tag's home, as chezmoi source files
-└── dev/
-shared/                   files several users get, linked from their homes
+shared/                   files and secrets several homes get, linked from each home
 types/workstation/
 ├── system.toml           packages, services, hardware and options
 ├── etc/                  files copied into /etc
 ├── recipients.txt        keys that open the secrets in /etc
 ├── ignore.txt            differences scan never reports
 └── users/tag/
+    ├── home/             tag's home on a workstation, as chezmoi source files
+    │   └── .secrets/     secrets templates read, never written to the home
     ├── user.toml         groups, shell, linger, user services and tools
-    ├── recipients.txt    keys that open tag's secrets
+    ├── recipients.txt    keys that open the secrets of tag's home
     └── ignore.txt
 ```
 
-A user's home folder links each shared file it wants, one link per file. Templates can read `.profile` (the type), `.user` and `.fleet`.
+A home links each shared file it wants, one link per file, and only the homes linking a file get it: scan lists who gets each one. A template reads a secret with `{{ include ".secrets/api-key.age" | decrypt }}`, and can read `.profile` (the type) and `.user`.
 
 ```toml
 packages = ["base", "linux", "git"]

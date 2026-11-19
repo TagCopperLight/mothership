@@ -5,8 +5,8 @@ runs dev's login shell, and adds to the fleet only what it showed.
 
 ```console
 $ echo y | sudo mothership apply &>/dev/null
-$ cd /var/lib/mothership/fleet && mkdir -p types/workstation/users/dev homes/dev/dot_config/devapp &&
-> echo "theme = light" > homes/dev/dot_config/devapp/conf &&
+$ cd /var/lib/mothership/fleet && mkdir -p types/workstation/users/dev/home/dot_config/devapp &&
+> echo "theme = light" > types/workstation/users/dev/home/dot_config/devapp/conf &&
 > printf 'home ~/.cargo\nhome ~/.bash{rc,_profile,_logout}\n' > types/workstation/users/dev/ignore.txt &&
 > touch types/workstation/users/dev/user.toml && git add -A && git commit -qm "Add dev" && git push -q
 $ printf 'y\ny\ny\n' | sudo mothership apply &>/dev/null

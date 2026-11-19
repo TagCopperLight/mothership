@@ -14,7 +14,6 @@ use std::{
 
 pub const RECIPIENTS: &str = "recipients.txt";
 pub const ROOT_KEY: &str = "/etc/mothership/key.txt";
-pub const SECRETS: &str = "secrets";
 pub const AGE: &str = ".age";
 pub const RECOVERY: &str = "recovery";
 

@@ -542,3 +542,34 @@ fn declaring_a_tool_writes_its_source_and_reads_back_the_same() {
     assert_eq!(user.tools.find(Manager::Cargo, "chromash"), Some(&moved));
     assert_eq!(user.tools.find(Manager::Cargo, "new"), Some(&new));
 }
+
+#[test]
+fn listing_a_user_gives_them_an_empty_folder_in_the_type() {
+    let checkout = Checkout::new();
+    assert!(!checkout.apply(Add::ListUser("dev".into()), "n"));
+    assert!(
+        !checkout
+            .dir
+            .path()
+            .join("types/workstation/users/dev")
+            .exists()
+    );
+    assert!(checkout.apply(Add::ListUser("dev".into()), "y"));
+    for empty in ["user.toml", "recipients.txt", "home/.keep"] {
+        assert_eq!(
+            checkout.read(&format!("types/workstation/users/dev/{empty}")),
+            ""
+        );
+    }
+    let repo = Repo::new(
+        checkout.dir.path().to_path_buf(),
+        "workstation",
+        &[],
+        &BTreeSet::from([Hardware::Battery]),
+    )
+    .unwrap();
+    let names: Vec<&str> = repo.profiles.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["dev", "me"]);
+    let error = checkout.try_apply(Add::ListUser("dev".into()), "y");
+    assert!(error.unwrap_err().to_string().contains("is there already"));
+}

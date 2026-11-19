@@ -79,13 +79,13 @@ $ printf 'a\ns\ny\na\ny\n' | sudo mothership review
 Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
 $ stat -c '%a' ~/.config/app/token
 600
-$ cd /var/lib/mothership/fleet && find homes/me/dot_ssh homes/me/dot_config types/workstation/etc/wifi.conf.age | sort
-homes/me/dot_config
-homes/me/dot_config/app
-homes/me/dot_config/app/encrypted_private_token.age
-homes/me/dot_ssh
-homes/me/dot_ssh/encrypted_private_id_test.age
+$ cd /var/lib/mothership/fleet && find types/workstation/users/me/home/dot_ssh types/workstation/users/me/home/dot_config types/workstation/etc/wifi.conf.age | sort
 types/workstation/etc/wifi.conf.age
+types/workstation/users/me/home/dot_config
+types/workstation/users/me/home/dot_config/app
+types/workstation/users/me/home/dot_config/app/encrypted_private_token.age
+types/workstation/users/me/home/dot_ssh
+types/workstation/users/me/home/dot_ssh/encrypted_private_id_test.age
 $ grep -r SECRET /var/lib/mothership/fleet
 [exit 1]
 $ grep -c wifi /var/lib/mothership/fleet/types/workstation/system.toml
@@ -140,7 +140,7 @@ $ printf 'a\n' | sudo mothership review
   git history keeps the version in clear, so change it.
 1 added
 Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
-$ ls /var/lib/mothership/fleet/homes/me | grep netrc
+$ ls /var/lib/mothership/fleet/types/workstation/users/me/home | grep netrc
 encrypted_private_dot_netrc.age
 ```
 
@@ -227,21 +227,30 @@ Left alone, since this machine's key can't open them:
 Nothing to apply.
 ```
 
-Back on the laptop, a template takes a secret value from my `secrets/` folder, which chezmoi
-writes nowhere. The laptop trusts the desktop in both lists, then the desktop retires the
+Back on the laptop, a template takes a secret value from my home's `.secrets/` folder, which
+chezmoi writes nowhere. The laptop trusts the desktop in both lists, then the desktop retires the
 laptop and lists what to change. A list never loses its last key.
 
 ```console
 $ sudo mv /etc/mothership/key.txt /root/desktop.txt && sudo mv /root/laptop.txt /etc/mothership/key.txt
 $ mv ~/.config/mothership/key.txt ~/desktop.txt && mv ~/laptop.txt ~/.config/mothership/key.txt
-$ cd /var/lib/mothership/fleet && mkdir -p types/workstation/users/me/secrets &&
-> echo "PROXY-SECRET" | chezmoi encrypt > types/workstation/users/me/secrets/proxy-key.age &&
-> echo '{{ include (joinPath .fleet "types/workstation/users/me/secrets/proxy-key.age") | decrypt | trim }}' > homes/me/dot_proxy.tmpl
+$ cd /var/lib/mothership/fleet/types/workstation/users/me/home && mkdir .secrets &&
+> echo "PROXY-SECRET" | chezmoi encrypt > .secrets/proxy-key.age &&
+> echo '{{ include ".secrets/proxy-key.age" | decrypt | trim }}' > dot_proxy.tmpl
 $ chezmoi apply --force ~/.proxy && cat ~/.proxy
 PROXY-SECRET
-$ sudo mothership trust workstation/root desktop "$(sudo grep -o 'age1.*' /root/desktop.txt)"
+$ echo y | sudo mothership trust workstation/root desktop "$(sudo grep -o 'age1.*' /root/desktop.txt)"
+Re-encrypting for workstation/root:
+  /etc/wifi.conf  workstation/root
+Go on [y/N]? y
 desktop opens the 1 secrets of workstation/root now. Commit and push the fleet.
-$ sudo mothership trust workstation/me desktop "$(grep -o 'age1.*' ~/desktop.txt)"
+$ echo y | sudo mothership trust workstation/me desktop "$(grep -o 'age1.*' ~/desktop.txt)"
+Re-encrypting for workstation/me:
+  .secrets/proxy-key.age  workstation/me
+  ~/.config/app/token     workstation/me
+  ~/.netrc                workstation/me
+  ~/.ssh/id_test          workstation/me
+Go on [y/N]? y
 desktop opens the 4 secrets of workstation/me now. Commit and push the fleet.
 $ sudo mothership trust workstation/me desktop "$(grep -o 'age1.*' ~/desktop.txt)"
 Error: workstation/me already holds this key, as desktop
@@ -252,14 +261,23 @@ $ sudo mothership scan
 ✓ Nothing differs from the workstation type
 The fleet has 9 changes not committed and 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
-$ sudo mothership retire workstation/me laptop
+$ echo y | sudo mothership retire workstation/me laptop
+Re-encrypting for workstation/me:
+  .secrets/proxy-key.age  workstation/me
+  ~/.config/app/token     workstation/me
+  ~/.netrc                workstation/me
+  ~/.ssh/id_test          workstation/me
+Go on [y/N]? y
 laptop is gone from workstation/me. Commit and push the fleet.
 git history keeps the versions laptop opens, and that machine may keep copies, so change these:
-  types/workstation/users/me/secrets/proxy-key.age
+  .secrets/proxy-key.age
   ~/.config/app/token
   ~/.netrc
   ~/.ssh/id_test
-$ sudo mothership retire workstation/root laptop
+$ echo y | sudo mothership retire workstation/root laptop
+Re-encrypting for workstation/root:
+  /etc/wifi.conf  workstation/root
+Go on [y/N]? y
 laptop is gone from workstation/root. Commit and push the fleet.
 git history keeps the versions laptop opens, and that machine may keep copies, so change these:
   /etc/wifi.conf
@@ -269,7 +287,7 @@ Error: desktop is the last key of workstation/root: trust another one first
 $ sed 's/age1[a-z0-9]*/<key>/' /var/lib/mothership/fleet/types/workstation/users/me/recipients.txt
 # desktop
 <key>
-$ chezmoi execute-template < /var/lib/mothership/fleet/homes/me/dot_proxy.tmpl
+$ chezmoi execute-template < /var/lib/mothership/fleet/types/workstation/users/me/home/dot_proxy.tmpl
 PROXY-SECRET
 $ find /var/lib/mothership/fleet -not -user me | wc -l
 0

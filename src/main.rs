@@ -6,7 +6,6 @@ mod file;
 mod fleet;
 mod hardware;
 mod hash;
-mod homes;
 mod ignore;
 mod install;
 mod item;
@@ -35,6 +34,7 @@ mod walk;
 
 use anyhow::bail;
 use fleet::Fleet;
+use prompt::Prompt;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: mothership scan | review | apply | key \
@@ -117,9 +117,11 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         (Command::Install, flags) => install::run(flags),
         (Command::Key, []) => trust::key(&Fleet::load()?),
         (Command::Trust, [target, name, key]) => {
-            edit_fleet(|fleet| trust::trust(fleet, target, name, key))
+            edit_fleet(|fleet| trust::trust(fleet, target, name, key, &mut Prompt::new()))
         }
-        (Command::Retire, [target, name]) => edit_fleet(|fleet| trust::retire(fleet, target, name)),
+        (Command::Retire, [target, name]) => {
+            edit_fleet(|fleet| trust::retire(fleet, target, name, &mut Prompt::new()))
+        }
         _ => usage(),
     }
 }

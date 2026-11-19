@@ -105,7 +105,7 @@ checkout, and my chezmoi state stays mine. The tokens go into my own ignore list
 $ cd /var/lib/mothership/fleet && git status --short | sort
  M types/workstation/system.toml
  M types/workstation/users/me/ignore.txt
-?? homes/me/dot_config/
+?? types/workstation/users/me/home/dot_config/
 $ find /var/lib/mothership/fleet ~/.config/chezmoi -not -user me | wc -l
 0
 $ grep -A3 '"alpha"' /var/lib/mothership/fleet/types/workstation/system.toml
@@ -233,7 +233,7 @@ $ printf 'a\n' | sudo mothership review
 1 added
 1 put off before and not due yet
 Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
-$ ls /var/lib/mothership/fleet/homes/me/dot_config | od -c | grep -c 351
+$ ls /var/lib/mothership/fleet/types/workstation/users/me/home/dot_config | od -c | grep -c 351
 1
 $ sudo mothership scan | grep -c -e caf -e 'not scanned'
 0

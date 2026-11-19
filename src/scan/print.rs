@@ -1,10 +1,11 @@
 use super::Report;
 use crate::{
-    fleet::Fleet,
+    fleet::{Fleet, homes},
     item::{Change, Item, Secret, Section},
     kind::Kind,
     style::{self, Paint, Style},
 };
+use anyhow::Result;
 
 impl Kind {
     pub fn area(self) -> Area {
@@ -15,6 +16,7 @@ impl Kind {
             Kind::Service => Area::Services,
             Kind::UserService => Area::UserServices,
             Kind::Account => Area::Account,
+            Kind::User => Area::Users,
             Kind::Dconf | Kind::Pref => Area::Settings,
         }
     }
@@ -26,6 +28,7 @@ pub enum Area {
     Tools,
     Files,
     Services,
+    Users,
     UserServices,
     Account,
     Settings,
@@ -38,6 +41,7 @@ impl Area {
             Area::Tools => "Tools",
             Area::Files => "Files",
             Area::Services => "Services",
+            Area::Users => "Users",
             Area::UserServices => "User services",
             Area::Account => "Account",
             Area::Settings => "Settings",
@@ -92,6 +96,29 @@ pub fn summary(report: &Report, style: Style, waiting: &dyn Fn(&Item) -> Option<
     }
 }
 
+pub fn print_shared(fleet: &Fleet, style: Style) -> Result<()> {
+    let shared = homes::shared(&fleet.dir)?;
+    if shared.is_empty() {
+        return Ok(());
+    }
+    let title = format!("Shared · {}", shared.len());
+    println!("{}", style.paint(title, &[Paint::Bold]));
+    let pairs: Vec<(String, String)> = shared
+        .iter()
+        .map(|file| {
+            let homes: Vec<String> = file.homes.iter().map(|home| home.to_string()).collect();
+            let homes = match homes.is_empty() {
+                true => style.paint("linked by nobody", &[Paint::Yellow]),
+                false => style::clean(&homes.join(", ")),
+            };
+            (homes::shown(&file.rel), homes)
+        })
+        .collect();
+    style::print_pairs(&pairs);
+    println!();
+    Ok(())
+}
+
 pub fn print_section(
     fleet: &Fleet,
     section: Section,
@@ -133,14 +160,12 @@ pub struct Columns {
 }
 
 impl Columns {
-    const SUBJECT: usize = 40;
-
     pub fn of(items: &[&Item]) -> Self {
         let widest = |text: &dyn Fn(&Item) -> usize| items.iter().map(|i| text(i)).max();
         Columns {
             subject: widest(&|i| style::visible(&style::clean(&i.subject)))
                 .unwrap_or(0)
-                .min(Columns::SUBJECT),
+                .min(style::LEFT_COLUMN),
             verb: widest(&|i| style::visible(&i.verb())).unwrap_or(0),
         }
     }

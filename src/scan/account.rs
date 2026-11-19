@@ -3,8 +3,8 @@ use crate::item::{Change, Item};
 use crate::kind::Kind;
 use crate::{
     edit::{Add, Key},
-    fleet::Member,
-    revert::User,
+    fleet::{Fleet, Member},
+    revert::{Machine, User},
     user, walk,
 };
 use anyhow::{Context, Result};
@@ -12,6 +12,29 @@ use std::{collections::BTreeSet, fs, path::Path};
 
 const SYSUSERS: [&str; 2] = ["/etc/sysusers.d", "/usr/lib/sysusers.d"];
 const LINGER: &str = "/var/lib/systemd/linger";
+
+pub fn users(fleet: &Fleet) -> Result<Vec<Item>> {
+    let mut items: Vec<Item> = fleet
+        .missing()
+        .map(|profile| {
+            Item::new(Kind::User, Change::Removed, &profile.name, "missing").reverting(
+                Machine::CreateUser {
+                    name: profile.name.clone(),
+                    shell: profile.config.shell.clone(),
+                },
+            )
+        })
+        .collect();
+    for person in user::people()? {
+        if !fleet.profiles.iter().any(|p| p.name == person.name) {
+            items.push(
+                Item::new(Kind::User, Change::Added, &person.name, "not in the fleet")
+                    .with(Add::ListUser(person.name)),
+            );
+        }
+    }
+    Ok(items)
+}
 
 pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
     let user = member.user();

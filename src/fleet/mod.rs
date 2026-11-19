@@ -2,7 +2,6 @@ use crate::{
     chezmoi,
     cmd::{self, As},
     hardware::{self, Hardware},
-    homes,
     ignore::{Ignore, Paths},
     kind::Level,
     package::{self},
@@ -22,6 +21,7 @@ use std::{
 };
 
 mod config;
+pub mod homes;
 
 use config::Block;
 pub use config::{
@@ -505,6 +505,10 @@ impl Profile {
     pub fn recipients(&self) -> PathBuf {
         self.dir.join(secrets::RECIPIENTS)
     }
+
+    pub fn home(&self) -> PathBuf {
+        self.dir.join(homes::HOME)
+    }
 }
 
 fn profiles(dir: &Path) -> Result<Vec<Profile>> {
@@ -550,12 +554,11 @@ impl Member {
 
 fn chezmoi_config(repo: &Repo, profile: &Profile, user: &User) -> chezmoi::ChezmoiConfig {
     chezmoi::ChezmoiConfig {
-        source: homes::source(&repo.dir, &profile.name),
+        source: profile.home(),
         identity: secrets::key_path(user),
         recipients: profile.recipients(),
         profile: repo.type_name.clone(),
         user: profile.name.clone(),
-        fleet: repo.dir.clone(),
     }
 }
 

@@ -8,6 +8,7 @@ use std::{
 };
 
 const TOOL_BINS: [&str; 3] = [".cargo/bin", ".local/bin", ".bun/bin"];
+const LOGIN_DEFS: &str = "/etc/login.defs";
 pub const SYSTEM_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -115,24 +116,58 @@ pub fn by_uid(uid: u32) -> Result<User> {
 }
 
 fn find(wanted: impl Fn(&User) -> bool) -> Result<Option<User>> {
+    Ok(all()?.into_iter().find(wanted))
+}
+
+fn all() -> Result<Vec<User>> {
     let passwd = fs::read_to_string("/etc/passwd")?;
-    for line in passwd.lines() {
-        let fields: Vec<&str> = line.split(':').collect();
-        let [name, _, uid, gid, _, home, shell] = fields[..] else {
-            bail!("a line in /etc/passwd is malformed: {line}");
-        };
-        let user = User {
-            name: name.to_owned(),
-            uid: uid.parse()?,
-            gid: gid.parse()?,
-            home: PathBuf::from(home),
-            shell: shell.to_owned(),
-        };
-        if wanted(&user) {
-            return Ok(Some(user));
-        }
+    passwd.lines().map(parse_passwd).collect()
+}
+
+fn parse_passwd(line: &str) -> Result<User> {
+    let fields: Vec<&str> = line.split(':').collect();
+    let [name, _, uid, gid, _, home, shell] = fields[..] else {
+        bail!("a line in /etc/passwd is malformed: {line}");
+    };
+    Ok(User {
+        name: name.to_owned(),
+        uid: uid.parse()?,
+        gid: gid.parse()?,
+        home: PathBuf::from(home),
+        shell: shell.to_owned(),
+    })
+}
+
+pub fn people() -> Result<Vec<User>> {
+    let defs = file::read_if_any(Path::new(LOGIN_DEFS))?.unwrap_or_default();
+    let (min, max) = (
+        login_def(&defs, "UID_MIN", 1000)?,
+        login_def(&defs, "UID_MAX", 60000)?,
+    );
+    Ok(all()?
+        .into_iter()
+        .filter(|user| (min..=max).contains(&user.uid) && can_log_in(&user.shell))
+        .collect())
+}
+
+fn login_def(defs: &str, key: &str, default: u32) -> Result<u32> {
+    let value = defs.lines().find_map(|line| {
+        let mut words = line.split_whitespace();
+        (words.next() == Some(key)).then(|| words.next()).flatten()
+    });
+    match value {
+        Some(value) => value
+            .parse()
+            .with_context(|| format!("{LOGIN_DEFS} sets {key} to {value}")),
+        None => Ok(default),
     }
-    Ok(None)
+}
+
+fn can_log_in(shell: &str) -> bool {
+    !matches!(
+        Path::new(shell).file_name().and_then(|name| name.to_str()),
+        Some("nologin" | "false")
+    )
 }
 
 pub struct Group {
@@ -176,3 +211,7 @@ fn groups_of(name: &str, gid: libc::gid_t) -> Result<Vec<libc::gid_t>> {
     gids.dedup();
     Ok(gids)
 }
+
+#[cfg(test)]
+#[path = "../tests/user.rs"]
+mod tests;

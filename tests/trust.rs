@@ -1,6 +1,6 @@
 use super::*;
 use crate::secrets::{encrypt, names};
-use std::fs;
+use std::{fs, os::unix::fs::symlink};
 
 #[test]
 fn home_secrets_are_found_by_chezmoi_names() {
@@ -14,10 +14,15 @@ fn home_secrets_are_found_by_chezmoi_names() {
         Some("~/.config/app/token")
     );
     assert_eq!(shown("dot_config/app/settings.json"), None);
+    assert_eq!(
+        shown(".secrets/proxy-key.age").as_deref(),
+        Some(".secrets/proxy-key.age")
+    );
+    assert_eq!(shown(".secrets/notes.txt"), None);
 }
 
 #[test]
-fn a_shared_home_file_is_for_every_list_of_every_user_linking_it() {
+fn a_shared_home_file_is_for_the_list_of_every_home_linking_it() {
     let dir = tempfile::TempDir::new().unwrap();
     let fleet = dir.path();
     for (type_name, user, text) in [
@@ -33,19 +38,21 @@ fn a_shared_home_file_is_for_every_list_of_every_user_linking_it() {
         ),
     ] {
         let users = fleet.join("types").join(type_name).join("users").join(user);
-        fs::create_dir_all(&users).unwrap();
+        fs::create_dir_all(users.join("home")).unwrap();
         fs::write(users.join(RECIPIENTS), text).unwrap();
-        fs::create_dir_all(fleet.join("homes").join(user)).unwrap();
-        std::os::unix::fs::symlink(
-            "../../shared/dot_token",
-            fleet.join("homes").join(user).join("dot_token"),
+        symlink(
+            "../../../../../shared/dot_token",
+            users.join("home/dot_token"),
         )
         .unwrap();
     }
+    let elsewhere = fleet.join("types/laptop/users/dev");
+    fs::create_dir_all(elsewhere.join("home")).unwrap();
+    fs::write(elsewhere.join(RECIPIENTS), "# other\nage1other\n").unwrap();
     fs::create_dir_all(fleet.join("shared")).unwrap();
     fs::write(fleet.join("shared/dot_token"), "").unwrap();
     let keys = |list: Vec<Recipient>| list.into_iter().map(|r| r.key).collect::<Vec<_>>();
-    let link = fleet.join("homes/dev/dot_token");
+    let link = fleet.join("types/server/users/dev/home/dot_token");
     assert_eq!(
         keys(home_recipients(fleet, &link, None).unwrap()),
         ["age1dev", "age1rec", "age1tag"]
@@ -95,6 +102,7 @@ fn trusting_a_key_opens_every_secret_of_its_list_to_it() {
         "workstation/root",
         "desktop",
         &public(&desktop),
+        &mut Prompt::answering("y"),
     )
     .unwrap();
     assert_eq!(names(&fleet.recipients()).unwrap(), ["laptop", "desktop"]);
@@ -128,6 +136,7 @@ fn a_secret_this_machine_can_not_open_stops_trust_before_any_write() {
         "workstation/root",
         "desktop",
         &public(&other),
+        &mut Prompt::answering("y"),
     );
     let error = format!("{:#}", error.err().unwrap());
     assert!(error.starts_with("none of this machine's keys opens"));
@@ -145,8 +154,118 @@ fn a_name_the_list_holds_is_refused_until_it_is_retired() {
     let fleet = fleet_with(dir.path(), &list, &[]);
     let mut keys = Keys::default();
     keys.push(laptop);
-    let error = trust_with(&fleet, &keys, "workstation/root", "laptop", &public(&other));
+    let error = trust_with(
+        &fleet,
+        &keys,
+        "workstation/root",
+        "laptop",
+        &public(&other),
+        &mut Prompt::answering("y"),
+    );
     let error = error.err().unwrap().to_string();
     assert!(error.contains("mothership retire workstation/root laptop"));
     assert_eq!(fs::read_to_string(fleet.recipients()).unwrap(), list);
+}
+
+struct SharedSecret {
+    _dir: tempfile::TempDir,
+    fleet: Fleet,
+    laptop: x25519::Identity,
+    minipc: x25519::Identity,
+    file: PathBuf,
+}
+
+fn shared_secret() -> SharedSecret {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+    let laptop = make_key(&root.join("laptop.txt")).unwrap();
+    let minipc = make_key(&root.join("minipc.txt")).unwrap();
+    for (type_name, user, key) in [("workstation", "tag", &laptop), ("server", "dev", &minipc)] {
+        let users = root.join("types").join(type_name).join("users").join(user);
+        fs::create_dir_all(users.join("home/.secrets")).unwrap();
+        fs::write(users.join(RECIPIENTS), format!("# key\n{}\n", public(key))).unwrap();
+        fs::write(users.join(fleet::USER_TOML), "").unwrap();
+        symlink(
+            "../../../../../../shared/.secrets/proxy-key.age",
+            users.join("home/.secrets/proxy-key.age"),
+        )
+        .unwrap();
+    }
+    let both = root.join("both.txt");
+    let lists = format!(
+        "# laptop\n{}\n# minipc\n{}\n",
+        public(&laptop),
+        public(&minipc)
+    );
+    fs::write(&both, lists).unwrap();
+    fs::create_dir_all(root.join("shared/.secrets")).unwrap();
+    let file = root.join("shared/.secrets/proxy-key.age");
+    fs::write(&file, encrypt(&both, b"proxy").unwrap()).unwrap();
+    for type_name in ["workstation", "server"] {
+        fs::write(
+            root.join("types").join(type_name).join(fleet::SYSTEM_TOML),
+            "",
+        )
+        .unwrap();
+    }
+    let repo = crate::fleet::Repo::new(root.to_path_buf(), "workstation", &[], &Default::default())
+        .unwrap();
+    SharedSecret {
+        fleet: Fleet::of(repo, &crate::support::current_user()),
+        _dir: dir,
+        laptop,
+        minipc,
+        file,
+    }
+}
+
+fn opens(key: &x25519::Identity, file: &Path) -> bool {
+    let mut keys = Keys::default();
+    keys.push(key.clone());
+    keys.decrypt(file).is_ok()
+}
+
+#[test]
+fn trusting_a_key_for_one_home_keeps_a_shared_secret_open_to_the_other_homes() {
+    let shared = shared_secret();
+    let desktop = x25519::Identity::generate();
+    let mut keys = Keys::default();
+    keys.push(shared.laptop.clone());
+    trust_with(
+        &shared.fleet,
+        &keys,
+        "workstation/tag",
+        "desktop",
+        &public(&desktop),
+        &mut Prompt::answering("y"),
+    )
+    .unwrap();
+    assert!(opens(&desktop, &shared.file));
+    assert!(opens(&shared.laptop, &shared.file));
+    assert!(opens(&shared.minipc, &shared.file));
+}
+
+#[test]
+fn saying_no_to_trust_changes_nothing() {
+    let shared = shared_secret();
+    let before = fs::read(&shared.file).unwrap();
+    let list = shared
+        .fleet
+        .dir
+        .join("types/workstation/users/tag")
+        .join(RECIPIENTS);
+    let names_before = names(&list).unwrap();
+    let mut keys = Keys::default();
+    keys.push(shared.laptop.clone());
+    trust_with(
+        &shared.fleet,
+        &keys,
+        "workstation/tag",
+        "desktop",
+        &public(&x25519::Identity::generate()),
+        &mut Prompt::answering("n"),
+    )
+    .unwrap();
+    assert_eq!(fs::read(&shared.file).unwrap(), before);
+    assert_eq!(names(&list).unwrap(), names_before);
 }

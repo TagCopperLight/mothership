@@ -56,7 +56,6 @@ pub struct ChezmoiConfig {
     pub recipients: PathBuf,
     pub profile: String,
     pub user: String,
-    pub fleet: PathBuf,
 }
 
 #[derive(Clone)]
@@ -200,8 +199,47 @@ fn config_text(config: &ChezmoiConfig) -> Result<String> {
             "identity": config.identity,
             "recipientsFile": config.recipients,
         },
-        "data": { "profile": config.profile, "user": config.user, "fleet": config.fleet },
+        "data": { "profile": config.profile, "user": config.user },
     }))?)
+}
+
+const ATTRIBUTES: [&str; 11] = [
+    "create_",
+    "modify_",
+    "remove_",
+    ENCRYPTED,
+    "private_",
+    "readonly_",
+    "empty_",
+    "executable_",
+    "exact_",
+    "external_",
+    "symlink_",
+];
+
+pub fn target_of(source: &Path) -> (PathBuf, bool) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut encrypted = false;
+    for part in source.iter() {
+        let mut name = part.to_string_lossy().into_owned();
+        while let Some(rest) = ATTRIBUTES.iter().find_map(|a| name.strip_prefix(a)) {
+            encrypted |= name.starts_with(ENCRYPTED);
+            name = rest.to_owned();
+        }
+        parts.push(match name.strip_prefix("dot_") {
+            Some(rest) => format!(".{rest}"),
+            None => name,
+        });
+    }
+    if let Some(last) = parts.last_mut() {
+        while let Some(rest) = last
+            .strip_suffix(secrets::AGE)
+            .or_else(|| last.strip_suffix(TEMPLATE))
+        {
+            *last = rest.to_owned();
+        }
+    }
+    (parts.iter().collect(), encrypted)
 }
 
 const CONFIG: &str = ".config/chezmoi/chezmoi.toml";

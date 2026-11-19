@@ -6,15 +6,18 @@ use doc::{declare, edit_toml, tool_entry, undeclare};
 
 use crate::{
     file,
-    fleet::{self, Fleet, Manager, Member, Tool},
+    fleet::{self, Fleet, Manager, Member, Tool, homes},
     kind::Level,
     package::Distro,
     preview::Seen,
     prompt::Prompt,
-    secrets::Storage,
+    secrets::{self, Storage},
 };
 use anyhow::{Context, Result, bail};
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use toml_edit::value;
 
 const FILE_MODE: u32 = 0o644;
@@ -101,6 +104,7 @@ pub enum Add {
         key: String,
         value: String,
     },
+    ListUser(String),
 }
 
 impl Add {
@@ -150,6 +154,7 @@ impl Add {
             Add::Forget(_) => "remove it from chezmoi".into(),
             Add::RemoveEtc(_) => "remove it from the type's etc/".into(),
             Add::Pref { .. } => "write this machine's value into user.js".into(),
+            Add::ListUser(_) => "list the user in the type, with an empty home".into(),
         }
     }
 
@@ -216,9 +221,35 @@ impl Add {
                 key,
                 value,
             } => return home::pref(fleet, member()?, user_js, key, value, prompt),
+            Add::ListUser(name) => {
+                let question = format!(
+                    "  mothership then manages {name}'s account, services and files here. Go on"
+                );
+                if !prompt.confirm(&question)? {
+                    return Ok(false);
+                }
+                list_user(fleet, name)?
+            }
         }
         Ok(true)
     }
+}
+
+fn list_user(fleet: &Fleet, name: &str) -> Result<()> {
+    let dir = fleet.type_dir.join(fleet::USERS).join(name);
+    if dir.exists() {
+        bail!("{} is there already", dir.display());
+    }
+    let home = dir.join(homes::HOME);
+    fs::create_dir_all(&home).with_context(|| format!("creating {}", home.display()))?;
+    for empty in [
+        dir.join(fleet::USER_TOML),
+        dir.join(secrets::RECIPIENTS),
+        home.join(homes::KEEP),
+    ] {
+        file::write(&empty, b"", FILE_MODE)?;
+    }
+    Ok(())
 }
 
 fn encrypted_suffix(storage: Storage) -> &'static str {

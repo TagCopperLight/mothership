@@ -24,7 +24,7 @@ pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
                 continue;
             }
             if secrets::names(&key.list)?.is_empty() {
-                crate::trust::trust(&fleet, &key.target, hostname, &key.public)?;
+                crate::trust::trust(&fleet, &key.target, hostname, &key.public, prompt)?;
             } else {
                 waiting.push(key);
             }
@@ -52,7 +52,14 @@ pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
                     }
                 }
                 for key in &waiting {
-                    crate::trust::trust_with(&fleet, &keys, &key.target, hostname, &key.public)?;
+                    crate::trust::trust_with(
+                        &fleet,
+                        &keys,
+                        &key.target,
+                        hostname,
+                        &key.public,
+                        prompt,
+                    )?;
                 }
                 fleet.hand_back()?;
             }

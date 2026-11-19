@@ -1,5 +1,5 @@
 encryption = "age"
-sourceDir = "/var/lib/mothership/fleet/homes/me"
+sourceDir = "/var/lib/mothership/fleet/types/server/users/me/home"
 
 [age]
 identity = "/home/me/.config/mothership/key.txt"
@@ -7,6 +7,5 @@ recipientsFile = "/var/lib/mothership/fleet/types/server/users/me/recipients.txt
 useBuiltin = true
 
 [data]
-fleet = "/var/lib/mothership/fleet"
 profile = "server"
 user = "me"

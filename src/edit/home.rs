@@ -2,8 +2,8 @@ use super::{FILE_MODE, append_line};
 use crate::{
     chezmoi::{self, ENCRYPTED, TEMPLATE},
     file,
-    fleet::{Fleet, Member},
-    homes, pref,
+    fleet::{Fleet, Member, homes},
+    pref,
     preview::Seen,
     prompt::Prompt,
     secrets::{AGE, Storage},
@@ -172,9 +172,10 @@ fn confirm_shared(
     prompt: &mut Prompt,
 ) -> Result<bool> {
     let shared = homes::target(&fleet.dir, source)?;
-    let others: Vec<String> = homes::users(&fleet.dir, source)?
+    let others: Vec<String> = homes::owners(&fleet.dir, source)?
         .into_iter()
-        .filter(|user| *user != member.name)
+        .filter(|home| home.type_name != fleet.type_name || home.user != member.name)
+        .map(|home| home.to_string())
         .collect();
     let shown = shared.strip_prefix(&fleet.dir).unwrap_or(&shared).display();
     println!(
@@ -186,7 +187,7 @@ fn confirm_shared(
 }
 
 fn own_list(fleet: &Fleet, member: &Member) -> Result<String> {
-    trust::home_list(&fleet.dir, &homes::source(&fleet.dir, &member.name))
+    trust::home_list(&fleet.dir, &member.home())
 }
 
 fn update_shared(

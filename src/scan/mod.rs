@@ -24,7 +24,7 @@ use crate::{
     style::{Paint, Style},
 };
 use anyhow::Result;
-use print::{owner, summary};
+use print::{owner, print_shared, summary};
 use secret::finish;
 use std::{collections::HashSet, fs, path::Path, thread};
 
@@ -96,15 +96,7 @@ pub fn checks(fleet: &Fleet, db: &Db, record: &Record, which: Checks) -> Result<
         let items = handles.into_iter().map(join).collect::<Result<Vec<_>>>()?;
         Ok::<_, anyhow::Error>(items.into_iter().flatten().collect::<Vec<_>>())
     })?;
-    items.extend(fleet.missing().map(|profile| {
-        let user = format!("user {}", profile.name);
-        Item::new(Kind::Account, Change::Removed, user, "missing").reverting(
-            revert::Machine::CreateUser {
-                name: profile.name.clone(),
-                shell: profile.config.shell.clone(),
-            },
-        )
-    }));
+    items.extend(account::users(fleet)?);
     for item in &mut items {
         let user = item.member.map(|i| fleet.members[i].name.as_str());
         if item.section == Section::Machine
@@ -228,6 +220,7 @@ pub fn run() -> Result<()> {
             .collect();
         print_section(fleet, section, &items, style, &waiting);
     }
+    print_shared(fleet, style)?;
     summary(&report, style, &waiting);
     let unsaved = fleet.unsaved()?;
     if !unsaved.is_empty() {

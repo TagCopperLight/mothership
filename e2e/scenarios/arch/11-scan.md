@@ -25,7 +25,7 @@ $ cd /var/lib/mothership/fleet &&
 > sed -i 's/^  "alpha",$/  "epsilon",/' types/workstation/system.toml &&
 > printf 'new = yes\n' > types/workstation/etc/new.conf &&
 > sed -i 's|^groups = .*|groups = ["wheel", "video"]|' types/workstation/users/me/user.toml &&
-> printf '# from the fleet\n' >> homes/me/dot_bashrc &&
+> printf '# from the fleet\n' >> types/workstation/users/me/home/dot_bashrc &&
 > git add -A && git commit -qm "Change the workstation"
 ```
 
@@ -85,7 +85,7 @@ $ printf 'l\np\np\np\np\na\nq\n' | sudo mothership review
 5 coming from the fleet, for sudo mothership apply
 Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
 $ cd /var/lib/mothership/fleet && git status --short
- D homes/me/dot_bash_profile
+ D types/workstation/users/me/home/dot_bash_profile
 ```
 
 Scan still shows `beta`, with when review brings it back, and leaves it out of the count. It

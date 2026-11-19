@@ -157,6 +157,16 @@ pub fn wrap(line: &str, width: usize) -> Vec<String> {
     rows
 }
 
+pub fn print_pairs(pairs: &[(String, String)]) {
+    let width = pairs.iter().map(|(left, _)| visible(&clean(left))).max();
+    let width = width.unwrap_or(0).min(LEFT_COLUMN);
+    for (left, right) in pairs {
+        println!("  {}  {right}", pad(&clean(left), width));
+    }
+}
+
+pub const LEFT_COLUMN: usize = 40;
+
 pub fn pad(text: &str, width: usize) -> String {
     let fill = width.saturating_sub(visible(text));
     format!("{text}{}", " ".repeat(fill))

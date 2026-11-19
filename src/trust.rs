@@ -1,18 +1,19 @@
 use crate::{
-    chezmoi::{ENCRYPTED, TEMPLATE},
-    file,
-    fleet::{self, Fleet},
-    homes,
-    secrets::{
-        AGE, Keys, RECIPIENTS, ROOT_KEY, Recipient, SECRETS, Storage, encrypt_for, format, holds,
-        key_path, make_key, public, read, root_key, user_key,
+    chezmoi, file,
+    fleet::{
+        self, Fleet,
+        homes::{self, Home},
     },
-    walk,
+    prompt::Prompt,
+    secrets::{
+        AGE, Keys, RECIPIENTS, ROOT_KEY, Recipient, Storage, encrypt_for, format, holds, key_path,
+        make_key, public, read, root_key, user_key,
+    },
+    style, walk,
 };
 use age::x25519;
 use anyhow::{Context, Result, anyhow, bail};
 use std::{
-    collections::BTreeMap,
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -81,10 +82,11 @@ pub fn trust_command(target: &str, name: &str, public: &str) -> String {
 
 enum Scope {
     Root,
-    User(String),
+    User(Home),
 }
 
 struct Target {
+    text: String,
     type_name: String,
     scope: Scope,
     list: PathBuf,
@@ -101,25 +103,37 @@ fn target(fleet: &Fleet, text: &str) -> Result<Target> {
     let (scope, list) = match scope {
         "root" => (Scope::Root, type_dir.join(RECIPIENTS)),
         user => {
-            let dir = type_dir.join(fleet::USERS).join(user);
+            let home = Home {
+                type_name: type_name.to_owned(),
+                user: user.to_owned(),
+            };
+            let dir = home.dir(&fleet.dir);
             if user.is_empty() || user.contains('/') || user.contains("..") || !dir.is_dir() {
                 bail!("{type_name} has no user {user}");
             }
-            (Scope::User(user.to_owned()), dir.join(RECIPIENTS))
+            (Scope::User(home), dir.join(RECIPIENTS))
         }
     };
     Ok(Target {
+        text: text.to_owned(),
         type_name: type_name.to_owned(),
         scope,
         list,
     })
 }
 
-pub fn trust(fleet: &Fleet, text: &str, name: &str, key: &str) -> Result<()> {
-    trust_with(fleet, fleet.keys(), text, name, key)
+pub fn trust(fleet: &Fleet, text: &str, name: &str, key: &str, prompt: &mut Prompt) -> Result<()> {
+    trust_with(fleet, fleet.keys(), text, name, key, prompt)
 }
 
-pub fn trust_with(fleet: &Fleet, keys: &Keys, text: &str, name: &str, key: &str) -> Result<()> {
+pub fn trust_with(
+    fleet: &Fleet,
+    keys: &Keys,
+    text: &str,
+    name: &str,
+    key: &str,
+    prompt: &mut Prompt,
+) -> Result<()> {
     let target = target(fleet, text)?;
     key.parse::<x25519::Recipient>()
         .map_err(|e| anyhow!("{key}: {e}"))?;
@@ -139,7 +153,10 @@ pub fn trust_with(fleet: &Fleet, keys: &Keys, text: &str, name: &str, key: &str)
         name: name.to_owned(),
         key: key.to_owned(),
     });
-    let rewritten = rewrite(fleet, keys, &target, &list)?;
+    let Some(rewritten) = rewrite(fleet, keys, &target, &list, prompt)? else {
+        println!("Nothing changed.");
+        return Ok(());
+    };
     println!(
         "{name} opens the {} secrets of {text} now. Commit and push the fleet.",
         rewritten.len()
@@ -147,7 +164,7 @@ pub fn trust_with(fleet: &Fleet, keys: &Keys, text: &str, name: &str, key: &str)
     Ok(())
 }
 
-pub fn retire(fleet: &Fleet, text: &str, name: &str) -> Result<()> {
+pub fn retire(fleet: &Fleet, text: &str, name: &str, prompt: &mut Prompt) -> Result<()> {
     let target = target(fleet, text)?;
     let mut list = read(&target.list)?;
     let retired = list
@@ -160,7 +177,10 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str) -> Result<()> {
     if list.is_empty() {
         bail!("{name} is the last key of {text}: trust another one first");
     }
-    let rewritten = rewrite(fleet, fleet.keys(), &target, &list)?;
+    let Some(rewritten) = rewrite(fleet, fleet.keys(), &target, &list, prompt)? else {
+        println!("Nothing changed.");
+        return Ok(());
+    };
     println!("{name} is gone from {text}. Commit and push the fleet.");
     if rewritten.is_empty() {
         return Ok(());
@@ -168,19 +188,29 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str) -> Result<()> {
     println!(
         "git history keeps the versions {name} opens, and that machine may keep copies, so change these:"
     );
-    for (shown, _) in &rewritten {
-        println!("  {shown}");
+    for secret in &rewritten {
+        println!("  {}", secret.shown);
     }
-    let still: Vec<&str> = rewritten
+    let still: Vec<&Rewritten> = rewritten
         .iter()
-        .filter(|(_, recipients)| recipients.iter().any(|r| r.key == retired))
-        .map(|(shown, _)| shown.as_str())
+        .filter(|secret| secret.recipients.iter().any(|r| r.key == retired))
         .collect();
     if !still.is_empty() {
-        println!("{name}'s key still opens these, through another type's list for the same user:");
-        for shown in still {
-            println!("  {shown}");
-        }
+        println!("{name}'s key still opens these, through another home that shares them:");
+        let others = |secret: &Rewritten| {
+            let others: Vec<&str> = secret
+                .readers
+                .iter()
+                .map(String::as_str)
+                .filter(|reader| *reader != text)
+                .collect();
+            others.join(", ")
+        };
+        let pairs: Vec<(String, String)> = still
+            .iter()
+            .map(|secret| (secret.shown.clone(), others(secret)))
+            .collect();
+        style::print_pairs(&pairs);
     }
     Ok(())
 }
@@ -195,27 +225,25 @@ fn home_recipients(
     replacing: Option<(&Path, &[Recipient])>,
 ) -> Result<Vec<Recipient>> {
     let mut all: Vec<Recipient> = Vec::new();
-    for user in homes::users(fleet_dir, source)? {
-        for type_name in fleet::types(fleet_dir)? {
-            let dir = fleet::type_dir(fleet_dir, &type_name)
-                .join(fleet::USERS)
-                .join(&user);
-            if !dir.is_dir() {
-                continue;
-            }
-            let path = dir.join(RECIPIENTS);
-            let list = match replacing {
-                Some((replaced, list)) if replaced == path => list.to_vec(),
-                _ => read(&path)?,
-            };
-            for recipient in list {
-                if !all.iter().any(|known| known.key == recipient.key) {
-                    all.push(recipient);
-                }
+    for home in homes::owners(fleet_dir, source)? {
+        let path = home.dir(fleet_dir).join(RECIPIENTS);
+        let list = match replacing {
+            Some((replaced, list)) if replaced == path => list.to_vec(),
+            _ => read(&path)?,
+        };
+        for recipient in list {
+            if !all.iter().any(|known| known.key == recipient.key) {
+                all.push(recipient);
             }
         }
     }
     Ok(all)
+}
+
+struct Rewritten {
+    shown: String,
+    readers: Vec<String>,
+    recipients: Vec<Recipient>,
 }
 
 fn rewrite(
@@ -223,32 +251,48 @@ fn rewrite(
     keys: &Keys,
     target: &Target,
     list: &[Recipient],
-) -> Result<Vec<(String, Vec<Recipient>)>> {
+    prompt: &mut Prompt,
+) -> Result<Option<Vec<Rewritten>>> {
     let all = secrets_of(fleet, target)?;
+    if !all.is_empty() {
+        println!("Re-encrypting for {}:", target.text);
+        let pairs: Vec<(String, String)> = all
+            .iter()
+            .map(|secret| (secret.shown.clone(), secret.readers.join(", ")))
+            .collect();
+        style::print_pairs(&pairs);
+        if !prompt.confirm("Go on")? {
+            return Ok(None);
+        }
+    }
     let mut sealed = Vec::new();
-    for (shown, source) in &all {
-        let recipients = match source {
+    for secret in all {
+        let recipients = match &secret.source {
             Source::Home(path) => home_recipients(&fleet.dir, path, Some((&target.list, list)))?,
-            Source::List(_) => list.to_vec(),
+            Source::Etc(_) => list.to_vec(),
         };
-        let file = source.file(&fleet.dir)?;
+        let file = secret.source.file(&fleet.dir)?;
         let bytes = encrypt_for(&recipients, &keys.decrypt(&file)?)?;
-        sealed.push((shown.clone(), file, bytes, recipients));
+        sealed.push((file, bytes, secret, recipients));
     }
     let mut rewritten = Vec::new();
-    for (shown, file, bytes, recipients) in sealed {
+    for (file, bytes, secret, recipients) in sealed {
         let mode = fs::metadata(&file)?.permissions().mode() & 0o7777;
         file::write(&file, &bytes, mode).with_context(|| format!("writing {}", file.display()))?;
-        rewritten.push((shown, recipients));
+        rewritten.push(Rewritten {
+            shown: secret.shown,
+            readers: secret.readers,
+            recipients,
+        });
     }
     file::write(&target.list, format(list).as_bytes(), 0o644)
         .with_context(|| format!("writing {}", target.list.display()))?;
-    Ok(rewritten)
+    Ok(Some(rewritten))
 }
 
 enum Source {
     Home(PathBuf),
-    List(PathBuf),
+    Etc(PathBuf),
 }
 
 impl Source {
@@ -257,78 +301,60 @@ impl Source {
             Source::Home(path) if fs::symlink_metadata(path)?.is_symlink() => {
                 homes::target(fleet_dir, path)
             }
-            Source::Home(path) | Source::List(path) => Ok(path.clone()),
+            Source::Home(path) | Source::Etc(path) => Ok(path.clone()),
         }
     }
 }
 
-fn secrets_of(fleet: &Fleet, target: &Target) -> Result<BTreeMap<String, Source>> {
-    let type_dir = fleet::type_dir(&fleet.dir, &target.type_name);
-    let mut all = BTreeMap::new();
+struct Secret {
+    shown: String,
+    source: Source,
+    readers: Vec<String>,
+}
+
+fn secrets_of(fleet: &Fleet, target: &Target) -> Result<Vec<Secret>> {
+    let mut all = Vec::new();
     match &target.scope {
         Scope::Root => {
+            let type_dir = fleet::type_dir(&fleet.dir, &target.type_name);
             for file in fleet::etc_files(&type_dir)? {
                 if file.storage == Storage::Encrypted {
-                    let path = Path::new(file::ETC).join(&file.rel);
-                    all.insert(path.display().to_string(), Source::List(file.source));
+                    all.push(Secret {
+                        shown: Path::new(file::ETC).join(&file.rel).display().to_string(),
+                        source: Source::Etc(file.source),
+                        readers: vec![target.text.clone()],
+                    });
                 }
             }
         }
-        Scope::User(user) => {
-            let home = homes::source(&fleet.dir, user);
-            for rel in walk::files(&home)? {
+        Scope::User(home) => {
+            let source = home.source(&fleet.dir);
+            for rel in walk::files(&source)? {
                 if let Some(shown) = home_secret(&rel) {
-                    all.insert(shown, Source::Home(home.join(&rel)));
+                    let path = source.join(&rel);
+                    let readers = homes::owners(&fleet.dir, &path)?
+                        .iter()
+                        .map(Home::to_string)
+                        .collect();
+                    all.push(Secret {
+                        shown,
+                        source: Source::Home(path),
+                        readers,
+                    });
                 }
-            }
-            let dir = type_dir.join(fleet::USERS).join(user).join(SECRETS);
-            for rel in walk::files(&dir)? {
-                let source = dir.join(&rel);
-                let shown = source.strip_prefix(&fleet.dir)?.display().to_string();
-                all.insert(shown, Source::List(source));
             }
         }
     }
+    all.sort_by(|a, b| a.shown.cmp(&b.shown));
     Ok(all)
 }
 
-const ATTRIBUTES: [&str; 11] = [
-    "create_",
-    "modify_",
-    "remove_",
-    ENCRYPTED,
-    "private_",
-    "readonly_",
-    "empty_",
-    "executable_",
-    "exact_",
-    "external_",
-    "symlink_",
-];
-
 fn home_secret(rel: &Path) -> Option<String> {
-    let mut parts: Vec<String> = Vec::new();
-    let mut encrypted = false;
-    for part in rel.iter() {
-        let mut name = part.to_str()?;
-        while let Some(rest) = ATTRIBUTES.iter().find_map(|a| name.strip_prefix(a)) {
-            encrypted |= name.starts_with(ENCRYPTED);
-            name = rest;
-        }
-        let name = match name.strip_prefix("dot_") {
-            Some(rest) => format!(".{rest}"),
-            None => name.to_owned(),
-        };
-        parts.push(name);
-    }
-    let last = parts.last_mut()?;
-    while let Some(rest) = last
-        .strip_suffix(AGE)
-        .or_else(|| last.strip_suffix(TEMPLATE))
-    {
-        *last = rest.to_owned();
-    }
-    encrypted.then(|| format!("~/{}", parts.join("/")))
+    let secret = match rel.starts_with(homes::SECRETS) {
+        true => rel.to_string_lossy().ends_with(AGE),
+        false => chezmoi::target_of(rel).1,
+    };
+    secret.then(|| homes::shown(rel))
 }
 
 #[cfg(test)]
