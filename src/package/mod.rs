@@ -3,7 +3,7 @@ mod pacman;
 
 pub use dpkg::keep_only;
 
-use crate::fleet::Fleet;
+use crate::{cmd, fleet::Fleet};
 use anyhow::{Context, Result, bail};
 use md5::{Digest, Md5};
 use std::{
@@ -76,10 +76,34 @@ impl Distro {
         }
     }
 
-    pub fn uninstall(self, names: &[&str]) -> Result<()> {
+    pub fn uninstall(self, fleet: &Fleet, names: &[&str]) -> Result<()> {
+        let wanted: BTreeSet<&str> = fleet
+            .system
+            .packages
+            .iter()
+            .chain(&fleet.system.built_packages)
+            .map(String::as_str)
+            .collect();
+        let installed = Db::load()?;
+        let keep: Vec<&str> = installed
+            .packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .filter(|name| wanted.contains(name))
+            .collect();
         match self {
-            Distro::Arch => pacman::uninstall(names),
-            Distro::Debian => dpkg::uninstall(names),
+            Distro::Arch => {
+                if !keep.is_empty() {
+                    cmd::root("pacman", &[&["-D", "--asexplicit"], &keep[..]].concat())?;
+                }
+                pacman::uninstall(names)
+            }
+            Distro::Debian => {
+                if !keep.is_empty() {
+                    cmd::root("apt-mark", &[&["manual"], &keep[..]].concat())?;
+                }
+                dpkg::uninstall(names)
+            }
         }
     }
 }

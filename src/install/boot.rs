@@ -21,6 +21,7 @@ fn unit() -> String {
          \n\
          [Service]\n\
          Type=oneshot\n\
+         TimeoutStartSec=30min\n\
          ExecStart={BINARY} install\n\
          StandardInput=tty\n\
          StandardOutput=tty\n\
@@ -116,7 +117,7 @@ pub fn first_start() -> bool {
     Path::new(SERVICE_DIR).join(SERVICE).exists()
 }
 
-pub fn finish() -> Result<()> {
+pub fn secure() -> Result<()> {
     if efi_var("SecureBoot")? != Some(1) {
         bail!("Secure Boot is off: turn it on in the firmware setup, then start the machine again");
     }
@@ -133,6 +134,10 @@ pub fn finish() -> Result<()> {
             ],
         )?;
     }
+    Ok(())
+}
+
+pub fn finish() -> Result<()> {
     cmd::root("systemctl", &["disable", SERVICE])?;
     fs::remove_file(Path::new(SERVICE_DIR).join(SERVICE))?;
     cmd::root("systemctl", &["daemon-reload"])

@@ -1,5 +1,3 @@
-# mothership
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark-dark.svg">
@@ -25,7 +23,7 @@ All of them run with `sudo`.
 | `retire <type>/<root\|user> <name>` | Removes a key, and prints the secrets you should change. |
 | `install` | Sets up a new machine from the fleet. |
 
-Secrets are encrypted with [age](https://age-encryption.org). Root and each user have their own key, and their own list of keys allowed to open their secrets. Review treats a file only its owner can read as a secret, and adds it encrypted.
+Secrets are encrypted with [age](https://age-encryption.org). Root and each user have their own key, and their own list of keys allowed to open their secrets. Review treats a file other users can't read as a secret, and adds it encrypted.
 
 ## Setting up a machine
 
@@ -45,7 +43,7 @@ From the Arch ISO, install also partitions and encrypts the disk:
 
 - Start the ISO in UEFI mode, with Secure Boot in Setup Mode and a TPM 2.0.
 - New Secure Boot keys make BitLocker ask for its recovery key: suspend it first.
-- The type lists `linux` and `sbctl`, holds `/etc/kernel/cmdline`, and has a mkinitcpio preset that builds a UKI with the `systemd` and `sd-encrypt` hooks.
+- The type lists `linux`, `sbctl` and `tpm2-tss`, holds `/etc/kernel/cmdline`, and has a mkinitcpio preset that builds a UKI with the `systemd` and `sd-encrypt` hooks.
 - At the next start, type the disk's passphrase once. After that, the TPM opens the disk.
 
 ## Writing a fleet

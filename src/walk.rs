@@ -1,8 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::{
     collections::HashSet,
     fs,
-    io::ErrorKind,
+    io::{ErrorKind, Write},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -136,6 +137,17 @@ pub fn files(root: &Path) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 #[path = "../tests/walk.rs"]
 mod tests;
+
+pub fn write(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
+    let dir = path.parent().context("no parent folder")?;
+    fs::create_dir_all(dir)?;
+    let mut file = tempfile::NamedTempFile::new_in(dir)?;
+    file.write_all(bytes)?;
+    file.as_file()
+        .set_permissions(fs::Permissions::from_mode(mode))?;
+    file.persist(path)?;
+    Ok(())
+}
 
 pub fn under(root: &Path, absolute: &str) -> PathBuf {
     root.join(absolute.trim_start_matches('/'))

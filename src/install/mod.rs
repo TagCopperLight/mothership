@@ -5,13 +5,14 @@ mod iso;
 use crate::{
     apply, chezmoi,
     cmd::{self, As},
-    fleet::{self, Fleet, Machine, Mode},
+    fleet::{self, Fleet, Machine},
     hardware, net,
     package::{self, Distro},
     prompt::{Choice, Prompt},
-    revert, scan,
+    scan,
     secrets::{self, MachineKey},
     user::{self, User},
+    walk,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -119,6 +120,10 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
         adopt(prompt, &names, dir, token.as_deref())?;
     }
 
+    let first_start = !chroot && boot::first_start();
+    if first_start {
+        boot::secure()?;
+    }
     trust_keys(prompt, &hostname()?)?;
     let fleet = Fleet::load()?;
     let sudo = match (distro, &fleet.system.aur_helper) {
@@ -133,7 +138,7 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     if chroot {
         return boot::setup();
     }
-    if boot::first_start() {
+    if first_start {
         boot::finish()?;
     }
     scan::run()
@@ -167,6 +172,7 @@ fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<()
             Some(url) => url.clone(),
             None => prompt.line("Fleet repository:")?,
         };
+        fs::create_dir_all(dir.parent().expect("the fleet folder has a parent"))?;
         admin.create_dir_all(dir)?;
         clone(&url, dir, As::User(&admin), distro)?;
     }
@@ -373,8 +379,8 @@ impl NoPassword {
         let handler = remove_and_leave as extern "C" fn(libc::c_int) as libc::sighandler_t;
         let previous = LEAVING.map(|signal| unsafe { libc::signal(signal, handler) });
         let granted = NoPassword(previous);
-        let rule = format!("{} ALL=(ALL:ALL) NOPASSWD: ALL\n", admin.name);
-        revert::write(no_password_path(), rule.as_bytes(), Mode(0o440))?;
+        let rule = format!("{} ALL=(root) NOPASSWD: /usr/bin/pacman\n", admin.name);
+        walk::write(no_password_path(), rule.as_bytes(), 0o440)?;
         Ok(granted)
     }
 }

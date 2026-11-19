@@ -1,7 +1,7 @@
 use crate::{
     cmd::{self, As},
     package::Archive,
-    style::{self, strip_ansi},
+    style::{self, Paint, Style},
     user::User,
     walk,
 };
@@ -46,17 +46,13 @@ impl Preview {
         Ok(match self {
             Preview::None => Vec::new(),
             Preview::Contents(path) => contents(path)?,
-            Preview::Diff { old, new } => diff(old, new, color)?,
-            Preview::Original { path, archive } => original(path, archive, color)?,
+            Preview::Diff { old, new } => paint_diff(diff(old, new)?, color),
+            Preview::Original { path, archive } => paint_diff(original(path, archive)?, color),
             Preview::Chezmoi { path, user } => {
-                let color = if color {
-                    "--color=true"
-                } else {
-                    "--color=false"
-                };
                 let path = path.to_string_lossy();
-                let args = ["diff", "--reverse", "--no-pager", color, &path];
-                hunks(&cmd::stdout(As::User(user), "chezmoi", &args)?)
+                let args = ["diff", "--reverse", "--no-pager", "--color=false", &path];
+                let diff = hunks(&cmd::stdout(As::User(user), "chezmoi", &args)?);
+                paint_diff(diff, color)
             }
             Preview::Unit { name, user } => {
                 let machine = user.as_ref().map(|u| format!("{u}@"));
@@ -81,7 +77,33 @@ impl Preview {
 }
 
 fn lines(text: &str) -> Vec<String> {
-    text.lines().map(|l| l.replace('\t', "    ")).collect()
+    text.lines()
+        .map(|line| {
+            line.replace('\t', "    ")
+                .chars()
+                .map(|c| if c.is_control() { '\u{fffd}' } else { c })
+                .collect()
+        })
+        .collect()
+}
+
+fn paint_diff(lines: Vec<String>, color: bool) -> Vec<String> {
+    let style = Style {
+        terminal: false,
+        color,
+    };
+    lines
+        .into_iter()
+        .map(|line| {
+            let paint = match line.chars().next() {
+                Some('+') => Paint::Green,
+                Some('-') => Paint::Red,
+                Some('@') => Paint::Cyan,
+                _ => return line,
+            };
+            style.paint(line, &[paint])
+        })
+        .collect()
 }
 
 fn contents(path: &Path) -> Result<Vec<String>> {
@@ -103,14 +125,9 @@ fn contents(path: &Path) -> Result<Vec<String>> {
     Ok(lines(&String::from_utf8_lossy(&fs::read(path)?)))
 }
 
-fn diff(old: &Path, new: &Path, color: bool) -> Result<Vec<String>> {
+fn diff(old: &Path, new: &Path) -> Result<Vec<String>> {
     let out = Command::new("git")
-        .args(["diff", "--no-index", "--no-ext-diff"])
-        .arg(if color {
-            "--color=always"
-        } else {
-            "--color=never"
-        })
+        .args(["diff", "--no-index", "--no-ext-diff", "--color=never"])
         .args([old, new])
         .output()
         .context("running git diff")?;
@@ -120,7 +137,7 @@ fn diff(old: &Path, new: &Path, color: bool) -> Result<Vec<String>> {
     Ok(hunks(&String::from_utf8_lossy(&out.stdout)))
 }
 
-fn original(path: &Path, archive: &Archive, color: bool) -> Result<Vec<String>> {
+fn original(path: &Path, archive: &Archive) -> Result<Vec<String>> {
     if !archive.path.exists() {
         let mut out = vec![format!(
             "The package cache no longer has {}, so here is the file:",
@@ -132,10 +149,10 @@ fn original(path: &Path, archive: &Archive, color: bool) -> Result<Vec<String>> 
     let shipped = archive.shipped(path)?;
     let mut file = tempfile::NamedTempFile::new()?;
     file.write_all(&shipped)?;
-    diff(file.path(), path, color)
+    diff(file.path(), path)
 }
 
 fn hunks(diff: &str) -> Vec<String> {
-    let start = diff.lines().position(|l| strip_ansi(l).starts_with("@@"));
+    let start = diff.lines().position(|l| l.starts_with("@@"));
     lines(diff).into_iter().skip(start.unwrap_or(0)).collect()
 }

@@ -1,6 +1,7 @@
 use crate::{
     fleet::Fleet,
     scan::{self, Item},
+    walk,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -79,8 +80,12 @@ impl Later {
         let keys: BTreeSet<String> = current.iter().map(|i| scan::key(fleet, i)).collect();
         self.items.retain(|key, _| keys.contains(key));
         fs::create_dir_all(self.path.parent().expect("has a parent"))?;
-        fs::write(&self.path, serde_json::to_string_pretty(&self.items)?)
-            .with_context(|| format!("writing {}", self.path.display()))
+        walk::write(
+            &self.path,
+            serde_json::to_string_pretty(&self.items)?.as_bytes(),
+            0o644,
+        )
+        .with_context(|| format!("writing {}", self.path.display()))
     }
 }
 

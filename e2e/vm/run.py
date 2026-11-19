@@ -186,7 +186,7 @@ def own_prompt(vm: pexpect.spawn) -> None:
 
 
 def wait(vm: pexpect.spawn, text: str, timeout: int = 600) -> None:
-    if vm.expect([text, r"\nError: [^\r\n]+\r\n"], timeout=timeout) == 1:
+    if vm.expect([text, r"\nError: [^\r\n]+\r*\n"], timeout=timeout) == 1:
         sys.exit(f"install failed: {vm.after.strip()}")
 
 

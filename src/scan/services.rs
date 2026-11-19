@@ -2,8 +2,10 @@ use super::{Change, Item, Kind, Ships};
 use crate::{
     edit::{Add, Key},
     fleet::{Fleet, Member},
+    package::Distro,
     preview::Preview,
     revert::Revert,
+    walk,
 };
 use anyhow::{Context, Result};
 use globset::Glob;
@@ -19,6 +21,8 @@ const SYSTEM_PRESETS: [&str; 3] = [
     "/run/systemd/system-preset",
     "/usr/lib/systemd/system-preset",
 ];
+const DEBIAN_SYSTEM: &str = "/var/lib/systemd/deb-systemd-helper-enabled";
+const DEBIAN_USER: &str = "/var/lib/systemd/deb-systemd-user-helper-enabled";
 const DEPENDENCY_DIRS: [&str; 3] = [".wants", ".requires", ".upholds"];
 const USER_PRESETS: [&str; 3] = [
     "/etc/systemd/user-preset",
@@ -39,6 +43,7 @@ pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
             dirs: &system,
             enable_dirs: &[&system[0]],
             preset_dirs: &SYSTEM_PRESETS,
+            packaged: DEBIAN_SYSTEM,
             member: None,
         },
         &fleet.system.services,
@@ -60,6 +65,7 @@ pub fn scan_user(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
             dirs: &user,
             enable_dirs: &[&user[0], &user[1]],
             preset_dirs: &USER_PRESETS,
+            packaged: DEBIAN_USER,
             member: Some(member),
         },
         &member.config.user_services,
@@ -73,6 +79,7 @@ struct Unit<'a> {
     dirs: &'a [PathBuf],
     enable_dirs: &'a [&'a PathBuf],
     preset_dirs: &'a [&'a str],
+    packaged: &'a str,
     member: Option<&'a Member>,
 }
 
@@ -83,11 +90,15 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
         dirs: unit_dirs,
         enable_dirs,
         preset_dirs,
+        packaged,
         member,
     } = scope;
     let user = member.map(|m| m.user().name.clone());
     let enabled = enabled(enable_dirs)?;
-    let presets = Presets::load(preset_dirs)?;
+    let presets = match Distro::here()? {
+        Distro::Arch => Defaults::Presets(Presets::load(preset_dirs)?),
+        Distro::Debian => Defaults::Packaged(packaged_units(Path::new(packaged))?),
+    };
     let covered = with_also(declared, unit_dirs)?;
     let mut items = Vec::new();
     for unit in enabled.iter().filter(|unit| !covered.contains(*unit)) {
@@ -234,6 +245,34 @@ fn file_name(path: &Path) -> String {
 
 fn is_dependency_dir(path: &Path) -> bool {
     path.is_dir() && DEPENDENCY_DIRS.iter().any(|s| file_name(path).ends_with(s))
+}
+
+enum Defaults {
+    Presets(Presets),
+    Packaged(BTreeSet<String>),
+}
+
+impl Defaults {
+    fn enables(&self, unit: &str, unit_dirs: &[PathBuf]) -> Result<bool> {
+        match self {
+            Defaults::Presets(presets) => presets.enables(unit, unit_dirs),
+            Defaults::Packaged(units) => Ok(units.contains(unit)),
+        }
+    }
+}
+
+fn packaged_units(dir: &Path) -> Result<BTreeSet<String>> {
+    if !dir.exists() {
+        return Ok(BTreeSet::new());
+    }
+    Ok(walk::files(dir)?
+        .iter()
+        .map(|rel| {
+            let name = file_name(rel);
+            name.strip_suffix(".dsh-also")
+                .map_or(name.clone(), str::to_owned)
+        })
+        .collect())
 }
 
 struct Presets {

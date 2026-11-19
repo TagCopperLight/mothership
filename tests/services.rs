@@ -73,3 +73,14 @@ fn a_template_preset_enables_its_default_instance_or_the_listed_ones() {
     assert!(enables("serial@ttyS0.service"));
     assert!(!enables("serial@ttyS1.service"));
 }
+
+#[test]
+fn on_debian_the_units_a_package_enabled_are_its_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("sysinit.target.wants")).unwrap();
+    fs::write(dir.path().join("sysinit.target.wants/apparmor.service"), "").unwrap();
+    fs::write(dir.path().join("ssh.service.dsh-also"), "").unwrap();
+    let units = packaged_units(dir.path()).unwrap();
+    let expected = ["apparmor.service", "ssh.service"].map(str::to_owned);
+    assert_eq!(units, BTreeSet::from(expected));
+}

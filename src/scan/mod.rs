@@ -696,18 +696,18 @@ fn looks_secret(not_secret: &Paths, item: Item, path: &Path) -> Item {
 fn guess_secret(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|meta| {
         if meta.is_dir() {
-            holds_owner_only(path)
+            holds_private(path)
         } else {
-            owner_only(&meta)
+            private(&meta)
         }
     })
 }
 
-fn owner_only(meta: &fs::Metadata) -> bool {
-    meta.is_file() && meta.permissions().mode() & 0o044 == 0
+fn private(meta: &fs::Metadata) -> bool {
+    meta.is_file() && meta.permissions().mode() & 0o004 == 0
 }
 
-fn holds_owner_only(dir: &Path) -> bool {
+fn holds_private(dir: &Path) -> bool {
     let Ok(entries) = fs::read_dir(dir) else {
         return true;
     };
@@ -716,9 +716,9 @@ fn holds_owner_only(dir: &Path) -> bool {
             return true;
         };
         if meta.is_dir() {
-            holds_owner_only(&path)
+            holds_private(&path)
         } else {
-            owner_only(&meta)
+            private(&meta)
         }
     })
 }

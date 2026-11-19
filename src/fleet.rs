@@ -102,8 +102,7 @@ impl Machine {
 
     pub fn save(&self, root: &Path) -> Result<()> {
         let path = walk::under(root, MACHINE);
-        fs::create_dir_all(path.parent().expect("MACHINE has a folder"))?;
-        fs::write(&path, toml::to_string(self)?)
+        walk::write(&path, toml::to_string(self)?.as_bytes(), 0o644)
             .with_context(|| format!("writing {}", path.display()))
     }
 }
@@ -302,7 +301,12 @@ impl Fleet {
             .collect();
 
         let (mut all, mut secret_etc) = (BTreeSet::new(), BTreeSet::new());
-        for file in walk::files(&type_dir.join("etc"))? {
+        let etc_dir = type_dir.join("etc");
+        let etc_files = match etc_dir.exists() {
+            true => walk::files(&etc_dir)?,
+            false => Vec::new(),
+        };
+        for file in etc_files {
             let rel = match file.to_str().and_then(|f| f.strip_suffix(secrets::AGE)) {
                 Some(rel) => {
                     secret_etc.insert(PathBuf::from(rel));

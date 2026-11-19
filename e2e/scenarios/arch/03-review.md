@@ -13,7 +13,7 @@ $ echo y | sudo mothership apply &>/dev/null
 $ sudo pacman -S --noconfirm beta &>/dev/null
 $ sudo pacman -R --noconfirm gamma &>/dev/null
 $ echo "mine = yes" | sudo tee -a /etc/fleet.conf >/dev/null
-$ echo "export HTTP_PROXY=http://proxy:3128" | sudo install -m 640 /dev/stdin /etc/profile.d/proxy.sh
+$ echo "export HTTP_PROXY=http://proxy:3128" | sudo install -m 664 /dev/stdin /etc/profile.d/proxy.sh
 $ printf '[core]\n\teditor = vim\n' >> ~/.gitconfig
 $ mkdir -p ~/.config/newapp ~/.config/tokens &&
 > echo "theme = dark" > ~/.config/newapp/settings.ini &&
@@ -192,7 +192,7 @@ me 644 etc/profile.d/proxy.sh
 $ grep -A2 '^\[etc_modes\]' /var/lib/mothership/fleet/types/workstation/system.toml
 [etc_modes]
 "sudoers.d/wheel" = "440"
-"profile.d/proxy.sh" = "640"
+"profile.d/proxy.sh" = "664"
 ```
 
 Since review wrote the fleet's version of `/etc/fleet.conf`, apply follows the fleet's next

@@ -1,4 +1,4 @@
-use super::{Archive, Backup, Distro, Origin, Package, in_parallel};
+use super::{Archive, Backup, Db, Distro, Origin, Package, in_parallel};
 use crate::{
     cmd::{self, As},
     fleet::Fleet,
@@ -314,31 +314,71 @@ pub fn install(names: &[&str]) -> Result<()> {
 }
 
 pub fn uninstall(names: &[&str]) -> Result<()> {
-    let before = autoremovable()?;
+    let before = autoremovable(&[])?;
     cmd::root("apt-mark", &[&["auto"], names].concat())?;
-    let after = autoremovable()?;
-    let unneeded: Vec<&str> = after.difference(&before).map(String::as_str).collect();
-    if unneeded.is_empty() {
-        return Ok(());
+    let after = autoremovable(&[])?;
+    let unneeded: BTreeSet<String> = after.difference(&before).cloned().collect();
+    remove(&Db::load()?, &unneeded)
+}
+
+fn remove(db: &Db, names: &BTreeSet<String>) -> Result<()> {
+    let mut purge = Vec::new();
+    let mut keep_config = Vec::new();
+    for name in names {
+        let edited = match db.packages.iter().find(|p| p.name == *name) {
+            Some(package) => edited_config(package)?,
+            None => false,
+        };
+        match edited {
+            true => keep_config.push(name.as_str()),
+            false => purge.push(name.as_str()),
+        }
     }
-    apt_get(&[&["purge", "-y"], &unneeded[..]].concat())
+    if !purge.is_empty() {
+        apt_get(&[&["purge", "-y"], &purge[..]].concat())?;
+    }
+    if !keep_config.is_empty() {
+        apt_get(&[&["remove", "-y"], &keep_config[..]].concat())?;
+    }
+    Ok(())
+}
+
+fn edited_config(package: &Package) -> Result<bool> {
+    for backup in &package.backups {
+        match fs::read(&backup.path) {
+            Ok(bytes) if super::md5(&bytes) != backup.md5 => return Ok(true),
+            Err(e) if e.kind() != ErrorKind::NotFound => {
+                return Err(e).with_context(|| format!("reading {}", backup.path.display()));
+            }
+            _ => {}
+        }
+    }
+    Ok(false)
 }
 
 pub fn keep_only(fleet: &Fleet, prompt: &mut Prompt) -> Result<()> {
-    let keep: BTreeSet<&str> = fleet
+    let db = Db::load()?;
+    let mut keep: BTreeSet<String> = fleet
         .system
         .packages
         .iter()
         .chain(&fleet.system.built_packages)
-        .map(String::as_str)
+        .cloned()
         .collect();
+    keep.extend(depending_on(&db, &runs_the_machine(&db)?));
     let manual = cmd::stdout(As::Root, "apt-mark", &["showmanual"])?;
-    let unmark: Vec<&str> = manual.lines().filter(|n| !keep.contains(n)).collect();
+    let unmark: Vec<&str> = manual.lines().filter(|n| !keep.contains(*n)).collect();
     if unmark.is_empty() {
         return Ok(());
     }
-    cmd::root("apt-mark", &[&["auto"], &unmark[..]].concat())?;
-    let unneeded = autoremovable()?;
+    let states = tempfile::NamedTempFile::new()?;
+    if let Some(text) = read_if_any(EXTENDED_STATES)? {
+        fs::write(states.path(), text)?;
+    }
+    let option = format!("Dir::State::extended_states={}", states.path().display());
+    let trial = ["-o", option.as_str()];
+    cmd::root("apt-mark", &[&trial[..], &["auto"], &unmark[..]].concat())?;
+    let unneeded = autoremovable(&trial)?;
     if unneeded.is_empty() {
         return Ok(());
     }
@@ -346,15 +386,56 @@ pub fn keep_only(fleet: &Fleet, prompt: &mut Prompt) -> Result<()> {
     for name in &unneeded {
         println!("  {name}");
     }
-    if prompt.confirm("Remove them")? {
-        apt_get(&["autoremove", "--purge", "-y"])
-    } else {
-        cmd::root("apt-mark", &[&["manual"], &unmark[..]].concat())
+    if !prompt.confirm("Remove them")? {
+        return Ok(());
     }
+    cmd::root("apt-mark", &[&["auto"], &unmark[..]].concat())?;
+    remove(&db, &unneeded)
 }
 
-fn autoremovable() -> Result<BTreeSet<String>> {
-    let out = cmd::stdout(As::Root, "apt-get", &["--simulate", "autoremove"])?;
+fn runs_the_machine(db: &Db) -> Result<BTreeSet<String>> {
+    let release = cmd::stdout(As::Root, "uname", &["-r"])?;
+    let mut paths = vec![
+        format!("/boot/vmlinuz-{}", release.trim()),
+        "/usr/bin/sudo".to_owned(),
+        "/usr/lib/grub/".to_owned(),
+        "/usr/lib/shim/".to_owned(),
+        "/usr/lib/systemd/boot/efi/".to_owned(),
+    ];
+    for dir in fs::read_dir("/etc/systemd/system")? {
+        let dir = dir?.path();
+        if !dir.to_string_lossy().ends_with(".wants") {
+            continue;
+        }
+        for link in fs::read_dir(&dir)? {
+            match link?.path().canonicalize() {
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                unit => paths.push(unit?.to_string_lossy().into_owned()),
+            }
+        }
+    }
+    Ok(db
+        .packages
+        .iter()
+        .filter(|package| package.files.iter().any(|file| paths.contains(file)))
+        .map(|package| package.name.clone())
+        .collect())
+}
+
+fn depending_on(db: &Db, needed: &BTreeSet<String>) -> BTreeSet<String> {
+    db.packages
+        .iter()
+        .filter(|package| {
+            let one = BTreeSet::from([package.name.clone()]);
+            !db.with_depends(&one).is_disjoint(needed)
+        })
+        .map(|package| package.name.clone())
+        .collect()
+}
+
+fn autoremovable(options: &[&str]) -> Result<BTreeSet<String>> {
+    let args = [options, &["--simulate", "autoremove"]].concat();
+    let out = cmd::stdout(As::Root, "apt-get", &args)?;
     Ok(out
         .lines()
         .filter_map(|line| line.strip_prefix("Remv ")?.split_whitespace().next())

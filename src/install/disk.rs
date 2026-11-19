@@ -14,6 +14,7 @@ const ESP_CODE: &str = "ef00";
 const XBOOTLDR_CODE: &str = "ea00";
 const ROOT_CODE: &str = "8304";
 const GIB: u64 = 1 << 30;
+const LABELS: [&str; 2] = ["mothership-boot", "mothership-root"];
 const BOOT_SIZE: u64 = GIB;
 const ROOT_MIN: u64 = 20 * GIB;
 const BOOT_MOUNT: &str = "/run/archiso/bootmnt";
@@ -206,6 +207,17 @@ fn wipe(disk: &str) -> Result<Partitions> {
 }
 
 fn beside(disk: &str, prompt: &mut Prompt) -> Result<Partitions> {
+    let earlier: Vec<String> = partitions(disk)?
+        .iter()
+        .filter(|p| p["partlabel"].as_str().is_some_and(|l| LABELS.contains(&l)))
+        .filter_map(|p| p["name"].as_str().map(str::to_owned))
+        .collect();
+    if !earlier.is_empty() {
+        bail!(
+            "{} come from an earlier install: delete them, then run install again",
+            earlier.join(" and ")
+        );
+    }
     let esps = esps(disk)?;
     if esps.is_empty() {
         bail!("{disk} has no EFI partition to share");
@@ -239,8 +251,10 @@ fn beside(disk: &str, prompt: &mut Prompt) -> Result<Partitions> {
         &[
             &format!("--new={next}:{start}:{boot_end}"),
             &format!("--typecode={next}:{XBOOTLDR_CODE}"),
+            &format!("--change-name={next}:{}", LABELS[0]),
             &format!("--new={}:{}:{end}", next + 1, boot_end + 1),
             &format!("--typecode={}:{ROOT_CODE}", next + 1),
+            &format!("--change-name={}:{}", next + 1, LABELS[1]),
             disk,
         ],
     )?;
@@ -257,7 +271,13 @@ fn partitions(disk: &str) -> Result<Vec<serde_json::Value>> {
     let json = cmd::stdout(
         As::Root,
         "lsblk",
-        &["--json", "--paths", "--output", "NAME,PARTTYPE,PARTN", disk],
+        &[
+            "--json",
+            "--paths",
+            "--output",
+            "NAME,PARTTYPE,PARTN,PARTLABEL",
+            disk,
+        ],
     )?;
     let json: serde_json::Value = serde_json::from_str(&json)?;
     Ok(json["blockdevices"][0]["children"]

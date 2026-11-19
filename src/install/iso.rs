@@ -70,6 +70,10 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
         let path = copy.to_string_lossy();
         let args = ["-c", "safe.directory=*", "-C", &path, "pull", "--ff-only"];
         net::retry("Pulling the fleet", || git(As::Root, &args))?;
+        cmd::root(
+            "chown",
+            &["-R", "--no-dereference", "--reference", &path, &path],
+        )?;
     } else {
         let parent = copy.parent().expect("the fleet folder has a parent");
         fs::create_dir_all(parent)?;

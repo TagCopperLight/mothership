@@ -598,6 +598,12 @@ fn remove_etc(fleet: &Fleet, rel: &Path) -> Result<()> {
 }
 
 fn set_pref(source: &Path, key: &str, value: &str) -> Result<()> {
+    if source.extension().is_some_and(|e| e == "age") {
+        bail!(
+            "{} is encrypted: set the pref in it by hand",
+            source.display()
+        );
+    }
     let start = format!("user_pref(\"{key}\",");
     let line = format!("user_pref(\"{key}\", {value});");
     let text = fs::read_to_string(source)?;

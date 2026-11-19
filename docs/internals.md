@@ -6,6 +6,7 @@
 - Without `/etc/kernel/cmdline`, mkinitcpio puts the running kernel's command line in the UKI. In the chroot, that's the ISO's.
 - The TPM key is bound to PCR 7 (Secure Boot state) and to PCR 15 being zero. systemd extends PCR 15 when it opens a root, so a fake root partition someone adds can't unseal this disk's key.
 - systemd's gpt-auto finds the partitions by type code (ESP `ef00`, XBOOTLDR `ea00`, root `8304`) and opens the root as `root`. No fstab or crypttab names them.
+- `sbctl enroll-keys --microsoft` also enrolls Microsoft's third-party CA, which signs graphics cards' option ROMs. `--tpm-eventlog` finds no event log inside the chroot.
 - `beside` puts the kernel in its own XBOOTLDR partition, since Windows' EFI partition is often too small.
 - The passphrase is typed with the console keymap at each boot, so the ISO loads the type's keymap before asking for it.
 - A disk name ending in a digit takes a `p` before the partition number: `nvme0n1p2`.

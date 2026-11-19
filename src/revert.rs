@@ -3,12 +3,11 @@ use crate::{
     cmd::{self, As},
     fleet::{Fleet, Manager, Member, Mode, Tool},
     package::{Archive, Distro},
-    tools, user,
+    tools, user, walk,
 };
 use anyhow::{Context, Result};
 use std::{
     fs,
-    io::Write,
     os::unix::{self, fs::PermissionsExt},
     path::{Path, PathBuf},
 };
@@ -115,7 +114,7 @@ fn run_machine(fleet: &Fleet, reverts: &[&Revert]) -> Result<()> {
         distro.install(fleet, &install)?;
     }
     if !uninstall.is_empty() {
-        distro.uninstall(&uninstall)?;
+        distro.uninstall(fleet, &uninstall)?;
     }
     for revert in &etc {
         change_etc(fleet, revert)?;
@@ -235,28 +234,17 @@ fn change_etc(fleet: &Fleet, revert: &Revert) -> Result<()> {
             if fs::symlink_metadata(&source)?.is_symlink() {
                 link(path, &fs::read_link(&source)?)
             } else {
-                write(path, &fleet.etc_contents(rel)?, fleet.etc_mode(rel)?)
+                walk::write(path, &fleet.etc_contents(rel)?, fleet.etc_mode(rel)?.0)
             }
         }
         Revert::RestoreEtc { archive, .. } => {
             let mode = Mode(fs::metadata(path)?.permissions().mode() & 0o7777);
-            write(path, &archive.shipped(path)?, mode)
+            walk::write(path, &archive.shipped(path)?, mode.0)
         }
         _ if path.is_dir() => Ok(fs::remove_dir_all(path)?),
         _ => Ok(fs::remove_file(path)?),
     };
     change().with_context(|| format!("changing {}", path.display()))
-}
-
-pub fn write(path: &Path, bytes: &[u8], mode: Mode) -> Result<()> {
-    let dir = path.parent().context("no parent folder")?;
-    fs::create_dir_all(dir)?;
-    let mut file = tempfile::NamedTempFile::new_in(dir)?;
-    file.write_all(bytes)?;
-    file.as_file()
-        .set_permissions(fs::Permissions::from_mode(mode.0))?;
-    file.persist(path)?;
-    Ok(())
 }
 
 pub fn link(path: &Path, target: &Path) -> Result<()> {
