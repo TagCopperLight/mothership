@@ -38,9 +38,9 @@ struct Tally {
 impl Tally {
     fn count(&mut self, answer: Answer) {
         let count = match answer {
-            Answer::Add | Answer::Secret => &mut self.added,
+            Answer::Add(_) | Answer::Secret(_) => &mut self.added,
             Answer::NotSecret => &mut self.not_secret,
-            Answer::Revert => &mut self.reverted,
+            Answer::Revert(_) => &mut self.reverted,
             Answer::Ignore => &mut self.ignored,
             Answer::Later => &mut self.put_off,
             Answer::Pass => &mut self.passed,
@@ -50,37 +50,28 @@ impl Tally {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Answer {
-    Add,
-    Secret,
+#[derive(Clone, Copy)]
+enum Answer<'a> {
+    Add(&'a Add),
+    Secret(&'a Add),
     NotSecret,
-    Revert,
+    Revert(&'a Revert),
     Ignore,
     Later,
     Pass,
     Quit,
 }
 
-impl Answer {
-    const ALWAYS: [Answer; 4] = [Answer::Ignore, Answer::Later, Answer::Pass, Answer::Quit];
-    const ALL: [Answer; 8] = [
-        Answer::Add,
-        Answer::Secret,
-        Answer::NotSecret,
-        Answer::Revert,
-        Answer::Ignore,
-        Answer::Later,
-        Answer::Pass,
-        Answer::Quit,
-    ];
+impl Answer<'_> {
+    const ALWAYS: [Answer<'static>; 4] =
+        [Answer::Ignore, Answer::Later, Answer::Pass, Answer::Quit];
 
     fn key(self) -> char {
         match self {
-            Answer::Add => 'a',
-            Answer::Secret => 's',
+            Answer::Add(_) => 'a',
+            Answer::Secret(_) => 's',
             Answer::NotSecret => 'n',
-            Answer::Revert => 'r',
+            Answer::Revert(_) => 'r',
             Answer::Ignore => 'i',
             Answer::Later => 'l',
             Answer::Pass => 'p',
@@ -90,22 +81,15 @@ impl Answer {
 
     fn name(self) -> &'static str {
         match self {
-            Answer::Add => "add",
-            Answer::Secret => "secret",
+            Answer::Add(_) => "add",
+            Answer::Secret(_) => "secret",
             Answer::NotSecret => "not secret",
-            Answer::Revert => "revert",
+            Answer::Revert(_) => "revert",
             Answer::Ignore => "ignore",
             Answer::Later => "later",
             Answer::Pass => "pass",
             Answer::Quit => "quit",
         }
-    }
-
-    fn from_key(key: char) -> Answer {
-        Answer::ALL
-            .into_iter()
-            .find(|answer| answer.key() == key)
-            .expect("the prompt accepts only offered keys")
     }
 }
 
@@ -156,24 +140,24 @@ fn ask(report: &scan::Report) -> Result<()> {
         }
         item.preview.show(style.color);
 
-        let add = item.add.as_ref();
-        let encrypted = add
+        let encrypted = item
+            .add
+            .as_ref()
             .filter(|_| item.secret == Secret::No)
             .and_then(Add::encrypted);
-        let revert = item.revert.as_ref();
         let mut choices: Vec<(Answer, String)> = Vec::new();
-        if let Some(add) = add {
-            choices.push((Answer::Add, add.describe()));
+        if let Some(add) = &item.add {
+            choices.push((Answer::Add(add), add.describe()));
         }
         if let Some(encrypted) = &encrypted {
-            choices.push((Answer::Secret, encrypted.describe()));
+            choices.push((Answer::Secret(encrypted), encrypted.describe()));
         }
         if item.secret == Secret::Guessed {
             let what = "list it in not-secret.txt, and add it later in clear";
             choices.push((Answer::NotSecret, what.into()));
         }
-        if let Some(revert) = revert {
-            choices.push((Answer::Revert, revert.describe()));
+        if let Some(revert) = &item.revert {
+            choices.push((Answer::Revert(revert), revert.describe()));
         }
         let key = |answer: Answer| style.paint(answer.key(), &[Paint::Bold, Paint::Cyan]);
         for (answer, what) in &choices {
@@ -188,36 +172,29 @@ fn ask(report: &scan::Report) -> Result<()> {
             .map(|answer| format!("{} {}", key(*answer), answer.name()))
             .collect();
         println!("  {}", always.join(" · "));
-        let keys: Vec<char> = choices
+        let keys: Vec<(char, Answer)> = choices
             .iter()
             .map(|(answer, _)| *answer)
             .chain(Answer::ALWAYS)
-            .map(Answer::key)
+            .map(|answer| (answer.key(), answer))
             .collect();
 
         loop {
             let answer = match prompt.ask("  ›", &keys) {
-                Ok(Some(key)) => Answer::from_key(key),
+                Ok(Some(answer)) => answer,
                 Ok(None) => break 'items,
                 Err(e) if prompt::stopped(&e) => break 'items,
                 Err(e) => return Err(e),
             };
             let outcome = match answer {
                 Answer::Quit => break 'items,
-                Answer::Add | Answer::Secret => {
-                    let add = match answer {
-                        Answer::Add => add,
-                        _ => encrypted.as_ref(),
-                    };
-                    let add = add.expect("offered only when there is one");
-                    add.apply(fleet, member, &mut prompt, item.preview.seen())
-                        .map(|added| added.then_some("added to the fleet"))
-                }
+                Answer::Add(add) | Answer::Secret(add) => add
+                    .apply(fleet, member, &mut prompt, item.preview.seen())
+                    .map(|added| added.then_some("added to the fleet")),
                 Answer::NotSecret => edit::not_secret(fleet, member, &item.subject)
                     .map(|()| Some("marked not secret")),
-                Answer::Revert => {
-                    let revert = (item.member, revert.expect("offered only when there is one"));
-                    revert_one(fleet, &mut record, revert, &mut prompt)
+                Answer::Revert(revert) => {
+                    revert_one(fleet, &mut record, (item.member, revert), &mut prompt)
                         .map(|reverted| reverted.then_some("reverted"))
                 }
                 Answer::Ignore => {

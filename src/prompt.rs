@@ -63,7 +63,12 @@ impl Prompt {
         }
     }
 
-    pub fn ask(&mut self, question: &str, keys: &[char]) -> Result<Option<char>> {
+    pub fn ask<T: Copy>(&mut self, question: &str, keys: &[(char, T)]) -> Result<Option<T>> {
+        let picked = |key: char| {
+            keys.iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, value)| *value)
+        };
         print!("{question} ");
         io::stdout().flush()?;
         match &mut self.input {
@@ -77,12 +82,13 @@ impl Prompt {
                         println!();
                         return Ok(None);
                     }
-                    Some(byte) if keys.contains(&char::from(byte)) => {
+                    Some(byte) => {
                         let key = char::from(byte);
-                        println!("{}", if key.is_ascii_graphic() { key } else { ' ' });
-                        return Ok(Some(key));
+                        if let Some(value) = picked(key) {
+                            println!("{}", if key.is_ascii_graphic() { key } else { ' ' });
+                            return Ok(Some(value));
+                        }
                     }
-                    Some(_) => {}
                 }
             },
             Input::Lines(lines, echo) => loop {
@@ -98,9 +104,9 @@ impl Prompt {
                 }
                 let mut chars = line.chars();
                 if let (Some(c), None) = (chars.next(), chars.next())
-                    && keys.contains(&c)
+                    && let Some(value) = picked(c)
                 {
-                    return Ok(Some(c));
+                    return Ok(Some(value));
                 }
                 print!("{question} ");
                 io::stdout().flush()?;
@@ -119,8 +125,15 @@ impl Prompt {
             }
             return Ok(matches!(answer.as_deref(), Some("y" | "Y")));
         }
-        let keys = ['y', 'Y', 'n', 'N', '\r', '\n'];
-        Ok(matches!(self.ask(&question, &keys)?, Some('y' | 'Y')))
+        let keys = [
+            ('y', true),
+            ('Y', true),
+            ('n', false),
+            ('N', false),
+            ('\r', false),
+            ('\n', false),
+        ];
+        Ok(self.ask(&question, &keys)?.unwrap_or(false))
     }
 
     pub fn line(&mut self, question: &str) -> Result<String> {

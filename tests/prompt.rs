@@ -32,3 +32,11 @@ fn a_hidden_answer_keeps_its_spaces_and_a_shown_one_loses_them() {
     assert_eq!(prompt.line("Hostname:").unwrap(), "box");
     assert!(prompt.line("Hostname:").is_err());
 }
+
+#[test]
+fn a_key_answers_with_its_value_and_other_keys_ask_again() {
+    let mut prompt = Prompt::answering("x\nab\nb\n");
+    let keys = [('a', 1), ('b', 2)];
+    assert_eq!(prompt.ask("›", &keys).unwrap(), Some(2));
+    assert_eq!(prompt.ask("›", &keys).unwrap(), None);
+}
