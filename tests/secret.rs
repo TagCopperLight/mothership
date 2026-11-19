@@ -12,7 +12,7 @@ fn not_secret(dir: &Path, lines: &str) -> Paths {
 }
 
 #[test]
-fn a_secret_shows_no_contents_but_other_files_do() {
+fn a_secret_keeps_its_preview() {
     let dir = tempfile::TempDir::new().unwrap();
     let not_secret = not_secret(dir.path(), "");
     let key = dir.path().join("id");
@@ -30,7 +30,7 @@ fn a_secret_shows_no_contents_but_other_files_do() {
     };
     let secret = item(&key);
     assert_eq!(secret.secret, Secret::Guessed);
-    assert!(matches!(secret.preview, Preview::None));
+    assert!(matches!(secret.preview, Preview::Contents(_)));
     assert!(matches!(item(&notes).preview, Preview::Contents(_)));
 }
 

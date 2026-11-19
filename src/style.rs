@@ -74,15 +74,37 @@ pub fn clean(text: &str) -> String {
     for c in text.chars() {
         match c {
             '\t' => out.push_str("    "),
-            c if c.is_control() || is_bidi(c) => out.push('\u{fffd}'),
+            c if c.is_control() || is_invisible(c) => out.push('\u{fffd}'),
             c => out.push(c),
         }
     }
     out
 }
 
-fn is_bidi(c: char) -> bool {
-    matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{ad}'
+            | '\u{600}'..='\u{605}'
+            | '\u{61c}'
+            | '\u{6dd}'
+            | '\u{70f}'
+            | '\u{890}'..='\u{891}'
+            | '\u{8e2}'
+            | '\u{180e}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2060}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{110bd}'
+            | '\u{110cd}'
+            | '\u{13430}'..='\u{1343f}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0001}'
+            | '\u{e0020}'..='\u{e007f}'
+    )
 }
 
 pub fn width() -> usize {
@@ -106,37 +128,33 @@ pub fn strip_ansi(line: &str) -> String {
     out
 }
 
-pub fn clip(line: &str, width: usize) -> String {
-    if visible(line) <= width {
-        return line.to_owned();
-    }
-    let mut out = String::new();
+pub fn wrap(line: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    let mut row = String::new();
     let mut shown = 0;
     let mut chars = line.chars();
     while let Some(c) = chars.next() {
         if c == '\x1b' {
-            out.push(c);
+            row.push(c);
             for c in chars.by_ref() {
-                out.push(c);
+                row.push(c);
                 if c.is_ascii_alphabetic() {
                     break;
                 }
             }
-        } else {
-            let w = c.width().unwrap_or(0);
-            if shown + w < width {
-                out.push(c);
-                shown += w;
-            } else {
-                shown = width;
-            }
+            continue;
         }
+        let w = c.width().unwrap_or(0);
+        if shown + w > width {
+            rows.push(std::mem::take(&mut row));
+            shown = 0;
+        }
+        row.push(c);
+        shown += w;
     }
-    out.push('…');
-    if line.contains('\x1b') {
-        out.push_str("\x1b[0m");
-    }
-    out
+    rows.push(row);
+    rows
 }
 
 pub fn pad(text: &str, width: usize) -> String {

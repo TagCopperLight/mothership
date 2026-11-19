@@ -178,7 +178,7 @@ pub fn line(item: &Item, style: Style, columns: Columns, waiting: Option<u64>) -
     );
     let text = text.trim_end();
     if style.terminal {
-        style::clip(text, style::width())
+        style::wrap(text, style::width()).join("\n")
     } else {
         text.to_owned()
     }

@@ -45,7 +45,6 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
             items.push(Item::locked(Kind::Etc, path.display().to_string()));
             continue;
         }
-        let source = fleet.etc_source(rel);
         let item =
             |change, detail| Item::new(Kind::Etc, change, path.display().to_string(), detail);
         let item = match compare(fleet, rel, &path)? {
@@ -57,17 +56,14 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                         storage: Storage::Clear,
                     })
                     .reverting(Etc::Write(path.clone()))
-                    .showing(Preview::Diff {
-                        old: source,
-                        new: path.clone(),
-                    })
+                    .showing(fleet_side(fleet, rel, Some(&path)))
                     .guessing(&path),
             ),
             Compare::Missing => Some(
                 item(Change::Removed, "deleted")
                     .with(Add::RemoveEtc(rel.clone()))
                     .reverting(Etc::Write(path.clone()))
-                    .showing(Preview::Contents(source)),
+                    .showing(fleet_side(fleet, rel, None)),
             ),
             Compare::Unreadable => Some(item(Change::Unreadable, "unreadable")),
         };
@@ -142,6 +138,22 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
         .noting(place.why)
     }));
     Ok(items)
+}
+
+fn fleet_side(fleet: &Fleet, rel: &Path, now: Option<&Path>) -> Preview {
+    let source = fleet.etc_source(rel);
+    match (fleet.secret_etc.contains(rel), now) {
+        (true, now) => Preview::Decrypted {
+            source,
+            keys: fleet.root_keys().clone(),
+            now: now.map(Path::to_path_buf),
+        },
+        (false, Some(now)) => Preview::Diff {
+            old: source,
+            new: now.to_path_buf(),
+        },
+        (false, None) => Preview::Contents(source),
+    }
 }
 
 enum Compare {

@@ -107,7 +107,6 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
         defaults,
         member,
     } = scope;
-    let user = member.map(|m| m.user().name.clone());
     let enabled = systemd::enabled(&[own], dirs)?;
     let mut running = enabled.clone();
     if let Some(shared) = shared {
@@ -124,13 +123,18 @@ fn check(scope: Unit, declared: &[String], ships: &Ships) -> Result<Vec<Item>> {
         if defaults.enables(unit, dirs)? {
             continue;
         }
+        let file = systemd::unit_file(unit, dirs);
+        let preview = match (member, &file) {
+            (None, _) => Preview::Unit(unit.clone()),
+            (Some(member), Some(file)) => Preview::AsUser {
+                path: file.clone(),
+                user: member.user().clone(),
+            },
+            (Some(_), None) => Preview::None,
+        };
         let item = Item::new(kind, Change::Added, unit, "enabled")
             .reverting(unit_revert(kind, revert::Unit::Disable(unit.clone())))
-            .showing(Preview::Unit {
-                name: unit.clone(),
-                user: user.clone(),
-            });
-        let file = systemd::unit_file(unit, dirs);
+            .showing(preview);
         items.push(match file {
             Some(file) if ships.path(&file, member)? => item.with(Add::Declare {
                 key,

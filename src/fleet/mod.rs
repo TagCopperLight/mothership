@@ -199,6 +199,10 @@ impl Fleet {
         &self.keys
     }
 
+    pub fn root_keys(&self) -> &Keys {
+        &self.root_keys
+    }
+
     pub fn etc_open(&self) -> bool {
         self.etc_open
     }

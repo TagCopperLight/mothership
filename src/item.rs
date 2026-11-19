@@ -95,14 +95,14 @@ impl Item {
 
     pub fn locked(kind: Kind, subject: impl Into<String>) -> Self {
         let mut item = Item::new(kind, Change::Unreadable, subject, "locked")
-            .noting("this machine's key isn't on its list");
+            .noting("this machine's key isn't on its list")
+            .showing(Preview::Locked);
         item.secret = Secret::Locked;
         item
     }
 
     pub fn secret(mut self, secret: Secret) -> Self {
         self.secret = secret;
-        self.preview = Preview::None;
         self.guess = None;
         if let Adding::Offered(add) = &mut self.add
             && let Some(encrypted) = add.encrypted()

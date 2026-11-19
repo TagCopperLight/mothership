@@ -2,9 +2,10 @@ use crate::{
     chezmoi,
     cmd::{self, As},
     package::Archive,
+    secrets::Keys,
     snapshot::Snapshot,
     style::{self, Paint, Style},
-    user::User,
+    user::{self, User},
     walk,
 };
 use anyhow::{Context, Result, bail};
@@ -17,7 +18,6 @@ use std::{
     sync::OnceLock,
 };
 
-const LINES: usize = 16;
 const SNIFF: usize = 8 * 1024;
 const INDENT: &str = "      ";
 
@@ -42,10 +42,17 @@ pub enum Preview {
         root: chezmoi::Root,
         seen: Seen,
     },
-    Unit {
-        name: String,
-        user: Option<String>,
+    Unit(String),
+    AsUser {
+        path: PathBuf,
+        user: User,
     },
+    Decrypted {
+        source: PathBuf,
+        keys: Keys,
+        now: Option<PathBuf>,
+    },
+    Locked,
     Dconf {
         section: String,
         user: User,
@@ -72,34 +79,44 @@ impl Preview {
     }
 
     pub fn show(&self, color: bool) {
-        let lines = match self.render(color) {
+        let lines = match self.render() {
             Ok(lines) => lines,
             Err(e) => vec![format!("can't show it: {e:#}")],
         };
+        let style = Style {
+            terminal: false,
+            color: color && self.is_diff(),
+        };
         let width = style::width().saturating_sub(INDENT.len());
-        for line in lines.iter().take(LINES) {
-            println!("{INDENT}{}", style::clip(line, width));
-        }
-        if lines.len() > LINES {
-            println!("{INDENT}… {} more lines", lines.len() - LINES);
+        for line in lines {
+            let paints: &[Paint] = match line.chars().next() {
+                Some('+') => &[Paint::Green],
+                Some('-') => &[Paint::Red],
+                Some('@') => &[Paint::Cyan],
+                _ => &[],
+            };
+            for row in style::wrap(&style::clean(&line), width) {
+                println!("{INDENT}{}", style.paint(row, paints));
+            }
         }
     }
 
-    fn render(&self, color: bool) -> Result<Vec<String>> {
+    fn is_diff(&self) -> bool {
+        match self {
+            Preview::Diff { .. } | Preview::Original { .. } | Preview::Chezmoi { .. } => true,
+            Preview::Decrypted { now, .. } => now.is_some(),
+            _ => false,
+        }
+    }
+
+    fn render(&self) -> Result<Vec<String>> {
         Ok(match self {
             Preview::None => Vec::new(),
+            Preview::Locked => vec!["locked: this machine's key can't open it".into()],
             Preview::Contents(path) => contents(path)?,
-            Preview::Diff { old, new } => paint_diff(diff(old, new)?, color),
-            Preview::Original { path, archive } => paint_diff(original(path, archive)?, color),
+            Preview::Diff { old, new } => diff(old, new)?,
+            Preview::Original { path, archive } => original(path, archive)?,
             Preview::Home { path, user, seen } => {
-                let is_dir = user.with_rights(|| Ok(fs::symlink_metadata(path)?.is_dir()))?;
-                if is_dir {
-                    let files = user.with_rights(|| walk::files(path))?;
-                    return Ok(files
-                        .iter()
-                        .map(|f| style::clean(&f.to_string_lossy()))
-                        .collect());
-                }
                 let snapshot = Snapshot::take(user, &[path])?;
                 seen.keep(&snapshot);
                 contents(&snapshot.path(user, path)?)?
@@ -110,16 +127,22 @@ impl Preview {
                 let args = ["diff", "--reverse", "--no-pager", "--color=false"].map(OsStr::new);
                 let args = [&args[..], &[path.as_os_str()]].concat();
                 let diff = String::from_utf8_lossy(&root.output(&snapshot, &args)?).into_owned();
-                paint_diff(hunks(&diff), color)
+                hunks(&diff)
             }
-            Preview::Unit { name, user } => {
-                let machine = user.as_ref().map(|u| format!("{u}@"));
-                let scope: Vec<&str> = match &machine {
-                    Some(machine) => vec!["--user", "--machine", machine],
-                    None => vec![],
-                };
-                let args = [&scope[..], &["cat", "--", name.as_str()]].concat();
-                lines(&cmd::stdout(As::Root, "systemctl", &args)?)
+            Preview::Unit(name) => {
+                lines(&cmd::stdout(As::Root, "systemctl", &["cat", "--", name])?)
+            }
+            Preview::AsUser { path, user } => user.with_rights(|| contents(path))?,
+            Preview::Decrypted { source, keys, now } => {
+                let plain = keys.decrypt(source)?;
+                match now {
+                    Some(now) => diff_bytes(&plain, now)?,
+                    None => {
+                        let mut file = tempfile::NamedTempFile::new()?;
+                        file.write_all(&plain)?;
+                        contents(file.path())?
+                    }
+                }
             }
             Preview::Dconf { section, user } => {
                 let dump = cmd::stdout(As::User(user), "dconf", &["dump", &format!("{section}/")])?;
@@ -135,43 +158,22 @@ impl Preview {
 }
 
 fn lines(text: &str) -> Vec<String> {
-    text.lines().map(style::clean).collect()
-}
-
-fn paint_diff(lines: Vec<String>, color: bool) -> Vec<String> {
-    let style = Style {
-        terminal: false,
-        color,
-    };
-    lines
-        .into_iter()
-        .map(|line| {
-            let paint = match line.chars().next() {
-                Some('+') => Paint::Green,
-                Some('-') => Paint::Red,
-                Some('@') => Paint::Cyan,
-                _ => return line,
-            };
-            style.paint(line, &[paint])
-        })
-        .collect()
+    text.lines().map(str::to_owned).collect()
 }
 
 fn contents(path: &Path) -> Result<Vec<String>> {
     let meta = fs::symlink_metadata(path)?;
     if meta.is_symlink() {
         let target = fs::read_link(path)?;
-        return Ok(vec![format!(
-            "→ {}",
-            style::clean(&target.to_string_lossy())
-        )]);
+        return Ok(vec![format!("→ {}", target.to_string_lossy())]);
     }
     if meta.is_dir() {
-        let files = walk::files(path)?;
-        return Ok(files
-            .iter()
-            .map(|f| style::clean(&f.to_string_lossy()))
-            .collect());
+        let mut out = Vec::new();
+        for rel in walk::files(path)? {
+            out.push(format!("── {}", rel.to_string_lossy()));
+            out.extend(contents(&path.join(rel))?);
+        }
+        return Ok(out);
     }
     let mut head = Vec::new();
     fs::File::open(path)?
@@ -186,7 +188,16 @@ fn contents(path: &Path) -> Result<Vec<String>> {
 fn diff(old: &Path, new: &Path) -> Result<Vec<String>> {
     let out = Command::new("git")
         .args(["diff", "--no-index", "--no-ext-diff", "--color=never"])
+        .arg("--no-textconv")
         .args([old, new])
+        .current_dir("/")
+        .env_clear()
+        .envs([
+            ("PATH", user::SYSTEM_PATH),
+            ("LANG", "C.UTF-8"),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ])
         .output()
         .context("running git diff")?;
     if out.status.code() != Some(0) && out.status.code() != Some(1) {
@@ -204,13 +215,20 @@ fn original(path: &Path, archive: &Archive) -> Result<Vec<String>> {
         out.extend(contents(path)?);
         return Ok(out);
     }
-    let shipped = archive.shipped(path)?;
+    diff_bytes(&archive.shipped(path)?, path)
+}
+
+fn diff_bytes(old: &[u8], new: &Path) -> Result<Vec<String>> {
     let mut file = tempfile::NamedTempFile::new()?;
-    file.write_all(&shipped)?;
-    diff(file.path(), path)
+    file.write_all(old)?;
+    diff(file.path(), new)
 }
 
 fn hunks(diff: &str) -> Vec<String> {
     let start = diff.lines().position(|l| l.starts_with("@@"));
     lines(diff).into_iter().skip(start.unwrap_or(0)).collect()
 }
+
+#[cfg(test)]
+#[path = "../tests/preview.rs"]
+mod tests;
