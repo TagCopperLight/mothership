@@ -34,6 +34,11 @@ fn load(dir: &TempDir, options: &[&str], hardware: &[Hardware]) -> Result<Fleet>
     Fleet::new(dir.path().to_path_buf(), "workstation", &options, &hardware)
 }
 
+fn refused(dir: &TempDir, options: &[&str], hardware: &[Hardware], why: &str) {
+    let error = format!("{:#}", load(dir, options, hardware).err().unwrap());
+    assert!(error.contains(why), "{error:?} doesn't say {why:?}");
+}
+
 #[test]
 fn merges_the_blocks_of_the_machines_hardware_and_options() {
     let dir = checkout(SYSTEM);
@@ -68,24 +73,29 @@ fn leaves_out_the_blocks_the_machine_lacks() {
 #[test]
 fn hardware_without_a_block_or_an_unknown_option_stops_the_load() {
     let dir = checkout(SYSTEM);
-    assert!(load(&dir, &[], &[Hardware::CpuAmd]).is_err());
-    assert!(load(&dir, &["nvidia"], &[]).is_err());
+    refused(&dir, &[], &[Hardware::CpuAmd], "has no [hardware.cpu-amd]");
+    refused(&dir, &["nvidia"], &[], "has no [options.nvidia]");
 }
 
 #[test]
 fn a_block_file_must_exist_and_belong_to_one_block() {
     let missing = checkout("[hardware.battery]\netc = [\"power.conf\"]\n");
-    assert!(load(&missing, &[], &[]).is_err());
+    refused(
+        &missing,
+        &[],
+        &[],
+        "names etc/power.conf, which isn't there",
+    );
     let twice = checkout(
         "[hardware.battery]\netc = [\"pam.d/sudo\"]\n[options.a]\netc = [\"pam.d/sudo\"]\n",
     );
-    assert!(load(&twice, &[], &[]).is_err());
+    refused(&twice, &[], &[], "own etc/pam.d/sudo");
 }
 
 #[test]
 fn an_unknown_hardware_name_is_a_parse_error() {
     let dir = checkout("[hardware.cpu-arm]\npackages = []\n");
-    assert!(load(&dir, &[], &[]).is_err());
+    refused(&dir, &[], &[], "mothership can't detect cpu-arm");
 }
 
 #[test]
@@ -110,12 +120,13 @@ fn each_folder_under_users_is_a_user_of_the_type() {
     );
 
     fs::write(users.join("dev/ignore.txt"), "package htop\n").unwrap();
-    assert!(load(&dir, &[], &[Hardware::CpuIntel]).is_err());
+    let cpu = [Hardware::CpuIntel];
+    refused(&dir, &[], &cpu, "package lines go in the type's ignore.txt");
     fs::write(users.join("dev/ignore.txt"), "").unwrap();
     fs::write(
         dir.path().join("types/workstation/ignore.txt"),
         "home ~/.cache\n",
     )
     .unwrap();
-    assert!(load(&dir, &[], &[Hardware::CpuIntel]).is_err());
+    refused(&dir, &[], &cpu, "home lines go in a user's ignore.txt");
 }
