@@ -51,6 +51,7 @@ secret in clear.
 $ printf 'a\ns\ny\na\ny\n' | sudo mothership review
 [1/3] Files
     + /etc/wifi.conf  new  secret
+      psk=WIFI-SECRET
   a  add         copy it into the type's etc/, encrypted
   n  not secret  list it in not-secret.txt, and add it later in clear
   r  revert      delete
@@ -58,7 +59,8 @@ $ printf 'a\ns\ny\na\ny\n' | sudo mothership review
   › a
 [2/3] Files
     + ~/.config/app  new  1 file
-      token
+      ── token
+      TOKEN-SECRET
   a  add         add it to chezmoi
   s  secret      add it to chezmoi, encrypted
   i ignore · l later · p pass · q quit
@@ -66,6 +68,8 @@ $ printf 'a\ns\ny\na\ny\n' | sudo mothership review
   That adds 1 file. Go on [y/N]? y
 [3/3] Files
     + ~/.ssh  new  secret  1 file
+      ── id_test
+      SSH-SECRET
   a  add         add it to chezmoi, encrypted
   n  not secret  list it in not-secret.txt, and add it later in clear
   i ignore · l later · p pass · q quit
@@ -76,7 +80,7 @@ Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
 $ cd /var/lib/mothership/fleet && find homes/me/dot_ssh homes/me/dot_config types/workstation/etc/wifi.conf.age | sort
 homes/me/dot_config
 homes/me/dot_config/app
-homes/me/dot_config/app/encrypted_token.age
+homes/me/dot_config/app/encrypted_private_token.age
 homes/me/dot_ssh
 homes/me/dot_ssh/encrypted_private_id_test.age
 types/workstation/etc/wifi.conf.age
@@ -97,6 +101,8 @@ $ mkdir -p ~/.config/editor && echo "theme = dark" > ~/.config/editor/settings &
 $ printf 'n\n' | sudo mothership review
 [1/1] Files
     + ~/.config/editor  new  secret  1 file
+      ── settings
+      theme = dark
   a  add         add it to chezmoi, encrypted
   n  not secret  list it in not-secret.txt, and add it later in clear
   i ignore · l later · p pass · q quit

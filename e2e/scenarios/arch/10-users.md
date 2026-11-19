@@ -68,7 +68,8 @@ $ sudo -u dev bash -c 'mkdir -p ~/.config/devapp && echo "theme = light" > ~/.co
 $ printf 'a\ny\n' | sudo mothership review
 [1/1] Files · dev
     + ~/.config/devapp  new  1 file
-      conf
+      ── conf
+      theme = light
   a  add         add it to chezmoi
   s  secret      add it to chezmoi, encrypted
   i ignore · l later · p pass · q quit

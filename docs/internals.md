@@ -49,7 +49,7 @@
 - `chezmoi status` fails on a file it can't decrypt, so a user whose key isn't in their list is scanned with `--exclude encrypted`.
 - Without `encryption` set, chezmoi keeps `.age` in target names.
 - In `status`, the first column says what changed on the machine since chezmoi last wrote the file, the second what its apply would do.
-- Root's chezmoi starts from an empty state each run and never reads or writes the user's `chezmoistate.boltdb`, so a crafted database can't reach it. `add`, `re-add` and `diff` don't need it.
+- Root's chezmoi works on a copy of the user's `chezmoistate.boltdb` and writes it back: after an add, the state records the file, so a later edit shows as made on the machine and apply leaves it alone.
 - chezmoi adds `private_` only when neither group nor others can read the file, and asks before an add would drop it, so an encrypted add chmods the snapshot's files to owner-only first.
 - chezmoi follows a link to a file in its source folder, but not a link to a folder. `re-add` replaces a linked file with a copy.
 

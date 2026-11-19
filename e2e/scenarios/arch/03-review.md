@@ -49,7 +49,8 @@ $ printf 'a\nl\np\na\ny\ni\np\np\nq\n' | sudo mothership review
   › p
 [4/8] Files
     + ~/.config/newapp  new  1 file
-      settings.ini
+      ── settings.ini
+      theme = dark
   a  add         add it to chezmoi
   s  secret      add it to chezmoi, encrypted
   i ignore · l later · p pass · q quit
@@ -57,6 +58,8 @@ $ printf 'a\nl\np\na\ny\ni\np\np\nq\n' | sudo mothership review
   That adds 1 file. Go on [y/N]? y
 [5/8] Files
     + ~/.config/tokens  new  secret  1 file
+      ── api
+      abc123
   a  add         add it to chezmoi, encrypted
   n  not secret  list it in not-secret.txt, and add it later in clear
   i ignore · l later · p pass · q quit
