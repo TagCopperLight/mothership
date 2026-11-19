@@ -7,6 +7,7 @@ mod hardware;
 mod homes;
 mod ignore;
 mod install;
+mod item;
 mod kind;
 mod later;
 mod package;

@@ -1,10 +1,11 @@
 use crate::{
     fleet::{self, Fleet},
+    item::{Change, Secret, Section},
     package::Db,
     prompt::Prompt,
     record::Record,
     revert::{self, Revert, Service, User},
-    scan::{self, Change, Checks, Secret, Section},
+    scan::{self, Checks},
     style::Style,
 };
 use anyhow::Result;

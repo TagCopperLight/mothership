@@ -1,4 +1,6 @@
-use super::{Change, Item, Secret, join, looks_secret};
+use super::join;
+use super::secret::looks_secret;
+use crate::item::{Change, Item, Secret};
 use crate::kind::Kind;
 use crate::{
     chezmoi,

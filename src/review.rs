@@ -1,11 +1,12 @@
 use crate::{
     edit::{self, Add},
     fleet::Fleet,
+    item::{Adding, Item, Secret, Section},
     later::{self, DAY, Later},
     prompt::{self, Prompt},
     record::Record,
     revert::{self, Etc, Machine, Revert},
-    scan::{self, Adding, Columns, Item, Secret, Section},
+    scan::{self, Columns},
     style::{self, Paint, Style},
     walk,
 };
@@ -200,7 +201,7 @@ fn ask(report: &scan::Report) -> Result<()> {
                         .map(|reverted| reverted.then_some("reverted"))
                 }
                 Answer::Ignore => {
-                    edit::ignore(fleet, member, &scan::ignore_line(item)).map(|()| Some("ignored"))
+                    edit::ignore(fleet, member, &item.ignore_line()).map(|()| Some("ignored"))
                 }
                 Answer::Later => Ok(Some(BACK_LATER.as_str())),
                 Answer::Pass => Ok(Some("passed")),

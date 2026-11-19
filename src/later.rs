@@ -1,8 +1,4 @@
-use crate::{
-    fleet::Fleet,
-    scan::{self, Item},
-    walk,
-};
+use crate::{fleet::Fleet, item::Item, walk};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -38,7 +34,7 @@ impl Later {
     }
 
     pub fn get(&self, fleet: &Fleet, item: &Item) -> Option<Waiting> {
-        self.items.get(&scan::key(fleet, item)).copied()
+        self.items.get(&item.key(fleet)).copied()
     }
 
     pub fn due(&self, fleet: &Fleet, item: &Item, now: u64) -> bool {
@@ -52,7 +48,7 @@ impl Later {
     }
 
     pub fn put_off(&mut self, fleet: &Fleet, item: &Item, now: u64) {
-        let waiting = self.items.entry(scan::key(fleet, item)).or_insert(Waiting {
+        let waiting = self.items.entry(item.key(fleet)).or_insert(Waiting {
             first: now,
             last: now,
         });
@@ -60,7 +56,7 @@ impl Later {
     }
 
     pub fn remove(&mut self, fleet: &Fleet, item: &Item) {
-        self.items.remove(&scan::key(fleet, item));
+        self.items.remove(&item.key(fleet));
     }
 
     pub fn save(mut self, fleet: &Fleet, current: &[&Item]) -> Result<()> {
@@ -69,7 +65,7 @@ impl Later {
     }
 
     fn keep_only(&mut self, fleet: &Fleet, current: &[&Item]) {
-        let keys: BTreeSet<String> = current.iter().map(|i| scan::key(fleet, i)).collect();
+        let keys: BTreeSet<String> = current.iter().map(|i| i.key(fleet)).collect();
         self.items.retain(|key, _| keys.contains(key));
     }
 }

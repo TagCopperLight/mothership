@@ -1,4 +1,5 @@
-use super::{Change, Item, join};
+use super::join;
+use crate::item::{Change, Item};
 use crate::kind::Kind;
 use crate::{
     cmd::{self, As},
