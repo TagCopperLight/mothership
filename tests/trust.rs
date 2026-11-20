@@ -267,7 +267,7 @@ fn trust_lists_a_host_s_ssh_and_signing_keys_and_retire_drops_them() {
             "desktop",
             "workstation",
             entries,
-            &mut Prompt::answering("t"),
+            &mut Prompt::answering("\n"),
         )
     };
 
@@ -306,6 +306,30 @@ fn trust_lists_a_host_s_ssh_and_signing_keys_and_retire_drops_them() {
     assert!(read(&ssh_keys).unwrap().is_empty());
     assert!(read(&signers).unwrap().is_empty());
     assert!(retire_host(&fleet, "desktop").is_err());
+}
+
+#[test]
+fn a_signer_may_get_several_folders_and_only_ones_the_fleet_has() {
+    let dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("shared")).unwrap();
+    let fleet = fleet_with(dir.path(), "", &[]);
+    let key =
+        ssh_key::PrivateKey::random(&mut ssh_key::rand_core::OsRng, ssh_key::Algorithm::Ed25519)
+            .unwrap();
+    let signing = sign::public(&key).unwrap();
+    trust_host(
+        &fleet,
+        &Keys::default(),
+        "minipc",
+        "workstation",
+        &[format!("{SIGNING}={signing}")],
+        &mut Prompt::answering("types/nowhere\ntypes/workstation shared\n"),
+    )
+    .unwrap();
+    assert_eq!(
+        read(&dir.path().join(sign::SIGNERS)).unwrap()[0].key,
+        format!("{signing} types/workstation shared")
+    );
 }
 
 #[test]

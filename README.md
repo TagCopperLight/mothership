@@ -54,7 +54,7 @@ From the Arch ISO, install also partitions and encrypts the disk:
 
 ```text
 mothership.toml           the recovery key, and the mothership release every machine runs
-signers.txt               the keys whose commits machines apply, each with an optional folder it may change
+signers.txt               the keys whose commits machines apply, each with the folders it may change
 shared/                   files and secrets several homes get, linked from each home
 types/workstation/
 ├── system.toml           packages, services, hardware and options

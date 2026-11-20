@@ -20,7 +20,7 @@ Once the server lets my key in, install clones over SSH, and the fleet's origin 
 
 ```console
 $ cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
-$ printf 'r\n%s\ny\nt\ny\n' "$(grep AGE-SECRET ~/recovery.txt)" |
+$ printf 'r\n%s\ny\n\ny\n' "$(grep AGE-SECRET ~/recovery.txt)" |
 > sudo mothership install --fleet me@localhost:fleet.git --type workstation --hostname box &> ~/out
 $ grep '^Committed' ~/out
 Committed [0-9a-f]{12} Trust box as workstation (re)

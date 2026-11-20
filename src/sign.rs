@@ -47,10 +47,55 @@ pub fn sign(key: &PrivateKey, payload: &[u8]) -> Result<String> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Reach {
+    Everything,
+    Folders(Vec<PathBuf>),
+}
+
+impl Reach {
+    pub fn parse(words: &[&str]) -> Result<Reach> {
+        if words.is_empty() {
+            return Ok(Reach::Everything);
+        }
+        let folders = words
+            .iter()
+            .map(|word| {
+                let folder = PathBuf::from(word);
+                let plain = folder
+                    .components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_)));
+                match plain {
+                    true => Ok(folder),
+                    false => Err(anyhow!("{word} isn't a folder inside the fleet")),
+                }
+            })
+            .collect::<Result<_>>()?;
+        Ok(Reach::Folders(folders))
+    }
+
+    fn covers(&self, path: &Path) -> bool {
+        match self {
+            Reach::Everything => true,
+            Reach::Folders(folders) => folders.iter().any(|folder| path.starts_with(folder)),
+        }
+    }
+
+    fn holds(&self, other: &Reach) -> bool {
+        match (self, other) {
+            (Reach::Everything, _) => true,
+            (Reach::Folders(_), Reach::Everything) => false,
+            (Reach::Folders(_), Reach::Folders(theirs)) => {
+                theirs.iter().all(|folder| self.covers(folder))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Signer {
     pub name: String,
     pub key: PublicKey,
-    pub scope: Option<PathBuf>,
+    pub reach: Reach,
 }
 
 impl Signer {
@@ -58,22 +103,8 @@ impl Signer {
         Ok(Signer {
             name: secrets::RECOVERY.to_owned(),
             key: PublicKey::from_openssh(key).map_err(|e| anyhow!("the recovery key: {e}"))?,
-            scope: None,
+            reach: Reach::Everything,
         })
-    }
-
-    fn covers(&self, path: &Path) -> bool {
-        self.scope
-            .as_ref()
-            .is_none_or(|scope| path.starts_with(scope))
-    }
-
-    fn may_hand_out(&self, other: &Signer) -> bool {
-        match (&self.scope, &other.scope) {
-            (None, _) => true,
-            (Some(mine), Some(theirs)) => theirs.starts_with(mine),
-            (Some(_), None) => false,
-        }
     }
 }
 
@@ -81,23 +112,36 @@ pub fn parse_signers(text: &str) -> Result<Vec<Signer>> {
     secrets::parse(text)?
         .into_iter()
         .map(|entry| {
-            let mut words = entry.key.split_whitespace();
-            let (Some(kind), Some(data)) = (words.next(), words.next()) else {
+            let words: Vec<&str> = entry.key.split_whitespace().collect();
+            let [kind, data, folders @ ..] = &words[..] else {
                 bail!("{}'s key isn't an SSH public key", entry.name);
             };
             let key = PublicKey::from_openssh(&format!("{kind} {data}"))
                 .map_err(|e| anyhow!("{}'s key: {e}", entry.name))?;
-            let scope = words.next().map(PathBuf::from);
-            if let Some(extra) = words.next() {
-                bail!("{}'s line ends with {extra}, after its scope", entry.name);
-            }
+            let reach = Reach::parse(folders).with_context(|| format!("{}'s line", entry.name))?;
             Ok(Signer {
                 name: entry.name,
                 key,
-                scope,
+                reach,
             })
         })
         .collect()
+}
+
+pub fn distinct(signers: &[Signer], recovery: Option<&Signer>) -> Result<()> {
+    for (i, signer) in signers.iter().enumerate() {
+        if let Some(other) = signers[..i].iter().find(|other| other.key == signer.key) {
+            bail!(
+                "{SIGNERS} lists one key twice, as {} and {}",
+                other.name,
+                signer.name
+            );
+        }
+        if recovery.is_some_and(|recovery| recovery.key == signer.key) {
+            bail!("{SIGNERS} lists the recovery key, as {}", signer.name);
+        }
+    }
+    Ok(())
 }
 
 pub struct Commit {
@@ -168,7 +212,7 @@ pub fn allowed(
                 .filter(|s| !after.contains(s))
                 .chain(after.iter().filter(|s| !before.contains(s)));
             for other in moved {
-                if !signer.may_hand_out(other) {
+                if !signer.reach.holds(&other.reach) {
                     bail!(
                         "{} can't change {}'s line in {SIGNERS}",
                         signer.name,
@@ -176,7 +220,7 @@ pub fn allowed(
                     );
                 }
             }
-        } else if !signer.covers(path) {
+        } else if !signer.reach.covers(path) {
             bail!("{} can't sign a change to {}", signer.name, path.display());
         }
     }

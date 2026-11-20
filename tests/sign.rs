@@ -26,11 +26,11 @@ fn key_file(dir: &Path, key: &PrivateKey) -> PathBuf {
     path
 }
 
-fn signer(name: &str, key: &PrivateKey, scope: Option<&str>) -> Signer {
+fn signer(name: &str, key: &PrivateKey, folders: &[&str]) -> Signer {
     Signer {
         name: name.into(),
         key: key.public_key().clone(),
-        scope: scope.map(PathBuf::from),
+        reach: Reach::parse(folders).unwrap(),
     }
 }
 
@@ -63,8 +63,8 @@ fn finds_who_signed_a_commit_git_signed() {
     );
     git(&repo, &["commit", "-q", "--allow-empty", "-m", "Unsigned"]);
     let signers = [
-        signer("stranger", &stranger, None),
-        signer("laptop", &laptop, None),
+        signer("stranger", &stranger, &[]),
+        signer("laptop", &laptop, &[]),
     ];
 
     let signed = Commit::parse(&git(&repo, &["cat-file", "commit", "HEAD~"])).unwrap();
@@ -127,36 +127,57 @@ fn the_recovery_signer_comes_back_from_the_age_key_alone() {
 }
 
 #[test]
-fn reads_a_scope_after_the_key() {
+fn reads_the_folders_after_the_key() {
     let (laptop, minipc) = (random(), random());
     let text = format!(
-        "# laptop\n{}\n\n# minipc\n{} types/minipc\n",
+        "# laptop\n{}\n\n# minipc\n{} types/minipc shared/dot_gitconfig\n",
         public(&laptop).unwrap(),
         public(&minipc).unwrap()
     );
     assert_eq!(
         parse_signers(&text).unwrap(),
         [
-            signer("laptop", &laptop, None),
-            signer("minipc", &minipc, Some("types/minipc"))
+            signer("laptop", &laptop, &[]),
+            signer("minipc", &minipc, &["types/minipc", "shared/dot_gitconfig"])
         ]
     );
-    let extra = format!("# laptop\n{} types/a types/b\n", public(&laptop).unwrap());
-    assert!(parse_signers(&extra).is_err());
+    let outside = format!("# laptop\n{} ../etc\n", public(&laptop).unwrap());
+    assert!(parse_signers(&outside).is_err());
+}
+
+#[test]
+fn a_key_listed_twice_or_the_recovery_key_is_refused() {
+    let (laptop, minipc) = (random(), random());
+    let list = [
+        signer("laptop", &laptop, &[]),
+        signer("minipc", &minipc, &["types/minipc"]),
+    ];
+    assert!(distinct(&list, None).is_ok());
+    let trap = signer("trap", &laptop, &["types/minipc"]);
+    let twice = [list[0].clone(), list[1].clone(), trap];
+    assert_eq!(
+        distinct(&twice, None).unwrap_err().to_string(),
+        "signers.txt lists one key twice, as laptop and trap"
+    );
+    let recovery = Signer::recovery(&public(&minipc).unwrap()).unwrap();
+    assert_eq!(
+        distinct(&list, Some(&recovery)).unwrap_err().to_string(),
+        "signers.txt lists the recovery key, as minipc"
+    );
 }
 
 #[test]
 fn a_scoped_signer_changes_its_type_and_hands_out_no_more_than_it_has() {
     let (laptop, minipc, other) = (random(), random(), random());
-    let workstation = signer("laptop", &laptop, None);
-    let server = signer("minipc", &minipc, Some("types/minipc"));
+    let workstation = signer("laptop", &laptop, &[]);
+    let server = signer("minipc", &minipc, &["types/minipc", "shared/minipc"]);
     let paths = |list: &[&str]| list.iter().map(PathBuf::from).collect::<Vec<_>>();
     let before = [workstation.clone(), server.clone()];
 
     assert!(
         allowed(
             &server,
-            &paths(&["types/minipc/system.toml"]),
+            &paths(&["types/minipc/system.toml", "shared/minipc/token.age"]),
             &before,
             &before
         )
@@ -180,13 +201,13 @@ fn a_scoped_signer_changes_its_type_and_hands_out_no_more_than_it_has() {
     let sibling = [
         workstation.clone(),
         server.clone(),
-        signer("minipc2", &other, Some("types/minipc")),
+        signer("minipc2", &other, &["types/minipc/users"]),
     ];
     assert!(allowed(&server, &paths(&[SIGNERS]), &before, &sibling).is_ok());
     let wider = [
         workstation.clone(),
         server.clone(),
-        signer("rogue", &other, None),
+        signer("rogue", &other, &[]),
     ];
     assert_eq!(
         allowed(&server, &paths(&[SIGNERS]), &before, &wider)
@@ -194,6 +215,12 @@ fn a_scoped_signer_changes_its_type_and_hands_out_no_more_than_it_has() {
             .to_string(),
         "minipc can't change rogue's line in signers.txt"
     );
+    let other_type = [
+        workstation.clone(),
+        server.clone(),
+        signer("rogue", &other, &["types/minipc", "types/workstation"]),
+    ];
+    assert!(allowed(&server, &paths(&[SIGNERS]), &before, &other_type).is_err());
     let dropped = [server.clone()];
     assert!(allowed(&server, &paths(&[SIGNERS]), &before, &dropped).is_err());
     assert!(allowed(&workstation, &paths(&[SIGNERS]), &before, &wider).is_ok());

@@ -16,7 +16,7 @@ recovery key. Then it applies the fleet, and offers to remove what the fleet's p
 need.
 
 ```console
-$ printf 'r\n%s\ny\nt\ny\ny\n' "$(grep AGE-SECRET ~/recovery.txt)" |
+$ printf 'r\n%s\ny\n\ny\ny\n' "$(grep AGE-SECRET ~/recovery.txt)" |
 > sudo mothership install --fleet /home/me/fleet.git --type server --hostname box
 ...
 Run this on a machine that signs for the fleet:
@@ -28,7 +28,7 @@ The fleet's newest commits:
 Trust the fleet as it is [y/N]? y
 box opens the 0 secrets of server/root now.
 box opens the 0 secrets of server/me now.
-box signs: t only types/server · e everything › t
+box may change: Enter for types/server, * for everything, or folders separated by spaces › 
 box signs for the fleet now.
 Trust box as server:
   M signers.txt

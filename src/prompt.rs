@@ -137,11 +137,15 @@ impl Prompt {
     }
 
     pub fn line(&mut self, question: &str) -> Result<String> {
-        self.typed(question, true)
+        self.typed(question, true, false)
+    }
+
+    pub fn line_or_empty(&mut self, question: &str) -> Result<String> {
+        self.typed(question, true, true)
     }
 
     pub fn hidden(&mut self, question: &str) -> Result<String> {
-        self.typed(question, false)
+        self.typed(question, false, false)
     }
 
     pub fn choose(&mut self, question: &str, choices: &[Choice]) -> Result<usize> {
@@ -177,7 +181,7 @@ impl Prompt {
         }
     }
 
-    fn typed(&mut self, question: &str, shown: bool) -> Result<String> {
+    fn typed(&mut self, question: &str, shown: bool, empty: bool) -> Result<String> {
         loop {
             print!("{question} ");
             io::stdout().flush()?;
@@ -216,7 +220,7 @@ impl Prompt {
                 true => answer.trim(),
                 false => answer.trim_end_matches(['\r', '\n']),
             };
-            if !answer.is_empty() {
+            if empty || !answer.is_empty() {
                 return Ok(answer.to_owned());
             }
         }

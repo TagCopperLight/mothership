@@ -74,3 +74,13 @@ Error: the fleet's machines would refuse this commit, so nothing changed: machin
 $ git -C /var/lib/mothership/fleet log -1 --format=%s
 Sign only for servers
 ```
+
+A machine can't list a key a second time, with folders of its choosing: a machine checking a
+commit would then find either line for that key.
+
+```console
+$ cd /var/lib/mothership/fleet && git reset -q --hard &&
+> printf '\n# trap\n%s types/server/users\n' "$(cat /tmp/signing.pub)" >> signers.txt &&
+> echo y | sudo mothership commit "Add a trap" 2>&1 | tail -1
+Error: the fleet's machines would refuse this commit, so nothing changed: signers.txt lists one key twice, as machine and trap
+```

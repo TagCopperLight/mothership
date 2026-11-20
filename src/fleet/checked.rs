@@ -164,6 +164,8 @@ fn verify(git: &Git, parent: &str, commit: &str) -> Result<String> {
     if first != parent {
         bail!("it doesn't follow {} on main's line", short(parent));
     }
+    let after = git.signers(commit)?;
+    sign::distinct(&after, git.recovery(commit)?.as_ref())?;
     let before = git.signers(parent)?;
     let mut trusted = before.clone();
     trusted.extend(git.recovery(parent)?);
@@ -187,7 +189,7 @@ fn verify(git: &Git, parent: &str, commit: &str) -> Result<String> {
         commit,
     ])?;
     let changed: Vec<PathBuf> = changed.lines().map(PathBuf::from).collect();
-    sign::allowed(signer, &changed, &before, &git.signers(commit)?)?;
+    sign::allowed(signer, &changed, &before, &after)?;
     Ok(signer.name.clone())
 }
 

@@ -222,12 +222,6 @@ fn add_ssh_key(fleet: &Fleet, text: &str, host: &str, key: &str) -> Result<Strin
     Ok(public)
 }
 
-#[derive(Clone, Copy)]
-enum Reach {
-    Type,
-    Everything,
-}
-
 fn add_signer(
     fleet: &Fleet,
     host: &str,
@@ -241,12 +235,21 @@ fn add_signer(
     if listed_as(&list, &path, host, &public)? {
         return Ok(public);
     }
-    let scope = format!("types/{type_name}");
-    let question = format!("{host} signs: t only {scope} · e everything ›");
-    let line = match prompt.ask(&question, &[('t', Reach::Type), ('e', Reach::Everything)])? {
-        Some(Reach::Type) => format!("{public} {scope}"),
-        Some(Reach::Everything) => public.clone(),
-        None => bail!("{host} signs nothing yet"),
+    let own = format!("types/{type_name}");
+    let question = format!(
+        "{host} may change: Enter for {own}, * for everything, or folders separated by spaces ›"
+    );
+    let line = loop {
+        let answer = prompt.line_or_empty(&question)?;
+        let words: Vec<&str> = match answer.as_str() {
+            "" => vec![own.as_str()],
+            "*" => Vec::new(),
+            folders => folders.split_whitespace().collect(),
+        };
+        match reach(fleet, &words) {
+            Ok(()) => break [&[public.as_str()][..], &words].concat().join(" "),
+            Err(e) => println!("  {e:#}"),
+        }
     };
     list.push(Recipient {
         name: host.to_owned(),
@@ -255,6 +258,17 @@ fn add_signer(
     file::write(&path, format(&list).as_bytes(), 0o644)?;
     println!("{host} signs for the fleet now.");
     Ok(public)
+}
+
+fn reach(fleet: &Fleet, folders: &[&str]) -> Result<()> {
+    if let sign::Reach::Folders(folders) = sign::Reach::parse(folders)? {
+        for folder in folders {
+            if !fleet.dir.join(&folder).is_dir() {
+                bail!("the fleet has no folder {}", folder.display());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn every_list(fleet: &Fleet) -> Result<Vec<Target>> {
