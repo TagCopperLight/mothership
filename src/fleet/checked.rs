@@ -221,11 +221,7 @@ pub fn sync_from(admin: &User, remote: Remote, anchor: Anchor) -> Result<Sync> {
     let anchor = match (anchor, git.rev(CHECKED)?) {
         (Anchor::Kept, Some(checked)) => checked,
         (Anchor::Kept, None) => {
-            println!(
-                "This machine trusts the fleet at {} from now on.",
-                short(&tip)
-            );
-            tip.clone()
+            bail!("this machine trusts no commit of the fleet yet: run `sudo mothership install`")
         }
         (Anchor::Code(code), checked) => {
             let commit = git

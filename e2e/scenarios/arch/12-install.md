@@ -25,11 +25,15 @@ On newbox, type this code: [0-9a-f]{12} (re)
 ```
 
 The new machine has checked no commit yet, so an attacker who can push could have rewritten the
-fleet. Install starts from the commit whose code I type, and checks what follows it.
+fleet. Every command but install refuses to run, and install starts from the commit whose code I
+type, and checks what follows it.
 
 ```console
 $ sudo mv /root/new.txt /etc/mothership/key.txt && mv ~/new.txt ~/.config/mothership/key.txt &&
 > sudo rm -r /var/lib/mothership/fleet.git /var/lib/mothership/current /var/lib/mothership/checked
+$ echo n | sudo mothership apply
+Error: this machine trusts no commit of the fleet yet: run `sudo mothership install`
+[exit 1]
 $ printf 'c\n%s\n' "$(grep -o '[0-9a-f]*$' ~/code)" | sudo mothership install > ~/out; head -3 ~/out
 This machine needs a fleet commit to trust first.
 c type the code it prints · r type the recovery key › c
