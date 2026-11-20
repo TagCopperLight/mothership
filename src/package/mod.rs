@@ -140,6 +140,7 @@ pub struct Package {
     pub backups: Vec<Backup>,
     pub depends: Vec<String>,
     pub provides: Vec<String>,
+    pub groups: Vec<String>,
     pub archive: Archive,
 }
 

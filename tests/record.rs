@@ -61,6 +61,7 @@ fn shipping(path: &Path, text: &str) -> Db {
             }],
             depends: Vec::new(),
             provides: Vec::new(),
+            groups: Vec::new(),
             archive: no_archive(),
         }],
     )

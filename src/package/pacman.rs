@@ -62,6 +62,7 @@ fn parse(desc: &str, files: &str) -> Result<Package> {
         files: section(files, "FILES").map(|f| format!("/{f}")).collect(),
         depends: names(desc, "DEPENDS"),
         provides: names(desc, "PROVIDES"),
+        groups: Vec::new(),
         backups,
         archive: Archive {
             path: Path::new(CACHE).join(archive),

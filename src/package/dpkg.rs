@@ -19,6 +19,24 @@ const ALTERNATIVES: &str = "/var/lib/dpkg/alternatives";
 const NO_HASH_YET: &str = "newconffile";
 const RETIRED: [&str; 2] = ["obsolete", "remove-on-upgrade"];
 const REQUIRED_PRIORITIES: [&str; 2] = ["required", "important"];
+const GROUP_TOOLS: [(&str, &[&str]); 2] = [
+    ("addgroup", &["--gid", "--conf"]),
+    (
+        "groupadd",
+        &[
+            "-g",
+            "--gid",
+            "-K",
+            "--key",
+            "-p",
+            "--password",
+            "-R",
+            "--root",
+            "-P",
+            "--prefix",
+        ],
+    ),
+];
 
 pub fn load() -> Result<Vec<Package>> {
     let status = fs::read_to_string(STATUS).with_context(|| format!("reading {STATUS}"))?;
@@ -228,6 +246,7 @@ fn package(
         backups,
         depends,
         provides: names(stanza.field("Provides")),
+        groups: created_groups(&name, arch)?,
         archive: Archive {
             path: Path::new(CACHE).join(archive),
             distro: Distro::Debian,
@@ -253,12 +272,72 @@ fn split_conffile<'a>(text: &'a str, line: &str) -> Result<(&'a str, &'a str)> {
         .with_context(|| format!("a Conffiles line is malformed: {line}"))
 }
 
+fn info(name: &str, arch: &str, extension: &str) -> Option<PathBuf> {
+    [
+        format!("{name}:{arch}.{extension}"),
+        format!("{name}.{extension}"),
+    ]
+    .into_iter()
+    .map(|file| Path::new(INFO).join(file))
+    .find(|path| path.exists())
+}
+
+fn created_groups(name: &str, arch: &str) -> Result<Vec<String>> {
+    let Some(script) = info(name, arch, "postinst") else {
+        return Ok(Vec::new());
+    };
+    let text =
+        fs::read_to_string(&script).with_context(|| format!("reading {}", script.display()))?;
+    Ok(script_groups(&text))
+}
+
+fn script_groups(script: &str) -> Vec<String> {
+    script
+        .lines()
+        .filter_map(|line| line.split(" #").next())
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .flat_map(|line| line.split(['|', '&', ';']))
+        .filter_map(|command| {
+            let mut words = command
+                .split_whitespace()
+                .take_while(|word| !word.contains(['<', '>']));
+            let valued = words.find_map(|word| {
+                let tool = word.rsplit('/').next()?;
+                GROUP_TOOLS
+                    .iter()
+                    .find(|(name, _)| *name == tool)
+                    .map(|(_, valued)| valued)
+            })?;
+            let mut names = Vec::new();
+            let mut value_next = false;
+            for word in words {
+                if std::mem::take(&mut value_next) {
+                    continue;
+                }
+                if word.starts_with('-') {
+                    value_next = valued.contains(&word);
+                } else {
+                    names.push(word.trim_matches(['"', '\'']));
+                }
+            }
+            match names[..] {
+                [name] if is_written_out(name) => Some(name.to_owned()),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn is_written_out(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 fn files(name: &str, arch: &str, diversions: &Diversions) -> Result<Vec<String>> {
-    let list = [format!("{name}:{arch}.list"), format!("{name}.list")]
-        .into_iter()
-        .map(|file| Path::new(INFO).join(file))
-        .find(|path| path.exists())
-        .with_context(|| format!("{INFO} has no file list for {name}"))?;
+    let list =
+        info(name, arch, "list").with_context(|| format!("{INFO} has no file list for {name}"))?;
     let text = fs::read_to_string(&list).with_context(|| format!("reading {}", list.display()))?;
     let mut resolve = Resolve::default();
     text.lines()

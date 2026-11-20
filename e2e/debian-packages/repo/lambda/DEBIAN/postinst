@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ] && ! getent group lambda > /dev/null; then
+  groupadd --system lambda
+fi

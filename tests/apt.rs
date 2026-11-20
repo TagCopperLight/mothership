@@ -12,6 +12,7 @@ fn package(name: &str, required: bool, files: &[&str]) -> Package {
         backups: Vec::new(),
         depends: Vec::new(),
         provides: Vec::new(),
+        groups: Vec::new(),
         archive: Archive {
             path: PathBuf::new(),
             distro: Distro::Debian,

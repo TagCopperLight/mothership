@@ -18,7 +18,7 @@ use crate::{
     item::{Change, Item, Section},
     kind::Kind,
     later::{self, Later},
-    package::Db,
+    package::{Db, Package},
     parallel::join,
     record::Record,
     revert,
@@ -165,20 +165,29 @@ fn tracked(fleet: &Fleet, member: &Member, which: Checks) -> Result<Vec<Item>> {
 pub struct Ships<'a> {
     fleet: &'a Fleet,
     db: &'a Db,
+    pub packages: Vec<&'a Package>,
     files: HashSet<&'a str>,
 }
 
 impl<'a> Ships<'a> {
     pub fn new(fleet: &'a Fleet, db: &'a Db) -> Self {
         let listed = db.with_depends(&fleet.listed_packages());
-        let files = db
+        let packages: Vec<&Package> = db
             .packages
             .iter()
             .filter(|package| listed.contains(&package.name))
+            .collect();
+        let files = packages
+            .iter()
             .flat_map(|package| &package.files)
             .map(String::as_str)
             .collect();
-        Ships { fleet, db, files }
+        Ships {
+            fleet,
+            db,
+            packages,
+            files,
+        }
     }
 
     pub fn path(&self, path: &Path, member: Option<&Member>) -> Result<bool> {

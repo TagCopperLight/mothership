@@ -87,3 +87,25 @@ fn a_diverted_file_moves_for_every_package_but_the_one_diverting_it() {
     assert_eq!(diversions.of("/etc/hosts", "base-files"), "/etc/hosts");
     assert!(Diversions::parse("/etc/issue\n/etc/issue.distrib\n").is_err());
 }
+
+#[test]
+fn reads_the_groups_an_install_script_creates() {
+    let script = r#"#!/bin/sh
+case "$1" in
+    configure)
+        if ! getent group docker >/dev/null 2>&1 ; then
+            addgroup --system docker
+        fi
+        addgroup --quiet --system netdev || true
+        /usr/sbin/groupadd -r -g 120 "plain" 2>/dev/null; groupadd -K GID_MIN=100 keyed
+        # addgroup --system commented
+        groupadd --system "$GROUP"
+        addgroup me docker
+        ;;
+esac
+"#;
+    assert_eq!(
+        script_groups(script),
+        ["docker", "netdev", "plain", "keyed"]
+    );
+}

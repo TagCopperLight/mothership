@@ -108,7 +108,11 @@ pub fn scan(member: &Member, ships: &Ships) -> Result<Vec<Item>> {
 }
 
 fn shipped_groups(ships: &Ships) -> Result<BTreeSet<String>> {
-    let mut groups = BTreeSet::new();
+    let mut groups: BTreeSet<String> = ships
+        .packages
+        .iter()
+        .flat_map(|package| package.groups.iter().cloned())
+        .collect();
     for dir in SYSUSERS {
         for file in walk::children(Path::new(dir))? {
             if ships.path(&file, None)? {

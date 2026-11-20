@@ -10,6 +10,7 @@ fn package(name: &str, depends: &[&str], provides: &[&str]) -> Package {
         backups: Vec::new(),
         depends: depends.iter().map(|d| d.to_string()).collect(),
         provides: provides.iter().map(|p| p.to_string()).collect(),
+        groups: Vec::new(),
         archive: Archive {
             path: PathBuf::new(),
             distro: Distro::Arch,
