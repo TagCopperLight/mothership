@@ -12,7 +12,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 const GITHUB: &str = "github.com";
 const GITHUB_META: &str = "https://api.github.com/meta";
@@ -119,16 +119,6 @@ pub fn clone(
         }
         cmd::run(As::User(owner), "git", &["clone", "--", url, &path])
     })
-}
-
-pub fn origin(dir: &Path, git: impl Fn() -> Command) -> Result<String> {
-    let path = dir.to_string_lossy();
-    let get = ["-C", &path, "remote", "get-url", "origin"];
-    let mut command = git();
-    command.args(get);
-    Ok(String::from_utf8(cmd::output(command, "git", &get)?)?
-        .trim()
-        .to_owned())
 }
 
 #[cfg(test)]

@@ -35,6 +35,7 @@ mod systemd;
 mod tools;
 mod trust;
 mod update;
+mod usage;
 mod user;
 mod walk;
 
@@ -45,12 +46,6 @@ use fleet::{
 };
 use prompt::Prompt;
 use std::process::ExitCode;
-
-const USAGE: &str = "usage: mothership scan | review | apply | commit <message> | key | recovery \
-                     | trust <host> <type> <name>=<key>... | retire <host> \
-                     | install [--fleet <repo>] [--type <type>] [--option <option>]... \
-                     [--hostname <name>] [--admin <user>] [--timezone <zone>] [--disk <disk>] \
-                     [--layout wipe|beside] [--remove-unlisted yes|no]";
 
 #[derive(Clone, Copy)]
 enum Command {
@@ -85,11 +80,21 @@ impl Command {
 fn main() -> ExitCode {
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let [help] = &args[..]
-        && matches!(help.as_str(), "--help" | "-h" | "help")
-    {
-        println!("{USAGE}");
-        return ExitCode::SUCCESS;
+    let help = |arg: &String| matches!(arg.as_str(), "--help" | "-h" | "help");
+    match &args[..] {
+        [] => {
+            println!("{}", usage::text());
+            return ExitCode::SUCCESS;
+        }
+        [arg] if help(arg) => {
+            println!("{}", usage::text());
+            return ExitCode::SUCCESS;
+        }
+        [install, arg] if install == "install" && help(arg) => {
+            println!("{}", usage::install());
+            return ExitCode::SUCCESS;
+        }
+        _ => {}
     }
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
@@ -103,11 +108,9 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &[String]) -> anyhow::Result<()> {
-    let Some((command, rest)) = args
-        .split_first()
-        .and_then(|(name, rest)| Some((Command::parse(name)?, rest)))
-    else {
-        usage()
+    let (name, rest) = args.split_first().expect("main handles no arguments");
+    let Some(command) = Command::parse(name) else {
+        bail!("mothership has no command {name}: `mothership --help` lists them");
     };
     if !user::is_root() {
         bail!("mothership reads every user's home: run it with sudo");
@@ -198,13 +201,8 @@ fn run(args: &[String]) -> anyhow::Result<()> {
                 Outcome::Unchanged | Outcome::Pushed(_) => github::remove(&fleet::admin()?, host),
             }
         }
-        _ => usage(),
+        _ => bail!("usage: {}", usage::of(name)),
     }
-}
-
-fn usage() -> ! {
-    eprintln!("{USAGE}");
-    std::process::exit(2)
 }
 
 fn edit_fleet(

@@ -9,7 +9,7 @@ use crate::update::BINARY;
 use crate::{
     cmd::{self, As},
     file,
-    fleet::{self, Repo},
+    fleet::{self, Repo, checked},
     package::Distro,
     prompt::Prompt,
     ssh, user,
@@ -128,7 +128,7 @@ fn carry_ssh(root: &Path, root_user: &user::User) -> Result<()> {
 }
 
 fn pull_as_owner(copy: &Path) -> Result<()> {
-    let origin = repo::origin(Path::new(FLEET), || As::Root.command::<&str>("git", &[]))?;
+    let origin = checked::origin_of(Path::new(FLEET), || As::Root.command::<&str>("git", &[]))?;
     let meta = fs::metadata(copy)?;
     let (uid, gid) = (meta.uid().to_string(), meta.gid().to_string());
     let home = tempfile::tempdir()?;
@@ -147,7 +147,7 @@ fn pull_as_owner(copy: &Path) -> Result<()> {
         .env("HOME", home.path());
         git
     };
-    let theirs = repo::origin(copy, as_owner)?;
+    let theirs = checked::origin_of(copy, as_owner)?;
     if theirs != origin {
         bail!(
             "{} comes from {theirs}, not {origin}: run install with --fleet {theirs}",

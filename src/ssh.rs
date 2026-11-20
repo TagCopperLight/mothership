@@ -30,7 +30,8 @@ pub fn write_key(user: &User, key: &PrivateKey) -> Result<()> {
     let public = format!("{}\n", key.public_key().to_openssh()?);
     let path = key_path(user);
     user.with_rights(|| {
-        let dir = path.parent().context("the key has no folder")?;
+        let dir = user.home.join(".ssh");
+        let dir = dir.as_path();
         match fs::DirBuilder::new().mode(0o700).create(dir) {
             Err(e) if e.kind() != ErrorKind::AlreadyExists => {
                 return Err(e).with_context(|| format!("creating {}", dir.display()));

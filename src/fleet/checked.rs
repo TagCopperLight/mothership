@@ -709,7 +709,17 @@ pub fn set_author(admin: &User, name: &str, value: &str) -> Result<()> {
 }
 
 pub fn origin(admin: &User) -> Result<String> {
-    Ok(in_checkout(admin, &["remote", "get-url", "origin"])?
+    origin_of(Path::new(DIR), || {
+        As::User(admin).command::<&str>("git", &[])
+    })
+}
+
+pub fn origin_of(dir: &Path, git: impl Fn() -> Command) -> Result<String> {
+    let path = dir.to_string_lossy();
+    let get = ["-C", &path, "remote", "get-url", "origin"];
+    let mut command = git();
+    command.args(get);
+    Ok(String::from_utf8(cmd::output(command, "git", &get)?)?
         .trim()
         .to_owned())
 }

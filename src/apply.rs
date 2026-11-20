@@ -10,6 +10,7 @@ use crate::{
     style::Style,
     trust,
     update::{self, Outcome},
+    usage,
 };
 use anyhow::Result;
 use std::path::Path;
@@ -29,12 +30,14 @@ pub fn run() -> Result<()> {
     while round(&mut || prompt.confirm("Apply"), ServiceManager::Running)? {}
     let fleet = Fleet::load()?;
     scan::print_unsaved(&fleet, Unsaved::Uncommitted, Style::stdout())?;
+    usage::keep_completion()?;
     trust::create_keys(&fleet)
 }
 
 pub fn unasked(service_manager: ServiceManager) -> Result<()> {
     update::follow_fleet(&mut || Ok(true))?;
     while round(&mut || Ok(true), service_manager)? {}
+    usage::keep_completion()?;
     trust::create_keys(&Fleet::load()?)
 }
 
