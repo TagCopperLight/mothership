@@ -342,3 +342,46 @@ fn trust_lists_a_host_s_ssh_and_signing_keys_and_retire_drops_them() {
     assert!(read(&signers).unwrap().is_empty());
     assert!(retire_host(&fleet, "desktop", &mut Prompt::answering("y")).is_err());
 }
+
+#[test]
+fn a_new_recovery_key_opens_every_secret_and_the_old_one_none() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let type_dir = dir.path().join("types/workstation");
+    fs::create_dir_all(type_dir.join("etc")).unwrap();
+    fs::write(type_dir.join(fleet::SYSTEM_TOML), "").unwrap();
+    let laptop = make_key(&dir.path().join("laptop.txt")).unwrap();
+    let old = crate::support::name_recovery(dir.path());
+    fs::write(
+        type_dir.join(RECIPIENTS),
+        format!(
+            "# laptop\n{}\n\n# recovery\n{}\n",
+            public(&laptop),
+            public(&old)
+        ),
+    )
+    .unwrap();
+    let file = type_dir.join("etc/wifi.conf.age");
+    fs::write(
+        &file,
+        crate::support::seal(&type_dir.join(RECIPIENTS), b"psk=1"),
+    )
+    .unwrap();
+    let new = crate::support::name_recovery(dir.path());
+    let repo = crate::fleet::Repo::new(
+        dir.path().to_path_buf(),
+        "workstation",
+        &[],
+        &Default::default(),
+    )
+    .unwrap();
+    let fleet = Fleet::of(repo, &crate::support::current_user());
+    let mut keys = Keys::default();
+    keys.push(old.clone());
+
+    reseal_everything(&fleet, &keys, &public(&old), &mut Prompt::answering("y")).unwrap();
+    assert!(opens(&new, &file));
+    assert!(opens(&laptop, &file));
+    assert!(!opens(&old, &file));
+    assert_eq!(names(&type_dir.join(RECIPIENTS)), ["laptop"]);
+    assert!(!dir.path().join("types/workstation/users").exists());
+}

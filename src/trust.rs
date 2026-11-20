@@ -257,30 +257,31 @@ fn add_signer(
     Ok(public)
 }
 
+fn every_list(fleet: &Fleet) -> Result<Vec<Target>> {
+    let mut all = Vec::new();
+    for type_name in fleet::types(&fleet.dir)? {
+        all.push(target(fleet, &format!("{type_name}/root"))?);
+        let users = fleet::type_dir(&fleet.dir, &type_name).join(fleet::USERS);
+        for dir in walk::children(&users)? {
+            let user = dir.file_name().unwrap_or_default().to_string_lossy();
+            all.push(target(fleet, &format!("{type_name}/{user}"))?);
+        }
+    }
+    Ok(all)
+}
+
 pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()> {
     let mut found = false;
-    for type_name in fleet::types(&fleet.dir)? {
-        let users = fleet::type_dir(&fleet.dir, &type_name).join(fleet::USERS);
-        let mut owners = vec![("root".to_owned(), None)];
-        for dir in walk::children(&users)? {
-            let name = dir.file_name().unwrap_or_default().to_string_lossy();
-            owners.push((name.into_owned(), Some(dir)));
+    for target in every_list(fleet)? {
+        if read(&target.list)?.iter().any(|r| r.name == host) {
+            retire(fleet, &target.text, host, prompt)?;
+            found = true;
         }
-        for (owner, dir) in owners {
-            let text = format!("{type_name}/{owner}");
-            if read(&target(fleet, &text)?.list)?
-                .iter()
-                .any(|r| r.name == host)
-            {
-                retire(fleet, &text, host, prompt)?;
-                found = true;
-            }
-            if let Some(dir) = dir
-                && drop_named(&dir.join(ssh::KEYS), host)?
-            {
-                println!("{text} on {host} has no SSH key in the fleet now.");
-                found = true;
-            }
+        if let Scope::User(home) = &target.scope
+            && drop_named(&home.dir(&fleet.dir).join(ssh::KEYS), host)?
+        {
+            println!("{} on {host} has no SSH key in the fleet now.", target.text);
+            found = true;
         }
     }
     if drop_named(&fleet.dir.join(sign::SIGNERS), host)? {
@@ -289,6 +290,26 @@ pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()>
     }
     if !found {
         bail!("the fleet holds no key named {host}");
+    }
+    Ok(())
+}
+
+pub fn reseal_everything(
+    fleet: &Fleet,
+    keys: &Keys,
+    dropped: &str,
+    prompt: &mut Prompt,
+) -> Result<()> {
+    for target in every_list(fleet)? {
+        let before = read(&target.list)?;
+        let mut list = before.clone();
+        list.retain(|r| r.key != dropped);
+        if list == before && secrets_of(fleet, &target)?.is_empty() {
+            continue;
+        }
+        if rewrite(fleet, keys, &target, &list, prompt)?.is_none() {
+            bail!("the fleet's recovery key stays as it was");
+        }
     }
     Ok(())
 }

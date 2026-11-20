@@ -19,7 +19,7 @@ All of them run with `sudo`.
 | `scan` | Lists what differs: what changed on the machine, and what's coming from the fleet. |
 | `review` | Goes through the machine's changes one by one: **add** it to the fleet, **revert** it, **ignore** it, or decide **later**. It then commits and pushes the answers, signed. |
 | `key` | Creates the machine's keys and prints them. |
-| `recovery` | Gives a new fleet its recovery key, which opens every secret. |
+| `recovery` | Gives a new fleet its recovery key, which opens every secret, or replaces it and encrypts every secret again. |
 | `trust <host> <type> <name>=<key>...` | Lets a new machine's keys open their lists' secrets and sign for the fleet, and prints the code to type on it. |
 | `retire <host>` | Removes a machine's keys, and prints the secrets you should change. |
 | `install` | Sets up a new machine from the fleet. |
@@ -38,7 +38,7 @@ curl -fLO $base/mothership-x86_64 -fLO $base/SHA256SUMS
 sha256sum -c SHA256SUMS && install -m 755 mothership-x86_64 mothership
 ```
 
-`sudo ./mothership install` asks for the fleet's SSH URL, the type, its options and the hostname. Each answer can also be a flag, for cloud-init (`--fleet`, `--type`, `--option`, `--hostname`, `--admin`, and `--remove-unlisted yes|no` on Debian); with `--type`, only the options given with `--option` turn on. Passwords and keys are always typed. Install creates the admin's SSH key and waits until GitHub lets it in, then prints the `trust` command to run on a machine that signs for the fleet and waits for the code it prints, or takes the recovery key, and applies the fleet.
+`sudo ./mothership install` asks for the fleet's SSH URL, the type, its options and the hostname. Each answer can also be a flag (`--fleet`, `--type`, `--option`, `--hostname`, `--admin`, and `--remove-unlisted yes|no` on Debian); with `--type`, only the options given with `--option` turn on. Passwords and keys are always typed. Install creates the admin's SSH key and waits until GitHub lets it in, then prints the `trust` command to run on a machine that signs for the fleet and waits for the code it prints, or takes the recovery key, and applies the fleet.
 
 On Debian and Ubuntu, install offers to remove every package the type doesn't list, so the type lists what the machine needs: the kernel, `openssh-server`, `sudo`, git and chezmoi.
 

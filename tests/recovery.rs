@@ -11,8 +11,6 @@ fn a_typed_key_goes_into_the_manifest_next_to_the_pin() {
     let manifest = Manifest::read(dir.path()).unwrap();
     assert_eq!(manifest.recovery().unwrap().key, secrets::public(&key));
     assert_eq!(manifest.pin().unwrap().version, "0.2.0");
-    let again = run(dir.path(), &mut Prompt::answering("n\n")).unwrap_err();
-    assert_eq!(again.to_string(), "the fleet has a recovery key already");
 }
 
 #[test]
