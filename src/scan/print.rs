@@ -17,6 +17,7 @@ impl Kind {
             Kind::Account => Area::Account,
             Kind::User => Area::Users,
             Kind::Shared => Area::Shared,
+            Kind::Key => Area::Keys,
             Kind::Dconf | Kind::Pref => Area::Settings,
         }
     }
@@ -30,6 +31,7 @@ pub enum Area {
     Services,
     Users,
     Shared,
+    Keys,
     UserServices,
     Account,
     Settings,
@@ -44,6 +46,7 @@ impl Area {
             Area::Services => "Services",
             Area::Users => "Users",
             Area::Shared => "Shared files",
+            Area::Keys => "Keys",
             Area::UserServices => "User services",
             Area::Account => "Account",
             Area::Settings => "Settings",

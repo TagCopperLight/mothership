@@ -2,6 +2,7 @@ mod account;
 mod etc;
 pub mod files;
 mod home;
+mod keys;
 mod packages;
 mod print;
 mod secret;
@@ -99,6 +100,7 @@ pub fn checks(fleet: &Fleet, db: &Db, record: &Record, which: Checks) -> Result<
     })?;
     items.extend(account::users(fleet)?);
     items.extend(shared::unlinked(fleet)?);
+    items.extend(keys::untrusted(fleet)?);
     for item in &mut items {
         let user = item.member.map(|i| fleet.members[i].name.as_str());
         if item.section == Section::Machine

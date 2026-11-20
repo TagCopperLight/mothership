@@ -8,6 +8,7 @@ use crate::{
     revert::{self, Machine, Revert, User},
     scan::{self, Checks},
     style::Style,
+    trust,
     update::{self, Outcome},
 };
 use anyhow::Result;
@@ -26,13 +27,13 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
     while round(&mut || prompt.confirm("Apply"), ServiceManager::Running)? {}
-    Ok(())
+    trust::create_keys(&Fleet::load()?)
 }
 
 pub fn unasked(service_manager: ServiceManager) -> Result<()> {
     update::follow_fleet(&mut || Ok(true))?;
     while round(&mut || Ok(true), service_manager)? {}
-    Ok(())
+    trust::create_keys(&Fleet::load()?)
 }
 
 fn round(

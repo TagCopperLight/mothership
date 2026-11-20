@@ -36,7 +36,7 @@ $ sudo -u dev rm -r /home/dev/.profile /home/dev/.local
 A key that is a pipe would hang a reader. Scan says dev's secrets stay locked, and goes on.
 
 ```console
-$ sudo -u dev bash -c 'mkdir -p ~/.config/mothership && mkfifo ~/.config/mothership/key.txt'
+$ sudo -u dev bash -c 'mkdir -p ~/.config/mothership && rm -f ~/.config/mothership/key.txt && mkfifo ~/.config/mothership/key.txt'
 $ timeout 60 sudo mothership scan 2>&1 | head -1
 dev's secrets stay locked: /home/dev/.config/mothership/key.txt isn't a regular file
 $ sudo -u dev rm /home/dev/.config/mothership/key.txt

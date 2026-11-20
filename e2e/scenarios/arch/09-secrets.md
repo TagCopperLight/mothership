@@ -198,21 +198,24 @@ $ sudo cat /etc/wifi.conf
 psk=WIFI-SECRET
 ```
 
-A second machine has its own keys, which the fleet doesn't know yet. Scan and apply leave the
-secrets alone.
+A second machine has its own keys, which the fleet doesn't know yet. Scan says what to run where
+the secrets open, and apply leaves them alone.
 
 ```console
 $ sudo mv /etc/mothership/key.txt /root/laptop.txt && mv ~/.config/mothership/key.txt ~/laptop.txt
 $ sudo mothership key >/dev/null
 $ sudo mothership scan
-Needs attention · 4
+Needs attention · 6
   Files
     ? /etc/wifi.conf       locked  this machine's key isn't on its list
     ? ~/.config/app/token  locked  this machine's key isn't on its list
     ? ~/.netrc             locked  this machine's key isn't on its list
     ? ~/.ssh/id_test       locked  this machine's key isn't on its list
+  Keys
+    \+ workstation/me +not trusted +run `sudo mothership trust workstation/me machine age1[a-z0-9]+` where its secrets open (re)
+    \+ workstation/root +not trusted +run `sudo mothership trust workstation/root machine age1[a-z0-9]+` where its secrets open (re)
 
-4 to review     sudo mothership review
+6 to review     sudo mothership review
 The fleet has 2 changes not committed and 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 $ echo y | sudo mothership apply
@@ -223,7 +226,7 @@ Left alone, since this machine's key can't open them:
     ? ~/.netrc             locked  this machine's key isn't on its list
     ? ~/.ssh/id_test       locked  this machine's key isn't on its list
 
-4 changed on this machine, for sudo mothership review
+6 changed on this machine, for sudo mothership review
 Nothing to apply.
 ```
 

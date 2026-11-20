@@ -6,6 +6,7 @@ mod file;
 mod fleet;
 mod hardware;
 mod hash;
+mod host;
 mod ignore;
 mod install;
 mod item;

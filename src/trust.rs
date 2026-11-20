@@ -9,7 +9,9 @@ use crate::{
         AGE, Keys, RECIPIENTS, ROOT_KEY, Recipient, Storage, encrypt_for, format, holds, key_path,
         make_key, public, read, root_key, user_key,
     },
-    style, walk,
+    style,
+    user::User,
+    walk,
 };
 use age::x25519;
 use anyhow::{Context, Result, anyhow, bail};
@@ -27,7 +29,7 @@ pub struct MachineKey {
     pub trusted: bool,
 }
 
-pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
+fn owners(fleet: &Fleet) -> Vec<(String, Option<&User>, PathBuf)> {
     let mut owners = vec![("root".to_owned(), None, fleet.recipients())];
     for member in &fleet.members {
         owners.push((
@@ -37,31 +39,45 @@ pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
         ));
     }
     owners
-        .into_iter()
-        .map(|(name, user, list)| {
-            let key = match user {
-                None => match root_key()? {
-                    Some(key) => key,
-                    None => make_key(Path::new(ROOT_KEY))?,
-                },
-                Some(user) => match user_key(user)? {
-                    Some(key) => key,
-                    None => user.with_rights(|| make_key(&key_path(user)))?,
-                },
-            };
-            let public = public(&key);
-            Ok(MachineKey {
-                target: format!("{}/{name}", fleet.type_name),
-                trusted: holds(&list, &public)?,
-                name,
-                public,
-                list,
-            })
-        })
-        .collect()
+}
+
+pub fn create_keys(fleet: &Fleet) -> Result<()> {
+    for (_, user, _) in owners(fleet) {
+        match user {
+            None if root_key()?.is_none() => drop(make_key(Path::new(ROOT_KEY))?),
+            Some(user) if user_key(user)?.is_none() => {
+                user.with_rights(|| make_key(&key_path(user)))?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
+    let mut keys = Vec::new();
+    for (name, user, list) in owners(fleet) {
+        let key = match user {
+            None => root_key()?,
+            Some(user) => user_key(user)?,
+        };
+        let Some(key) = key else {
+            continue;
+        };
+        let public = public(&key);
+        keys.push(MachineKey {
+            target: format!("{}/{name}", fleet.type_name),
+            trusted: holds(&list, &public)?,
+            name,
+            public,
+            list,
+        });
+    }
+    Ok(keys)
 }
 
 pub fn key(fleet: &Fleet) -> Result<()> {
+    create_keys(fleet)?;
     let keys = machine_keys(fleet)?;
     for key in &keys {
         println!("{:6}  {}", key.name, key.public);

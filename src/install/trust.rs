@@ -16,6 +16,7 @@ enum Next {
 }
 
 pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
+    crate::trust::create_keys(&Fleet::load()?)?;
     loop {
         let fleet = Fleet::load()?;
         let mut waiting = Vec::new();

@@ -24,7 +24,7 @@ The fleet has 1 commit not pushed  git -C /var/lib/mothership/fleet status
 ```
 
 Apply creates `dev`, then goes round again for what the new account brings: dev's chezmoi
-config, linger and the installer, then dev's files.
+config, linger and the installer, then dev's files. dev gets a key too.
 
 ```console
 $ printf 'y\ny\ny\n' | sudo mothership apply
@@ -49,9 +49,10 @@ Coming from the fleet · 1
 Apply [y/N]? y
 $ ls /var/lib/systemd/linger
 dev
-$ sudo stat -c '%U %n' /home/dev/.greeter/hi /home/dev/.gitconfig
-dev /home/dev/.greeter/hi
-dev /home/dev/.gitconfig
+$ sudo stat -c '%U %a %n' /home/dev/.greeter/hi /home/dev/.gitconfig /home/dev/.config/mothership/key.txt
+dev 644 /home/dev/.greeter/hi
+dev 644 /home/dev/.gitconfig
+dev 600 /home/dev/.config/mothership/key.txt
 $ sudo grep sourceDir /home/dev/.config/chezmoi/chezmoi.toml
 sourceDir = "/var/lib/mothership/fleet/types/workstation/users/dev/home"
 $ sudo mothership scan

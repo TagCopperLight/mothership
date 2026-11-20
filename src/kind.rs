@@ -13,6 +13,7 @@ pub enum Kind {
     Account,
     User,
     Shared,
+    Key,
     Dconf,
     Pref,
 }
@@ -26,7 +27,9 @@ pub enum Level {
 impl Kind {
     pub fn level(self) -> Level {
         match self {
-            Kind::Package | Kind::Etc | Kind::Service | Kind::User | Kind::Shared => Level::Machine,
+            Kind::Package | Kind::Etc | Kind::Service | Kind::User | Kind::Shared | Kind::Key => {
+                Level::Machine
+            }
             _ => Level::User,
         }
     }

@@ -2,7 +2,6 @@ mod answers;
 mod boot;
 mod bootstrap;
 mod disk;
-mod host;
 mod iso;
 mod net;
 mod repo;
@@ -12,6 +11,7 @@ use crate::{
     apply::{self, ServiceManager},
     cmd::{self, As},
     fleet::{self, Fleet, Machine, Repo},
+    host,
     package::{self, Distro, aur},
     prompt::Prompt,
     revert, scan, user,
