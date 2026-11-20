@@ -1,5 +1,5 @@
 use super::{
-    FROM_ISO, GH_TOKEN,
+    CARRIED_KEY, FROM_ISO,
     answers::{self, ADMIN, Flags},
     boot, disk,
     net::{self, Needs},
@@ -12,8 +12,9 @@ use crate::{
     fleet::{self, Repo},
     package::Distro,
     prompt::Prompt,
+    ssh, user,
 };
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use std::{
     env, fs,
     os::unix::{
@@ -40,15 +41,22 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
         })?;
     }
     let url = answers::fleet_url(flags, prompt)?;
+    let hostname = answers::hostname(flags, prompt)?;
+    let admin = match &flags.admin {
+        Some(name) => name.clone(),
+        None => prompt.line("Admin, who commits and pushes the fleet:")?,
+    };
     let dir = Path::new(FLEET);
     fs::create_dir_all(dir)?;
-    let private = repo::clone(&url, dir, As::Root, Distro::Arch)?;
+    let root_user = user::by_name("root")?.context("the ISO has a root user")?;
+    let title = crate::github::title(&hostname, &admin);
+    repo::clone(&url, dir, &root_user, &title, Distro::Arch, prompt)?;
     let machine = answers::machine(flags, prompt, dir)?;
     let fleet = Repo::for_machine(dir.into(), &machine)?;
     boot::check_type(&fleet)?;
-    let members: Vec<String> = fleet.profiles.iter().map(|m| m.name.clone()).collect();
-    answers::admin_given(flags, &members)?;
-    let hostname = answers::hostname(flags, prompt)?;
+    if !fleet.profiles.iter().any(|member| member.name == admin) {
+        bail!("{} has no user {admin}", machine.device_type);
+    }
     let timezone = answers::timezone(flags, prompt)?;
     if !resumed {
         let target = disk::choose(flags, prompt)?;
@@ -58,10 +66,13 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
         disk::prepare(&target, prompt)?;
     }
 
-    let mut packages = vec!["base", "base-devel", "git", "chezmoi"];
-    if private {
-        packages.push(Distro::Arch.gh_package());
-    }
+    let packages = [
+        "base",
+        "base-devel",
+        "git",
+        "chezmoi",
+        Distro::Arch.ssh_package(),
+    ];
     let args = [&["-K", disk::ROOT], &packages[..]].concat();
     net::retry("Installing the base system", &mirror, || {
         cmd::root("pacstrap", &args)
@@ -75,18 +86,10 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     let localtime = root.join("etc/localtime");
     file::link(&localtime, &answers::zoneinfo(&timezone))?;
     machine.save(root)?;
-    let token = match private {
-        true => Some(
-            cmd::stdout(As::Root, "gh", &["auth", "token"])?
-                .trim()
-                .to_owned(),
-        ),
-        false => None,
-    };
+    carry_ssh(root, &root_user)?;
     let copy = file::under(root, fleet::DIR);
     if copy.exists() {
-        let origin = repo::origin(dir, || As::Root.command::<&str>("git", &[]))?;
-        pull_as_owner(&origin, &copy, token.as_deref())?;
+        pull_as_owner(&copy)?;
     } else {
         let parent = copy.parent().expect("the fleet folder has a parent");
         fs::create_dir_all(parent)?;
@@ -101,15 +104,9 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     fs::copy(env::current_exe()?, &binary)?;
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))?;
 
-    let mut args = vec![disk::ROOT, BINARY, "install"];
-    if let Some(admin) = &flags.admin {
-        args.extend([ADMIN, admin]);
-    }
+    let args = [disk::ROOT, BINARY, "install", ADMIN, &admin];
     let mut chroot = Command::new("arch-chroot");
-    chroot.args(&args).env(FROM_ISO, "1");
-    if let Some(token) = &token {
-        chroot.env(GH_TOKEN, token);
-    }
+    chroot.args(args).env(FROM_ISO, "1");
     cmd::status(chroot, "arch-chroot", &args)?;
     disk::close()?;
     println!(
@@ -119,12 +116,27 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     Ok(())
 }
 
-fn pull_as_owner(origin: &str, copy: &Path, token: Option<&str>) -> Result<()> {
+fn carry_ssh(root: &Path, root_user: &user::User) -> Result<()> {
+    let known = Path::new(repo::KNOWN_HOSTS);
+    if known.exists() {
+        fs::copy(known, file::under(root, repo::KNOWN_HOSTS))?;
+    }
+    let Some(key) = file::read(&ssh::key_path(root_user))? else {
+        return Ok(());
+    };
+    let carried = file::under(root, CARRIED_KEY);
+    file::remove_if_found(&carried)?;
+    fs::create_dir_all(carried.parent().expect("the carried key has a folder"))?;
+    file::create_private(&carried, &key)
+}
+
+fn pull_as_owner(copy: &Path) -> Result<()> {
+    let origin = repo::origin(Path::new(FLEET), || As::Root.command::<&str>("git", &[]))?;
     let meta = fs::metadata(copy)?;
     let (uid, gid) = (meta.uid().to_string(), meta.gid().to_string());
     let home = tempfile::tempdir()?;
     unix::fs::chown(home.path(), Some(meta.uid()), Some(meta.gid()))?;
-    repo::pull(copy, Some(origin), || {
+    let as_owner = || {
         let mut git = Command::new("setpriv");
         git.args([
             "--reuid",
@@ -136,9 +148,32 @@ fn pull_as_owner(origin: &str, copy: &Path, token: Option<&str>) -> Result<()> {
             "git",
         ])
         .env("HOME", home.path());
-        if let Some(token) = token {
-            git.env("GH_TOKEN", token);
-        }
         git
-    })
+    };
+    let theirs = repo::origin(copy, as_owner)?;
+    if theirs != origin {
+        bail!(
+            "{} comes from {theirs}, not {origin}: run install with --fleet {theirs}",
+            copy.display()
+        );
+    }
+    let bundle = tempfile::Builder::new().suffix(".bundle").tempfile()?;
+    let path = bundle.path().to_string_lossy().into_owned();
+    cmd::root(
+        "git",
+        &["-C", FLEET, "bundle", "create", "--quiet", &path, "HEAD"],
+    )?;
+    fs::set_permissions(bundle.path(), fs::Permissions::from_mode(0o644))?;
+    let args = [
+        "-C",
+        &copy.to_string_lossy(),
+        "pull",
+        "--quiet",
+        "--ff-only",
+        &path,
+        "HEAD",
+    ];
+    let mut pull = as_owner();
+    pull.args(args);
+    cmd::status(pull, "git", &args)
 }

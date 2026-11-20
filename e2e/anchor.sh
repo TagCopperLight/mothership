@@ -8,7 +8,7 @@ git --git-dir "$lib/fleet.git" update-ref refs/mothership/checked "$commit"
 mkdir -p "$lib/checked/$commit"
 git --git-dir "$lib/fleet.git" archive "$commit" | tar -x --no-same-owner -C "$lib/checked/$commit"
 ln -s "$lib/checked/$commit" "$lib/current"
-key="key::$(ssh-keygen -y -f /etc/mothership/signing | cut -d' ' -f1,2)"
+key="key::$(cat /tmp/signing.pub)"
 cd "$lib/fleet"
 runuser -u me -- git config gpg.format ssh
 runuser -u me -- git config gpg.ssh.program /usr/local/bin/mothership

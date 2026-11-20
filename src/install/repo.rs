@@ -1,108 +1,123 @@
 use super::{
     bootstrap,
-    net::{self, Needs, Scheme},
+    net::{self, Needs, Remote, Scheme},
 };
 use crate::{
     cmd::{self, As},
+    file,
     package::Distro,
+    prompt::Prompt,
+    ssh,
+    user::User,
 };
 use anyhow::{Context, Result, bail};
+use serde::Deserialize;
 use std::{fs, path::Path, process::Command};
 
-const GITHUB: &str = "https://github.com";
-const GH_LOGIN: [&str; 4] = ["auth", "login", "--hostname", "github.com"];
-const GH_CREDENTIALS: [&str; 4] = [
-    "-c",
-    "credential.helper=",
-    "-c",
-    "credential.helper=!gh auth git-credential",
-];
+const GITHUB: &str = "github.com";
+const GITHUB_META: &str = "https://api.github.com/meta";
+const NEW_KEY_PAGE: &str = "https://github.com/settings/ssh/new";
+pub const KNOWN_HOSTS: &str = "/etc/ssh/ssh_known_hosts";
 
-fn check_url(url: &str) -> Result<()> {
-    let Some(remote) = net::remote(url)? else {
-        return Ok(());
-    };
-    if remote.scheme != Scheme::Https {
-        bail!(
-            "{url} needs an SSH key or sends nothing encrypted, and a new machine has no SSH key \
-             yet: give the https URL"
-        );
+fn check_url(url: &str) -> Result<Option<Remote<'_>>> {
+    match net::remote(url)? {
+        Some(remote) if remote.scheme != Scheme::Ssh => bail!(
+            "{url} isn't an SSH URL: give one such as git@github.com:you/fleet.git, so git reads \
+             the fleet with this machine's own key"
+        ),
+        remote => Ok(remote),
     }
-    if remote.userinfo.is_some() {
-        bail!(
-            "{url} holds a login, and git would save it where every user of the machine reads \
-             it: give the URL without it, and install logs in to GitHub with gh"
-        );
+}
+
+#[derive(Deserialize)]
+struct Meta {
+    ssh_keys: Vec<String>,
+}
+
+fn known_hosts_lines(known: &str, keys: &[String]) -> String {
+    keys.iter()
+        .map(|key| format!("{GITHUB} {key}\n"))
+        .filter(|line| !known.lines().any(|known| known == line.trim_end()))
+        .collect()
+}
+
+fn know_github() -> Result<()> {
+    let text = net::retry(
+        "Reading GitHub's host keys",
+        &Needs::url(GITHUB_META)?,
+        || cmd::stdout(As::Root, "curl", &["-fsSL", GITHUB_META]),
+    )?;
+    let meta: Meta = serde_json::from_str(&text).context("reading GitHub's host keys")?;
+    let path = Path::new(KNOWN_HOSTS);
+    let known = file::read_if_any(path)?.unwrap_or_default();
+    let added = known_hosts_lines(&known, &meta.ssh_keys);
+    if !added.is_empty() {
+        file::write(path, format!("{known}{added}").as_bytes(), 0o644)?;
     }
     Ok(())
 }
 
-fn on_github(url: &str) -> bool {
-    url.starts_with(&format!("{GITHUB}/"))
-}
-
-enum Access {
-    Open,
-    NeedsLogin,
-}
-
-fn probe(url: &str, who: As) -> Result<Access> {
-    let args = ["ls-remote", "--", url];
-    let mut probe = who.command("git", &args);
+fn lets_in(url: &str, owner: &User) -> Result<bool> {
+    let mut probe = As::User(owner).command("git", &["ls-remote", "--", url]);
     probe
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
     let out = probe.output().context("running git")?;
     let stderr = String::from_utf8_lossy(&out.stderr);
     match out.status.success() {
-        true => Ok(Access::Open),
-        false if on_github(url) && stderr.contains("terminal prompts disabled") => {
-            Ok(Access::NeedsLogin)
-        }
+        true => Ok(true),
+        false if stderr.contains("Permission denied (") => Ok(false),
+        false if stderr.contains("Host key verification failed") => bail!(
+            "this machine doesn't know {url}'s host key: add it to {KNOWN_HOSTS}, after checking \
+             it, and run install again"
+        ),
         false => bail!("git can't read {url}: {}", stderr.trim()),
     }
 }
 
-pub fn clone(url: &str, dir: &Path, who: As, distro: Distro) -> Result<bool> {
-    check_url(url)?;
+pub fn clone(
+    url: &str,
+    dir: &Path,
+    owner: &User,
+    title: &str,
+    distro: Distro,
+    prompt: &mut Prompt,
+) -> Result<()> {
+    let remote = check_url(url)?;
     let needs = Needs::url(url)?;
-    let path = dir.to_string_lossy();
-    let empty = || -> Result<()> {
-        for entry in fs::read_dir(dir)? {
-            let path = entry?.path();
-            if path.is_dir() {
-                fs::remove_dir_all(path)?;
+    if let Some(remote) = remote {
+        bootstrap::ssh(distro)?;
+        if remote.host == GITHUB {
+            know_github()?;
+        }
+        if ssh::user_key(owner)?.is_none() {
+            ssh::create_key(owner)?;
+        }
+        while !net::retry("Reaching the fleet", &needs, || lets_in(url, owner))? {
+            let public = ssh::user_key(owner)?.context("install made the key")?;
+            println!("{} doesn't let this machine's key in yet.", remote.host);
+            if remote.host == GITHUB {
+                println!("On a machine logged in to gh, run:");
+                println!("  echo '{public}' | gh ssh-key add - --title {title}");
+                println!("or paste it at {NEW_KEY_PAGE}, titled {title}.");
             } else {
-                fs::remove_file(path)?;
+                println!("Let it in for the fleet's repository: {public}");
+            }
+            if !prompt.confirm("Is it there now")? {
+                bail!("install stopped before it could read the fleet");
             }
         }
-        Ok(())
-    };
-    let access = net::retry("Reaching the fleet", &needs, || probe(url, who))?;
-    if let Access::Open = access {
-        net::retry("Cloning the fleet", &needs, || {
-            empty()?;
-            cmd::run(who, "git", &["clone", "--", url, &path])
-        })?;
-        return Ok(false);
     }
-    bootstrap::gh(distro)?;
-    if cmd::bytes(who, "gh", &["auth", "token"]).is_err() {
-        println!("The fleet is private: log in to GitHub.");
-        let args = [&GH_LOGIN[..], &["--git-protocol", "https", "--web"]].concat();
-        cmd::run(who, "gh", &args)?;
-    }
+    let path = dir.to_string_lossy();
     net::retry("Cloning the fleet", &needs, || {
-        empty()?;
-        cmd::run(who, "gh", &["repo", "clone", url, &path])
-    })?;
-    Ok(true)
-}
-
-pub fn log_in(who: As, token: &str) -> Result<()> {
-    let args = [&GH_LOGIN[..], &["--with-token"]].concat();
-    net::retry("Logging in to GitHub", &Needs::url(GITHUB)?, || {
-        cmd::with_input(who, "gh", &args, token.as_bytes())
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+            match path.is_dir() {
+                true => fs::remove_dir_all(path)?,
+                false => fs::remove_file(path)?,
+            }
+        }
+        cmd::run(As::User(owner), "git", &["clone", "--", url, &path])
     })
 }
 
@@ -114,26 +129,6 @@ pub fn origin(dir: &Path, git: impl Fn() -> Command) -> Result<String> {
     Ok(String::from_utf8(cmd::output(command, "git", &get)?)?
         .trim()
         .to_owned())
-}
-
-pub fn pull(dir: &Path, expected: Option<&str>, git: impl Fn() -> Command) -> Result<()> {
-    let path = dir.to_string_lossy();
-    let origin = origin(dir, &git)?;
-    let origin = origin.as_str();
-    if let Some(url) = expected
-        && origin != url
-    {
-        bail!(
-            "{} comes from {origin}, not {url}: run install with --fleet {origin}",
-            dir.display()
-        );
-    }
-    let args = [&GH_CREDENTIALS[..], &["-C", &path, "pull", "--ff-only"]].concat();
-    net::retry("Pulling the fleet", &Needs::url(origin)?, || {
-        let mut command = git();
-        command.args(&args);
-        cmd::status(command, "git", &args)
-    })
 }
 
 #[cfg(test)]

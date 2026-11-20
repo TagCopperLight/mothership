@@ -9,21 +9,23 @@ mod trust;
 
 use crate::{
     apply::{self, ServiceManager},
-    cmd::{self, As},
+    cmd, file,
     fleet::{self, Fleet, Machine, Repo},
-    host,
+    github, host,
     package::{self, Distro, aur},
     prompt::Prompt,
-    revert, scan, user,
+    revert, scan, ssh,
+    user::{self, User},
 };
 use answers::Flags;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use net::Needs;
+use ssh_key::PrivateKey;
 use std::{env, ffi::OsStr, fs, os::unix::fs::MetadataExt, path::Path};
 
 const ARCHISO: &str = "/run/archiso";
-const GH_TOKEN: &str = "MOTHERSHIP_GH_TOKEN";
 const FROM_ISO: &str = "MOTHERSHIP_FROM_ISO";
+const CARRIED_KEY: &str = "/var/lib/mothership/install-key";
 
 pub fn run(args: &[String]) -> Result<()> {
     let flags = Flags::parse(args)?;
@@ -43,8 +45,6 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     if flags.remove_unlisted.is_some() && distro != Distro::Debian {
         bail!("--remove-unlisted only means something on Debian and Ubuntu");
     }
-    let token = env::var(GH_TOKEN).ok();
-    unsafe { env::remove_var(GH_TOKEN) };
     if !Path::new(fleet::MACHINE).exists() {
         start_server(flags, prompt, distro)?;
     }
@@ -58,8 +58,9 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     }
     if fs::metadata(dir)?.uid() == 0 {
         let names: Vec<String> = members.iter().map(|m| m.name.clone()).collect();
-        adopt(flags, prompt, &names, dir, token.as_deref())?;
+        adopt(flags, prompt, &names, dir)?;
     }
+    take_carried_key(&fleet::admin()?)?;
 
     let first_start = !chroot && boot::first_start();
     let answering = first_start.then(boot::answering);
@@ -116,26 +117,21 @@ fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<()
     fleet::require_sudo(&admin)?;
     bootstrap::git(distro)?;
     bootstrap::chezmoi(distro)?;
+    let hostname = answers::hostname(flags, prompt)?;
     let dir = Path::new(fleet::DIR);
     if !dir.join(".git").exists() {
         let url = answers::fleet_url(flags, prompt)?;
         fs::create_dir_all(dir.parent().expect("the fleet folder has a parent"))?;
         admin.create_dir_all(dir)?;
-        repo::clone(&url, dir, As::User(&admin), distro)?;
+        let title = github::title(&hostname, &admin.name);
+        repo::clone(&url, dir, &admin, &title, distro, prompt)?;
     }
     let machine = answers::machine(flags, prompt, dir)?;
-    let hostname = answers::hostname(flags, prompt)?;
     host::rename(&hostname)?;
     machine.save(Path::new("/"))
 }
 
-fn adopt(
-    flags: &Flags,
-    prompt: &mut Prompt,
-    members: &[String],
-    dir: &Path,
-    token: Option<&str>,
-) -> Result<()> {
+fn adopt(flags: &Flags, prompt: &mut Prompt, members: &[String], dir: &Path) -> Result<()> {
     let name = answers::admin(flags, prompt, members)?;
     let admin = user::by_name(&name)?.context("install creates the type's users first")?;
     println!("{name}'s password:");
@@ -146,10 +142,19 @@ fn adopt(
             return Err(e);
         }
     }
-    if let Some(token) = token {
-        repo::log_in(As::User(&admin), token)?;
-    }
     let owner = format!("{}:", admin.name);
     let args = ["-R", "--no-dereference", "--", &owner].map(OsStr::new);
     cmd::root("chown", &[&args[..], &[dir.as_os_str()]].concat())
+}
+
+fn take_carried_key(admin: &User) -> Result<()> {
+    let carried = Path::new(CARRIED_KEY);
+    let Some(bytes) = file::read_root_only(carried)? else {
+        return Ok(());
+    };
+    if ssh::user_key(admin)?.is_none() {
+        let key = PrivateKey::from_openssh(bytes).map_err(|e| anyhow!("{CARRIED_KEY}: {e}"))?;
+        ssh::write_key(admin, &key)?;
+    }
+    fs::remove_file(carried).with_context(|| format!("removing {CARRIED_KEY}"))
 }

@@ -4,7 +4,8 @@
 
 - `sbctl enroll-keys --tpm-eventlog` finds no event log inside the chroot.
 - zram shows in lsblk as a disk, with no `/sys/block/<name>/device`.
-- `gh auth token` works offline, `gh auth status` doesn't.
+- GitHub refuses SSH to a key it doesn't list, even for a public repository, so install waits until the admin's key is on GitHub.
+- gh run with a cleared environment still finds its keyring login, as long as `XDG_RUNTIME_DIR` is set.
 - On a fresh Arch install, the admin's sudoers file comes from the fleet's first apply.
 
 ## Packages

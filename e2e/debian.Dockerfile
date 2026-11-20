@@ -20,8 +20,8 @@ RUN touch /var/log/systemctl.log && chmod 666 /var/log/systemctl.log
 FROM machine
 COPY fleet /var/lib/mothership/fleet
 COPY chezmoi/server.toml /tmp/chezmoi.toml
-COPY signing /tmp/signing
-COPY ssh /tmp/ssh
+COPY signing signing.pub /tmp/
+COPY ssh ssh.pub /tmp/
 COPY recovery.txt /tmp/recovery.txt
 COPY anchor.sh /tmp/anchor.sh
 RUN useradd -m -G sudo -s /bin/bash me \
@@ -29,7 +29,7 @@ RUN useradd -m -G sudo -s /bin/bash me \
  && install -D -m 600 /tmp/signing /etc/mothership/signing \
  && install -d -o me -g me -m 700 /home/me/.ssh \
  && install -o me -g me -m 600 /tmp/ssh /home/me/.ssh/id_ed25519 \
- && ssh-keygen -y -f /tmp/ssh | install -o me -g me -m 644 /dev/stdin /home/me/.ssh/id_ed25519.pub \
+ && install -o me -g me -m 644 /tmp/ssh.pub /home/me/.ssh/id_ed25519.pub \
  && install -m 440 /var/lib/mothership/fleet/types/server/etc/sudoers.d/sudo /etc/sudoers.d/sudo \
  && printf 'type = "server"\n' | install -D -m 644 /dev/stdin /etc/mothership/machine.toml \
  && chown -R me:me /var/lib/mothership/fleet \

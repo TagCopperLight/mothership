@@ -1,23 +1,34 @@
 use super::*;
 
 #[test]
-fn only_an_https_url_without_a_login_is_accepted() {
-    check_url("https://github.com/me/fleet").unwrap();
-    check_url("/home/me/fleet.git").unwrap();
-    check_url("file:///home/me/fleet.git").unwrap();
-    let login = check_url("https://me:token@github.com/me/fleet").unwrap_err();
-    assert!(login.to_string().contains("holds a login"));
-}
-
-#[test]
-fn ssh_and_plain_http_urls_ask_for_the_https_one() {
+fn only_an_ssh_url_or_a_local_path_is_accepted() {
     for url in [
         "git@github.com:me/fleet.git",
         "ssh://git@github.com/me/fleet",
+        "/home/me/fleet.git",
+        "file:///home/me/fleet.git",
+    ] {
+        check_url(url).unwrap();
+    }
+    for url in [
+        "https://github.com/me/fleet",
         "http://example.com/fleet",
         "git://example.com/fleet",
     ] {
         let error = check_url(url).unwrap_err();
-        assert!(error.to_string().contains("give the https URL"), "{url}");
+        assert!(error.to_string().contains("isn't an SSH URL"), "{url}");
     }
+}
+
+#[test]
+fn adds_only_the_github_host_keys_not_known_yet() {
+    let keys = ["ssh-ed25519 AAAA".to_owned(), "ssh-rsa BBBB".to_owned()];
+    assert_eq!(
+        known_hosts_lines(
+            "other.host ssh-ed25519 CCCC\ngithub.com ssh-rsa BBBB\n",
+            &keys
+        ),
+        "github.com ssh-ed25519 AAAA\n"
+    );
+    assert_eq!(known_hosts_lines("", &keys).lines().count(), 2);
 }

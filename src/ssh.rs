@@ -23,7 +23,10 @@ pub fn user_key(user: &User) -> Result<Option<String>> {
 }
 
 pub fn create_key(user: &User) -> Result<()> {
-    let key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519)?;
+    write_key(user, &PrivateKey::random(&mut OsRng, Algorithm::Ed25519)?)
+}
+
+pub fn write_key(user: &User, key: &PrivateKey) -> Result<()> {
     let public = format!("{}\n", key.public_key().to_openssh()?);
     let path = key_path(user);
     user.with_rights(|| {

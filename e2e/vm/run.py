@@ -217,7 +217,7 @@ def install(args: list[str], port: int, log) -> None:
         shell(vm, f"curl -fsS -o /root/mothership {site}/mothership && chmod +x /root/mothership")
         shell(vm, f"curl -fsS {site}/fleet.tar | tar -xf - -C /root")
         vm.sendline("/root/mothership install --fleet /root/fleet.git --type vm --option encrypted"
-                    " --hostname vmtest --timezone Europe/Paris --disk /dev/vda --layout wipe")
+                    " --hostname vmtest --admin tester --timezone Europe/Paris --disk /dev/vda --layout wipe")
         wait(vm, "Type vda to go on:")
         vm.sendline("vda")
         for question in ["Disk passphrase:", "Again:"]:

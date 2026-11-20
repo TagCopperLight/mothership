@@ -27,12 +27,12 @@ pub fn git(distro: Distro) -> Result<()> {
     })
 }
 
-pub fn gh(distro: Distro) -> Result<()> {
-    if cmd::found(As::Root, "gh") {
+pub fn ssh(distro: Distro) -> Result<()> {
+    if cmd::found(As::Root, "ssh") {
         return Ok(());
     }
-    net::retry("Installing gh", &Needs::mirror(distro)?, || {
-        distro.bootstrap(&[distro.gh_package()])
+    net::retry("Installing ssh", &Needs::mirror(distro)?, || {
+        distro.bootstrap(&[distro.ssh_package()])
     })
 }
 

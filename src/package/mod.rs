@@ -67,10 +67,10 @@ impl Distro {
         config.iter().any(|dir| path.starts_with(dir))
     }
 
-    pub fn gh_package(self) -> &'static str {
+    pub fn ssh_package(self) -> &'static str {
         match self {
-            Distro::Arch => "github-cli",
-            Distro::Debian => "gh",
+            Distro::Arch => "openssh",
+            Distro::Debian => "openssh-client",
         }
     }
 
