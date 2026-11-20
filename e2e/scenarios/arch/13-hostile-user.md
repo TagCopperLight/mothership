@@ -25,8 +25,8 @@ $ sudo -u dev bash -c 'printf "echo junk\nsleep 1000\n" > ~/.profile &&
 $ timeout 60 sudo mothership scan
 Changed on this machine · 2
   Files · dev
-    + ~/.local  new  1 file
-    + ~/.profile  new
+    + ~/.local/bin/chezmoi  new
+    + ~/.profile            new
 
 2 to review     sudo mothership review
 \d+ ignored (re)

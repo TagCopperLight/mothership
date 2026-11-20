@@ -49,6 +49,7 @@ From the Arch ISO, install also partitions and encrypts the disk:
 ## Writing a fleet
 
 ```text
+mothership.toml           the mothership release every machine runs, and its SHA-256
 shared/                   files and secrets several homes get, linked from each home
 types/workstation/
 ├── system.toml           packages, services, hardware and options

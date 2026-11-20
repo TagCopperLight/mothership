@@ -1,4 +1,5 @@
 use super::disk;
+use crate::update::BINARY;
 use crate::{
     cmd::{self, As},
     file,
@@ -14,7 +15,6 @@ use std::{
     time::Duration,
 };
 
-pub const BINARY: &str = "/usr/local/bin/mothership";
 const EFI_GLOBAL: &str = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
 const UKIS: &str = "/boot/EFI/Linux";
 const SYSTEMD_BOOT: &str = "/usr/lib/systemd/boot/efi/systemd-bootx64.efi";

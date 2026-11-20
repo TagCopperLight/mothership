@@ -11,6 +11,7 @@ use anyhow::Result;
 use std::{
     collections::HashSet,
     fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -51,13 +52,26 @@ pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
         visible || systemd::is_enablement(path)
     };
     let ignored = |path: &Path| member.ignore.matches(Kind::Home, &user.tilde(path));
-    let walk =
-        user.with_rights(|| walk::unknown(home, &known, &HashSet::new(), &skip, &ignored))?;
+    let apps = home.join(".local/opt");
+    let bin = home.join(".local/bin");
+    let opened = HashSet::from([apps.clone(), bin.clone()]);
+    let (walk, downloaded) = user.with_rights(|| {
+        let walk = walk::unknown(home, &known, &opened, &skip, &ignored)?;
+        let mut downloaded = HashSet::new();
+        for path in &walk.unknown {
+            if path.parent() == Some(&apps) || (path.parent() == Some(&bin) && compiled(path)?) {
+                downloaded.insert(path.clone());
+            }
+        }
+        Ok((walk, downloaded))
+    })?;
     let mut items: Vec<Item> = walk
         .unknown
         .iter()
-        .map(|path| {
-            Item::new(Kind::Home, Change::Added, user.tilde(path), "new")
+        .map(|path| match downloaded.contains(path) {
+            true => Item::new(Kind::Tool, Change::Added, user.tilde(path), "installed")
+                .because("nothing in the fleet downloads it: write an installer for it"),
+            false => Item::new(Kind::Home, Change::Added, user.tilde(path), "new")
                 .with(Add::Track {
                     path: path.clone(),
                     storage: Storage::Clear,
@@ -66,7 +80,7 @@ pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
                     path: path.clone(),
                     user: user.clone(),
                 })
-                .guessing(path)
+                .guessing(path),
         })
         .collect();
     items.extend(walk.unreadable.into_iter().map(|place| {
@@ -79,6 +93,15 @@ pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
         .noting(place.why)
     }));
     Ok(items)
+}
+
+fn compiled(path: &Path) -> Result<bool> {
+    if !fs::symlink_metadata(path)?.is_file() {
+        return Ok(false);
+    }
+    let mut magic = [0; 4];
+    let read = fs::File::open(path)?.read(&mut magic)?;
+    Ok(read == magic.len() && magic == *b"\x7fELF")
 }
 
 fn links_into(bin: &Path, dir: &Path) -> Result<Vec<PathBuf>> {

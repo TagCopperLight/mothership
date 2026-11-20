@@ -1,11 +1,11 @@
 use super::{
     FROM_ISO, GH_TOKEN,
     answers::{self, ADMIN, Flags},
-    boot::{self, BINARY},
-    disk,
+    boot, disk,
     net::{self, Needs},
     repo,
 };
+use crate::update::BINARY;
 use crate::{
     cmd::{self, As},
     file,

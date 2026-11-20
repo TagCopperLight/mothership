@@ -8,6 +8,7 @@ use crate::{
     revert::{self, Machine, Revert, User},
     scan::{self, Checks},
     style::Style,
+    update::{self, Outcome},
 };
 use anyhow::Result;
 use std::path::Path;
@@ -20,11 +21,16 @@ pub enum ServiceManager {
 
 pub fn run() -> Result<()> {
     let mut prompt = Prompt::new();
+    if let Outcome::Declined = update::follow_fleet(&mut || prompt.confirm("Update"))? {
+        println!("Apply stops: the fleet's changes may need that version.");
+        return Ok(());
+    }
     while round(&mut || prompt.confirm("Apply"), ServiceManager::Running)? {}
     Ok(())
 }
 
 pub fn unasked(service_manager: ServiceManager) -> Result<()> {
+    update::follow_fleet(&mut || Ok(true))?;
     while round(&mut || Ok(true), service_manager)? {}
     Ok(())
 }

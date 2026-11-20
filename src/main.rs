@@ -29,6 +29,7 @@ mod support;
 mod systemd;
 mod tools;
 mod trust;
+mod update;
 mod user;
 mod walk;
 

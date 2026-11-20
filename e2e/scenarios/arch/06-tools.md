@@ -101,3 +101,39 @@ Changed on this machine · 1
   Tools
     - greeter  not installed  ~/.greeter is missing
 ```
+
+I download a program into `~/.local/bin` and an app into `~/.local/opt`, and write a script of
+my own next to the program. The fleet could keep the script as a file, but it can't download the
+other two again, so review only offers to add the script.
+
+```console
+$ mkdir -p ~/.local/opt ~/.local/bin && cp /usr/bin/true ~/.local/bin/stamp && cp /usr/bin/true ~/.local/opt/App.AppImage &&
+> printf '#!/bin/sh\necho hi\n' > ~/.local/bin/hi
+$ printf 'p\np\np\nq\n' | sudo mothership review
+[1/4] Tools
+    + ~/.local/bin/stamp  installed
+  can't add: nothing in the fleet downloads it: write an installer for it
+  i ignore · l later · p pass · q quit
+  › p
+[2/4] Tools
+    + ~/.local/opt/App.AppImage  installed
+  can't add: nothing in the fleet downloads it: write an installer for it
+  i ignore · l later · p pass · q quit
+  › p
+[3/4] Tools
+    - greeter  not installed  ~/.greeter is missing
+  a  add         remove its installer from user.toml
+  r  revert      run its installer
+  i ignore · l later · p pass · q quit
+  › p
+[4/4] Files
+    + ~/.local/bin/hi  new
+      #!/bin/sh
+      echo hi
+  a  add         add it to chezmoi
+  s  secret      add it to chezmoi, encrypted
+  i ignore · l later · p pass · q quit
+  › q
+3 passed
+1 not seen yet, for next time
+```
