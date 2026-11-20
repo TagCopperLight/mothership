@@ -24,7 +24,7 @@ pub enum Outcome {
 }
 
 pub fn follow_fleet(approve: &mut dyn FnMut() -> Result<bool>) -> Result<Outcome> {
-    let manifest = Manifest::read(Path::new(fleet::DIR))?;
+    let manifest = Manifest::read(Path::new(fleet::checked::CURRENT))?;
     let Some(pin) = manifest.pin() else {
         return Ok(Outcome::Current);
     };

@@ -2,8 +2,7 @@ use crate::{
     file,
     fleet::{MANIFEST, Manifest},
     prompt::Prompt,
-    secrets::{self, Keys},
-    user,
+    secrets, sign, user,
 };
 use age::{secrecy::ExposeSecret, x25519};
 use anyhow::{Context, Result, bail};
@@ -21,18 +20,18 @@ pub fn run(dir: &Path, prompt: &mut Prompt) -> Result<()> {
         bail!("the fleet has a recovery key already");
     }
     let answers = [('n', From::New), ('t', From::Typed)];
-    let public = match prompt.ask("n make a new one · t type the one you have ›", &answers)? {
+    let key = match prompt.ask("n make a new one · t type the one you have ›", &answers)? {
         None => bail!("the fleet still has no recovery key"),
         Some(From::New) => {
             let key = x25519::Identity::generate();
             println!(
-                "The recovery key opens every secret and nothing else keeps it. Write it on \
-                 paper and in your password manager:"
+                "The recovery key opens every secret, signs any change, and nothing else keeps \
+                 it. Write it on paper and in your password manager:"
             );
             println!("  {}", key.to_string().expose_secret());
-            secrets::public(&key)
+            key
         }
-        Some(From::Typed) => Keys::default().add(&prompt.hidden("Recovery key:")?)?,
+        Some(From::Typed) => secrets::identity(&prompt.hidden("Recovery key:")?)?,
     };
     let path = dir.join(MANIFEST);
     let mut doc: DocumentMut = file::read_if_any(&path)?
@@ -40,7 +39,8 @@ pub fn run(dir: &Path, prompt: &mut Prompt) -> Result<()> {
         .parse()
         .with_context(|| format!("parsing {}", path.display()))?;
     let mut recovery = Table::new();
-    recovery.insert("age", public.into());
+    recovery.insert("age", secrets::public(&key).into());
+    recovery.insert("signing", sign::public(&sign::recovery_key(&key))?.into());
     doc.insert("recovery", Item::Table(recovery));
     file::write(&path, doc.to_string().as_bytes(), 0o644)?;
     user::by_uid(fs::metadata(dir)?.uid())?.own(&path)?;

@@ -17,12 +17,14 @@ All of them run with `sudo`.
 |---|---|
 | `apply` | Brings the fleet's changes since the last apply, after showing the plan. It never undoes a change made on the machine. |
 | `scan` | Lists what differs: what changed on the machine, and what's coming from the fleet. |
-| `review` | Goes through the machine's changes one by one: **add** it to the fleet, **revert** it, **ignore** it, or decide **later**. You commit and push the result yourself. |
+| `review` | Goes through the machine's changes one by one: **add** it to the fleet, **revert** it, **ignore** it, or decide **later**. It then commits and pushes the answers, signed. |
 | `key` | Creates the machine's keys and prints them. |
 | `recovery` | Gives a new fleet its recovery key, which opens every secret. |
-| `trust <type>/<root\|user> <name> <key>` | Lets a key open a list's secrets. |
-| `retire <type>/<root\|user> <name>` | Removes a key, and prints the secrets you should change. |
+| `trust <host> <type> <name>=<key>...` | Lets a new machine's keys open their lists' secrets and sign for the fleet, and prints the code to type on it. |
+| `retire <host>` | Removes a machine's keys, and prints the secrets you should change. |
 | `install` | Sets up a new machine from the fleet. |
+
+A machine applies only commits signed by a key `signers.txt` lists, or by the recovery key, and only what is committed. Sign your own commits in the fleet with `git commit -S`: mothership signs them through `sudo`.
 
 Secrets are encrypted with [age](https://age-encryption.org). Root and each user have their own key, and their own list of keys allowed to open their secrets. Every secret also opens with the fleet's recovery key, which you keep on paper. Review treats a file other users can't read as a secret, and adds it encrypted.
 
@@ -36,7 +38,7 @@ curl -fLO $base/mothership-x86_64 -fLO $base/SHA256SUMS
 sha256sum -c SHA256SUMS && install -m 755 mothership-x86_64 mothership
 ```
 
-`sudo ./mothership install` asks for the fleet, the type, its options and the hostname. Each answer can also be a flag, for cloud-init (`--fleet`, `--type`, `--option`, `--hostname`, `--admin`, and `--remove-unlisted yes|no` on Debian); with `--type`, only the options given with `--option` turn on. Passwords and keys are always typed. Install then prints the `trust` commands to run on your other machines for the new keys, or takes the recovery key, and applies the fleet.
+`sudo ./mothership install` asks for the fleet, the type, its options and the hostname. Each answer can also be a flag, for cloud-init (`--fleet`, `--type`, `--option`, `--hostname`, `--admin`, and `--remove-unlisted yes|no` on Debian); with `--type`, only the options given with `--option` turn on. Passwords and keys are always typed. Install then prints the `trust` command to run on a machine that signs for the fleet and waits for the code it prints, or takes the recovery key, and applies the fleet.
 
 On Debian and Ubuntu, install offers to remove every package the type doesn't list, so the type lists what the machine needs: the kernel, `openssh-server`, `sudo`, git and chezmoi.
 

@@ -10,7 +10,7 @@ use crate::{
     preview::Preview,
     revert::Etc,
     secrets::{self, Storage},
-    systemd, walk,
+    sign, systemd, walk,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -102,6 +102,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     known.extend(ACCOUNT_FILES.iter().map(PathBuf::from));
     known.insert(PathBuf::from(fleet::MACHINE));
     known.insert(PathBuf::from(secrets::ROOT_KEY));
+    known.insert(PathBuf::from(sign::KEY));
     known.extend(services::global_defaults(db.distro)?);
     let known_dirs = owned_dirs
         .into_iter()

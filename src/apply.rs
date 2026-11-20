@@ -1,6 +1,6 @@
 use crate::{
     file,
-    fleet::Fleet,
+    fleet::{Fleet, Unsaved},
     item::{Change, Secret, Section},
     package::Db,
     prompt::Prompt,
@@ -27,7 +27,9 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
     while round(&mut || prompt.confirm("Apply"), ServiceManager::Running)? {}
-    trust::create_keys(&Fleet::load()?)
+    let fleet = Fleet::load()?;
+    scan::print_unsaved(&fleet, Unsaved::Uncommitted, Style::stdout())?;
+    trust::create_keys(&fleet)
 }
 
 pub fn unasked(service_manager: ServiceManager) -> Result<()> {

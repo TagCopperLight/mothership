@@ -1,5 +1,5 @@
 FROM archlinux:base AS machine
-RUN pacman -Syu --noconfirm --needed base-devel git sudo chezmoi rust uv dconf \
+RUN pacman -Syu --noconfirm --needed base-devel git sudo chezmoi rust uv dconf openssh \
  && rm -rf /var/cache/pacman/pkg/*
 
 COPY arch-packages /build
@@ -26,7 +26,10 @@ FROM machine
 COPY fleet /var/lib/mothership/fleet
 COPY chezmoi/workstation.toml /tmp/chezmoi.toml
 COPY recovery.txt /tmp/recovery.txt
+COPY signing /tmp/signing
+COPY anchor.sh /tmp/anchor.sh
 RUN useradd -m -G wheel -s /bin/bash me \
+ && install -D -m 600 /tmp/signing /etc/mothership/signing \
  && install -o me -g me -m 600 /tmp/recovery.txt /home/me/recovery.txt \
  && install -m 440 /var/lib/mothership/fleet/types/workstation/etc/sudoers.d/wheel /etc/sudoers.d/wheel \
  && printf 'type = "workstation"\n' | install -D -m 644 /dev/stdin /etc/mothership/machine.toml \
@@ -39,6 +42,7 @@ RUN useradd -m -G wheel -s /bin/bash me \
  && runuser -u me -- git init -q --bare /srv/fleet.git \
  && runuser -u me -- git remote add origin /srv/fleet.git \
  && runuser -u me -- git push -q -u origin main \
+ && /tmp/anchor.sh \
  && runuser -u me -- install -D -m 644 /tmp/chezmoi.toml /home/me/.config/chezmoi/chezmoi.toml \
  && cd / && runuser -u me -- env HOME=/home/me chezmoi apply
 USER me

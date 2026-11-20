@@ -1,21 +1,33 @@
 use crate::{
     edit::{self, Add},
-    fleet::Fleet,
+    fleet::{Fleet, checked},
+    host,
     item::{Adding, Item, Secret, Section},
     later::{self, DAY, Later},
     prompt::{self, Prompt},
     record::Record,
     revert::{self, Etc, Machine, Revert},
     scan::{self, Columns},
+    sign,
     style::{self, Paint, Style},
     walk,
 };
 use anyhow::{Error, Result};
 
 pub fn run() -> Result<()> {
-    let report = scan::collect()?;
+    let stage = checked::stage()?;
+    let report = scan::collect(&stage.dir)?;
     let result = ask(&report);
-    result.and(report.fleet.hand_back())
+    let message = match &result {
+        Ok(tally) if !tally.parts().is_empty() => {
+            format!("Review on {}: {}", host::name()?, tally.parts().join(", "))
+        }
+        _ => format!("Review on {}", host::name()?),
+    };
+    let committed = sign::require_machine_key()
+        .and_then(|key| stage.commit(report.fleet.admin(), &message, &key));
+    result?;
+    committed.map(drop)
 }
 
 #[derive(Default)]
@@ -29,6 +41,28 @@ struct Tally {
 }
 
 impl Tally {
+    fn counts(&self) -> [(usize, &'static str, Paint); 5] {
+        [
+            (self.added, "added", Paint::Green),
+            (self.reverted, "reverted", Paint::Yellow),
+            (self.ignored, "ignored", Paint::Dim),
+            (self.put_off, "put off for later", Paint::Blue),
+            (self.passed, "passed", Paint::Dim),
+        ]
+    }
+
+    fn parts(&self) -> Vec<String> {
+        [
+            (self.added, "added"),
+            (self.ignored, "ignored"),
+            (self.not_secret, "marked not secret"),
+        ]
+        .iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, what)| format!("{count} {what}"))
+        .collect()
+    }
+
     fn count(&mut self, answer: Answer) {
         let count = match answer {
             Answer::Add(_) | Answer::Secret(_) => &mut self.added,
@@ -86,7 +120,7 @@ impl Answer<'_> {
     }
 }
 
-fn ask(report: &scan::Report) -> Result<()> {
+fn ask(report: &scan::Report) -> Result<Tally> {
     let fleet = &report.fleet;
     let style = Style::stdout();
     let mut later = Later::load()?;
@@ -224,7 +258,7 @@ fn ask(report: &scan::Report) -> Result<()> {
     if due.is_empty() {
         println!("Nothing to review.");
     } else {
-        summary(fleet, &tally, style);
+        summary(&tally, style);
     }
     let unseen = due.len() - seen;
     let notes = [
@@ -251,14 +285,7 @@ fn ask(report: &scan::Report) -> Result<()> {
             tally.not_secret
         );
     }
-    if tally.added + tally.ignored + tally.not_secret > 0 {
-        let diff = format!("git -C {} diff", fleet.dir.display());
-        println!(
-            "Check the changes with {}, then commit.",
-            style.paint(diff, &[Paint::Cyan])
-        );
-    }
-    Ok(())
+    Ok(tally)
 }
 
 fn choices<'a>(
@@ -283,22 +310,14 @@ fn choices<'a>(
     choices
 }
 
-fn summary(fleet: &Fleet, tally: &Tally, style: Style) {
-    let counts = [
-        (tally.added, "added", Paint::Green),
-        (tally.reverted, "reverted", Paint::Yellow),
-        (tally.ignored, "ignored", Paint::Dim),
-        (tally.put_off, "put off for later", Paint::Blue),
-        (tally.passed, "passed", Paint::Dim),
-    ];
-    let parts: Vec<String> = counts
+fn summary(tally: &Tally, style: Style) {
+    let parts: Vec<String> = tally
+        .counts()
         .iter()
         .filter(|(count, ..)| *count > 0)
         .map(|(count, what, paint)| style.paint(format!("{count} {what}"), &[*paint]))
         .collect();
-    if parts.is_empty() && tally.not_secret == 0 {
-        println!("Nothing changed in {}.", fleet.dir.display());
-    } else if !parts.is_empty() {
+    if !parts.is_empty() {
         println!("{}", parts.join(", "));
     }
 }

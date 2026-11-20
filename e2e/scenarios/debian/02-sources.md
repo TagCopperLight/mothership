@@ -9,7 +9,7 @@ $ cd /var/lib/mothership/fleet
 > mkdir -p types/server/etc/apt/sources.list.d
 > echo 'deb [trusted=yes] copy:/extra ./' > types/server/etc/apt/sources.list.d/extra.list
 > sed -i 's/  "gamma",/  "gamma",\n  "delta",/' types/server/system.toml
-> git add -A && git -c user.name=Me -c user.email=me@example.com commit -qm "Add delta"
+> git add -A && git -c user.name=Me -c user.email=me@example.com commit -S -qm "Add delta"
 $ echo y | sudo mothership apply
 Coming from the fleet · 2
   Packages

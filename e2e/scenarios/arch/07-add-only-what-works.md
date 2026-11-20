@@ -63,6 +63,6 @@ Only the packages reached the fleet.
 $ grep -E 'zeta|omega' /var/lib/mothership/fleet/types/workstation/system.toml
   "zeta",
 built_packages = ["omega"]
-$ git -C /var/lib/mothership/fleet status --short
- M types/workstation/system.toml
+$ git -C /var/lib/mothership/fleet show --name-only --format= HEAD
+types/workstation/system.toml
 ```

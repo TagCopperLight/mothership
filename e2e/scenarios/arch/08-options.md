@@ -47,6 +47,6 @@ An option the type doesn't offer stops everything.
 $ printf 'type = "workstation"\noptions = ["nope"]\n' |
 > sudo tee /etc/mothership/machine.toml >/dev/null
 $ sudo mothership scan
-Error: /etc/mothership/machine.toml turns on nope, and /var/lib/mothership/fleet/types/workstation/system.toml has no [options.nope]
+Error: /etc/mothership/machine.toml turns on nope, and /var/lib/mothership/current/types/workstation/system.toml has no [options.nope]
 [exit 1]
 ```

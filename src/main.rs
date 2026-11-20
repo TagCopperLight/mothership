@@ -23,6 +23,7 @@ mod revert;
 mod review;
 mod scan;
 mod secrets;
+mod sign;
 mod snapshot;
 mod style;
 #[cfg(test)]
@@ -36,12 +37,15 @@ mod user;
 mod walk;
 
 use anyhow::bail;
-use fleet::Fleet;
+use fleet::{
+    Fleet,
+    checked::{self, Remote},
+};
 use prompt::Prompt;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: mothership scan | review | apply | key | recovery \
-                     | trust <type>/<root|user> <name> <key> | retire <type>/<root|user> <name> \
+                     | trust <host> <type> <name>=<key>... | retire <host> \
                      | install [--fleet <repo>] [--type <type>] [--option <option>]... \
                      [--hostname <name>] [--admin <user>] [--timezone <zone>] [--disk <disk>] \
                      [--layout wipe|beside] [--remove-unlisted yes|no]";
@@ -53,6 +57,7 @@ enum Command {
     Apply,
     Key,
     Recovery,
+    Sign,
     Trust,
     Retire,
     Install,
@@ -66,6 +71,7 @@ impl Command {
             "apply" => Command::Apply,
             "key" => Command::Key,
             "recovery" => Command::Recovery,
+            "sign" => Command::Sign,
             "trust" => Command::Trust,
             "retire" => Command::Retire,
             "install" => Command::Install,
@@ -95,6 +101,9 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &[String]) -> anyhow::Result<()> {
+    if args.first().is_some_and(|first| first == "-Y") {
+        return sign::for_git(args);
+    }
     let Some((command, rest)) = args
         .split_first()
         .and_then(|(name, rest)| Some((Command::parse(name)?, rest)))
@@ -104,19 +113,47 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     if !user::is_root() {
         bail!("mothership reads every user's home: run it with sudo");
     }
-    let _lock = match command {
-        Command::Scan => None,
-        _ => {
-            let lock = lock()?;
-            package::aur::NoPassword::remove_leftover()?;
-            Some(lock)
-        }
-    };
+    if let (Command::Sign, []) = (command, rest) {
+        return sign::for_sudo();
+    }
+    let lock = lock()?;
+    if lock.is_none() && !matches!(command, Command::Scan) {
+        bail!("another mothership command is running");
+    }
+    if lock.is_some() {
+        package::aur::NoPassword::remove_leftover()?;
+    }
     if !matches!(command, Command::Install) {
         fleet::require_admin_sudo()?;
     }
+    let remote = match command {
+        Command::Apply | Command::Review => Some(Remote::Fetch),
+        Command::Install | Command::Recovery | Command::Sign => None,
+        Command::Scan if lock.is_none() => {
+            println!(
+                "Another mothership command is running, so this shows the fleet as last checked."
+            );
+            None
+        }
+        _ => Some(Remote::Skip),
+    };
+    let refused = match remote {
+        Some(remote) => checked::sync(&fleet::admin()?, remote)?.refused,
+        None => None,
+    };
+    if let Some(commit) = &refused
+        && !matches!(command, Command::Scan)
+    {
+        println!(
+            "This machine refuses {} \"{}\" by {}, and what follows it: {}",
+            checked::short(&commit.commit),
+            commit.subject,
+            commit.author,
+            commit.why
+        );
+    }
     match (command, rest) {
-        (Command::Scan, []) => scan::run(),
+        (Command::Scan, []) => scan::run(refused),
         (Command::Review, []) => review::run(),
         (Command::Apply, []) => apply::run(),
         (Command::Install, flags) => install::run(flags),
@@ -124,12 +161,27 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         (Command::Recovery, []) => {
             recovery::run(std::path::Path::new(fleet::DIR), &mut Prompt::new())
         }
-        (Command::Trust, [target, name, key]) => {
-            edit_fleet(|fleet| trust::trust(fleet, target, name, key, &mut Prompt::new()))
+        (Command::Trust, [host, type_name, keys @ ..]) if !keys.is_empty() => {
+            let message = format!("Trust {host} as {type_name}");
+            let commit = edit_fleet(&message, |fleet| {
+                trust::trust_host(
+                    fleet,
+                    fleet.keys(),
+                    host,
+                    type_name,
+                    keys,
+                    &mut Prompt::new(),
+                )
+            })?;
+            if let Some(commit) = commit {
+                println!("On {host}, type this code: {}", checked::short(&commit));
+            }
+            Ok(())
         }
-        (Command::Retire, [target, name]) => {
-            edit_fleet(|fleet| trust::retire(fleet, target, name, &mut Prompt::new()))
-        }
+        (Command::Retire, [host]) => edit_fleet(&format!("Retire {host}"), |fleet| {
+            trust::retire_host(fleet, host, &mut Prompt::new())
+        })
+        .map(drop),
         _ => usage(),
     }
 }
@@ -139,13 +191,18 @@ fn usage() -> ! {
     std::process::exit(2)
 }
 
-fn edit_fleet(command: impl FnOnce(&Fleet) -> anyhow::Result<()>) -> anyhow::Result<()> {
-    let fleet = Fleet::load()?;
-    let result = command(&fleet);
-    result.and(fleet.hand_back())
+fn edit_fleet(
+    message: &str,
+    command: impl FnOnce(&Fleet) -> anyhow::Result<()>,
+) -> anyhow::Result<Option<String>> {
+    let key = sign::require_machine_key()?;
+    let stage = checked::stage()?;
+    let fleet = Fleet::load_at(&stage.dir)?;
+    command(&fleet)?;
+    stage.commit(fleet.admin(), message, &key)
 }
 
-fn lock() -> anyhow::Result<std::fs::File> {
+fn lock() -> anyhow::Result<Option<std::fs::File>> {
     use anyhow::Context;
     use std::os::fd::AsRawFd;
     std::fs::create_dir_all(LOCK_DIR)?;
@@ -153,9 +210,9 @@ fn lock() -> anyhow::Result<std::fs::File> {
     let file =
         std::fs::File::create(&path).with_context(|| format!("opening {}", path.display()))?;
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        bail!("another mothership command is running");
+        return Ok(None);
     }
-    Ok(file)
+    Ok(Some(file))
 }
 
 const LOCK_DIR: &str = "/var/lib/mothership";

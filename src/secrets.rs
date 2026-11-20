@@ -8,13 +8,13 @@ use anyhow::{Context, Result, anyhow, bail};
 use std::{
     fs,
     io::{Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
 pub const RECIPIENTS: &str = "recipients.txt";
 pub const ROOT_KEY: &str = "/etc/mothership/key.txt";
 pub const AGE: &str = ".age";
+pub const RECOVERY: &str = "recovery";
 
 pub fn key_path(user: &User) -> PathBuf {
     user.home.join(".config/mothership/key.txt")
@@ -34,16 +34,6 @@ impl Keys {
         self.0.push(key);
     }
 
-    pub fn add(&mut self, secret: &str) -> Result<String> {
-        let key: x25519::Identity = secret
-            .trim()
-            .parse()
-            .map_err(|e: &str| anyhow!("that isn't an age secret key: {e}"))?;
-        let public = key.to_public().to_string();
-        self.0.push(key);
-        Ok(public)
-    }
-
     pub fn decrypt(&self, path: &Path) -> Result<Vec<u8>> {
         let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
         let opened = age::Decryptor::new_buffered(ArmoredReader::new(&bytes[..]))
@@ -58,6 +48,13 @@ impl Keys {
         reader.read_to_end(&mut plain)?;
         Ok(plain)
     }
+}
+
+pub fn identity(secret: &str) -> Result<x25519::Identity> {
+    secret
+        .trim()
+        .parse()
+        .map_err(|e: &str| anyhow!("that isn't an age secret key: {e}"))
 }
 
 pub fn public(key: &x25519::Identity) -> String {
@@ -75,18 +72,9 @@ fn parse_key(text: &[u8], shown: &Path) -> Result<x25519::Identity> {
 
 pub fn root_key() -> Result<Option<x25519::Identity>> {
     let path = Path::new(ROOT_KEY);
-    let Some(meta) = file::if_found(fs::symlink_metadata(path))
-        .with_context(|| format!("reading {ROOT_KEY}"))?
-    else {
-        return Ok(None);
-    };
-    if !meta.is_file() || meta.uid() != 0 || meta.mode() & 0o077 != 0 {
-        bail!(
-            "{ROOT_KEY} must be a file only root can read: `chown root: {ROOT_KEY} && chmod 600 {ROOT_KEY}`"
-        );
-    }
-    let bytes = file::read(path)?.with_context(|| format!("{ROOT_KEY} vanished"))?;
-    parse_key(&bytes, path).map(Some)
+    file::read_root_only(path)?
+        .map(|bytes| parse_key(&bytes, path))
+        .transpose()
 }
 
 pub fn user_key(user: &User) -> Result<Option<x25519::Identity>> {
@@ -152,10 +140,6 @@ pub fn format(list: &[Recipient]) -> String {
         .join("\n")
 }
 
-pub fn names(list: &Path) -> Result<Vec<String>> {
-    Ok(read(list)?.into_iter().map(|r| r.name).collect())
-}
-
 pub fn holds(list: &Path, public: &str) -> Result<bool> {
     Ok(read(list)?.iter().any(|r| r.key == public))
 }
@@ -180,13 +164,7 @@ pub fn write_key(path: &Path, key: &x25519::Identity) -> Result<()> {
         key.to_public(),
         key.to_string().expose_secret()
     );
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .and_then(|mut file| file.write_all(text.as_bytes()))
-        .with_context(|| format!("writing {}", path.display()))
+    file::create_private(path, text.as_bytes())
 }
 
 #[cfg(test)]

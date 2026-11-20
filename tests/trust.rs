@@ -1,5 +1,4 @@
 use super::*;
-use crate::secrets::names;
 use std::{fs, os::unix::fs::symlink};
 
 #[test]
@@ -68,6 +67,10 @@ fn a_shared_home_file_is_for_the_list_of_every_home_linking_it() {
     );
 }
 
+fn names(list: &Path) -> Vec<String> {
+    read(list).unwrap().into_iter().map(|r| r.name).collect()
+}
+
 fn fleet_with(dir: &Path, list: &str, secrets: &[(&str, &[u8], &Path)]) -> Fleet {
     let type_dir = dir.join("types/workstation");
     fs::create_dir_all(type_dir.join("etc")).unwrap();
@@ -106,7 +109,7 @@ fn trusting_a_key_opens_every_secret_of_its_list_to_it() {
         &mut Prompt::answering("y"),
     )
     .unwrap();
-    assert_eq!(names(&fleet.recipients()).unwrap(), ["laptop", "desktop"]);
+    assert_eq!(names(&fleet.recipients()), ["laptop", "desktop"]);
     let mut theirs = Keys::default();
     theirs.push(desktop);
     let sealed = fleet.etc_dir().join("wifi.conf.age");
@@ -256,7 +259,7 @@ fn saying_no_to_trust_changes_nothing() {
         .dir
         .join("types/workstation/users/tag")
         .join(RECIPIENTS);
-    let names_before = names(&list).unwrap();
+    let names_before = names(&list);
     let mut keys = Keys::default();
     keys.push(shared.laptop.clone());
     trust_with(
@@ -269,5 +272,5 @@ fn saying_no_to_trust_changes_nothing() {
     )
     .unwrap();
     assert_eq!(fs::read(&shared.file).unwrap(), before);
-    assert_eq!(names(&list).unwrap(), names_before);
+    assert_eq!(names(&list), names_before);
 }

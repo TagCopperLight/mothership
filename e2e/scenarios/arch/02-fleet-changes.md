@@ -27,7 +27,7 @@ $ cd /var/lib/mothership/fleet &&
 > printf 'managed = yes\nlevel = 2\n' > types/workstation/etc/fleet.conf &&
 > printf 'new = yes\n' > types/workstation/etc/new.conf &&
 > sed -i 's|^shell = .*|shell = "/usr/bin/bash"|; s|^groups = .*|groups = ["wheel", "video"]|' types/workstation/users/me/user.toml &&
-> git add -A && git commit -qm "Change the workstation"
+> git add -A && git commit -S -qm "Change the workstation"
 ```
 
 Apply follows the fleet's changes. It leaves the file I edited, and the packages I installed

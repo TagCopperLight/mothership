@@ -13,6 +13,7 @@ md-5 = "0.11.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
+ssh-key = { version = "0.6.7", default-features = false, features = ["ed25519", "std", "alloc", "getrandom"] }
 strum = { version = "0.28.0", features = ["derive"] }
 tempfile = "3.27.0"
 terminal_size = "0.4.4"

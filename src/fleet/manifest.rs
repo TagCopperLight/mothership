@@ -1,10 +1,9 @@
-use crate::{file, secrets::Recipient};
+use crate::{file, secrets::Recipient, sign::Signer};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::Path};
 
 pub const MANIFEST: &str = "mothership.toml";
-const RECOVERY: &str = "recovery";
 
 #[derive(Deserialize, Default)]
 pub struct Manifest {
@@ -17,6 +16,7 @@ pub struct Manifest {
 #[derive(Deserialize)]
 struct Recovery {
     age: String,
+    signing: String,
 }
 
 pub struct Pin<'a> {
@@ -40,9 +40,16 @@ impl Manifest {
         })
     }
 
+    pub fn recovery_signer(&self) -> Result<Option<Signer>> {
+        self.recovery
+            .as_ref()
+            .map(|recovery| Signer::recovery(&recovery.signing))
+            .transpose()
+    }
+
     pub fn recovery(&self) -> Option<Recipient> {
         self.recovery.as_ref().map(|recovery| Recipient {
-            name: RECOVERY.to_owned(),
+            name: crate::secrets::RECOVERY.to_owned(),
             key: recovery.age.clone(),
         })
     }

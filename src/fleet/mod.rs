@@ -20,6 +20,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod checked;
 mod config;
 pub mod homes;
 mod manifest;
@@ -32,6 +33,12 @@ pub use config::{
 };
 
 pub const DIR: &str = "/var/lib/mothership/fleet";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Unsaved {
+    Everything,
+    Uncommitted,
+}
 
 pub struct Repo {
     pub dir: PathBuf,
@@ -141,8 +148,12 @@ pub fn require_sudo(admin: &User) -> Result<()> {
 
 impl Fleet {
     pub fn load() -> Result<Self> {
+        Fleet::load_at(Path::new(checked::CURRENT))
+    }
+
+    pub fn load_at(dir: &Path) -> Result<Self> {
         let machine = Machine::load()?;
-        let dir = PathBuf::from(DIR);
+        let dir = dir.to_path_buf();
         let admin = admin()?;
         let repo = Repo::for_machine(dir, &machine)?;
         let mut keys = Keys::default();
@@ -232,9 +243,8 @@ impl Fleet {
         }
     }
 
-    pub fn unsaved(&self) -> Result<Vec<String>> {
-        let dir = self.dir.to_string_lossy();
-        let args = ["-C", &dir, "status", "--porcelain=v2", "--branch"];
+    pub fn unsaved(&self, which: Unsaved) -> Result<Vec<String>> {
+        let args = ["-C", DIR, "status", "--porcelain=v2", "--branch"];
         let status = cmd::stdout(As::User(&self.admin), "git", &args)?;
         let changed = status.lines().filter(|l| !l.starts_with('#')).count();
         let ahead: usize = status
@@ -245,37 +255,17 @@ impl Fleet {
             .transpose()?
             .unwrap_or(0);
         let mut unsaved = Vec::new();
-        if !status.lines().any(|l| l.starts_with("# branch.upstream ")) {
+        let everything = which == Unsaved::Everything;
+        if everything && !status.lines().any(|l| l.starts_with("# branch.upstream ")) {
             unsaved.push("no upstream branch to push to".to_owned());
         }
         if changed > 0 {
             unsaved.push(format!("{} not committed", style::count(changed, "change")));
         }
-        if ahead > 0 {
+        if everything && ahead > 0 {
             unsaved.push(format!("{} not pushed", style::count(ahead, "commit")));
         }
         Ok(unsaved)
-    }
-
-    pub fn hand_back(&self) -> Result<()> {
-        let admin = &self.admin;
-        let mut todo = vec![self.dir.clone()];
-        while let Some(dir) = todo.pop() {
-            for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
-                let path = entry?.path();
-                if path == self.dir.join(".git") {
-                    continue;
-                }
-                let meta = fs::symlink_metadata(&path)?;
-                if meta.uid() != admin.uid {
-                    admin.own(&path)?;
-                }
-                if meta.is_dir() {
-                    todo.push(path);
-                }
-            }
-        }
-        Ok(())
     }
 }
 
@@ -563,15 +553,26 @@ impl Member {
     }
 
     pub fn chezmoi_root(&self, fleet: &Fleet) -> chezmoi::Root {
-        chezmoi::Root::new(&self.user, self.chezmoi_config(fleet))
+        let config = chezmoi::ChezmoiConfig {
+            source: self.home(),
+            recipients: self.recipients(),
+            ..self.chezmoi_config(fleet)
+        };
+        chezmoi::Root::new(&self.user, config)
     }
 }
 
 fn chezmoi_config(repo: &Repo, profile: &Profile, user: &User) -> chezmoi::ChezmoiConfig {
+    let published = |path: PathBuf| {
+        let rel = path
+            .strip_prefix(&repo.dir)
+            .expect("a profile lives in its fleet");
+        Path::new(checked::CURRENT).join(rel)
+    };
     chezmoi::ChezmoiConfig {
-        source: profile.home(),
+        source: published(profile.home()),
         identity: secrets::key_path(user),
-        recipients: profile.recipients(),
+        recipients: published(profile.recipients()),
         profile: repo.type_name.clone(),
         user: profile.name.clone(),
     }

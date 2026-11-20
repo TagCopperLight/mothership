@@ -28,6 +28,12 @@
 - Root's chezmoi works on a copy of the user's `chezmoistate.boltdb` and writes it back, so a later edit shows as made on the machine and apply leaves it alone.
 - chezmoi as root follows the user's links unless the home is a copy bound over it in a private mount namespace (`unshare`).
 
+## git
+
+- `git fetch --upload-pack` works for a folder on the same machine, so root fetches from the admin's checkout without running git in it.
+- Debian's git ignores `-c safe.directory` in the `upload-pack` it starts, so the admin fetches root's commits from a bundle.
+- A signed commit's payload is the commit object without its `gpgsig` header and the lines continuing it.
+
 ## Other tools
 
 - `getent` also asks systemd, which stalls while it lists unit files.

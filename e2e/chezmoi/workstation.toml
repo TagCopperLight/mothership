@@ -1,9 +1,9 @@
 encryption = "age"
-sourceDir = "/var/lib/mothership/fleet/types/workstation/users/me/home"
+sourceDir = "/var/lib/mothership/current/types/workstation/users/me/home"
 
 [age]
 identity = "/home/me/.config/mothership/key.txt"
-recipientsFile = "/var/lib/mothership/fleet/types/workstation/users/me/recipients.txt"
+recipientsFile = "/var/lib/mothership/current/types/workstation/users/me/recipients.txt"
 useBuiltin = true
 
 [data]

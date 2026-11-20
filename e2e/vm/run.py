@@ -233,6 +233,13 @@ def install(args: list[str], port: int, log) -> None:
         secret = next(line for line in (HERE.parent / "recovery.txt").read_text().splitlines()
                       if line.startswith("AGE-SECRET-KEY-"))
         vm.sendline(secret)
+        wait(vm, "Trust the fleet as it is")
+        vm.sendline("y")
+        for _ in range(2):
+            wait(vm, "Go on")
+            vm.sendline("y")
+        wait(vm, "vmtest signs:")
+        vm.send("e")
         wait(vm, "Secure Boot holds this machine's keys now.", timeout=INSTALL_TIMEOUT)
         wait(vm, "The system is installed.", timeout=300)
         vm.expect("VM# ")

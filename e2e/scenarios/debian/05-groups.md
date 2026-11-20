@@ -28,7 +28,7 @@ $ printf 'a\np\n' | sudo mothership review
   i ignore · l later · p pass · q quit
   › p
 1 added, 1 passed
-Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+Committed [0-9a-f]{12} Review on machine: 1 added (re)
 $ grep groups /var/lib/mothership/fleet/types/server/users/me/user.toml
 groups = ["sudo", "lambda"]
 ```

@@ -81,10 +81,10 @@ $ printf 'a\na\nr\n' | sudo mothership review
   i ignore · l later · p pass · q quit
   › r
 2 added, 1 reverted
-Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+Committed [0-9a-f]{12} Review on machine: 2 added (re)
 $ cat /etc/gamma.conf
 volume = 5
-$ git -C /var/lib/mothership/fleet diff -U0 | grep '^[+-] '
+$ git -C /var/lib/mothership/fleet show -U0 HEAD | grep '^[+-] '
 +  "beta",
 $ grep built_packages /var/lib/mothership/fleet/types/server/system.toml
 built_packages = ["omega"]
@@ -96,16 +96,16 @@ dependency.
 
 ```console
 $ sudo apt-get install -y epsilon > /dev/null 2>&1
-$ cd /var/lib/mothership/fleet && git checkout -q .
+$ cd /var/lib/mothership/fleet &&
 > sed -i '/"alpha",/d; /"gamma",/d' types/server/system.toml
-> git -c user.name=Me -c user.email=me@example.com commit -qam "Drop alpha and gamma"
+> git -c user.name=Me -c user.email=me@example.com commit -S -qam "Drop alpha and gamma"
 $ echo y | sudo mothership apply
 Coming from the fleet · 2
   Packages
     - alpha  uninstall  A library other packages need
     - gamma  uninstall  An app with a config file
 
-3 changed on this machine, for sudo mothership review
+1 changed on this machine, for sudo mothership review
 Apply [y/N]? y
 ...
 $ dpkg-query -W -f '${Package} ${db:Status-Abbrev}\n' alpha epsilon
@@ -124,7 +124,7 @@ When the fleet lists `gamma` again, apply brings its config file back with it.
 
 ```console
 $ cd /var/lib/mothership/fleet &&
-> git -c user.name=Me -c user.email=me@example.com revert --no-edit HEAD > /dev/null
+> git -c user.name=Me -c user.email=me@example.com revert -S --no-edit HEAD > /dev/null
 $ echo y | sudo mothership apply > /dev/null
 $ cat /etc/gamma.conf
 volume = 5

@@ -95,17 +95,19 @@ $ printf 'a\nl\np\na\ny\ni\np\np\nq\n' | sudo mothership review
   › q
 2 added, 1 ignored, 1 put off for later, 3 passed
 1 not seen yet, for next time
-Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+Committed [0-9a-f]{12} Review on machine: 2 added, 1 ignored (re)
 ```
 
-Review edited the fleet checkout and committed nothing. What it wrote is mine, since I own the
-checkout, and my chezmoi state stays mine. The tokens go into my own ignore list.
+Review committed what it changed, signed with this machine's key, and pushed it. The checkout
+stays mine, and so does my chezmoi state. The tokens go into my own ignore list.
 
 ```console
-$ cd /var/lib/mothership/fleet && git status --short | sort
- M types/workstation/system.toml
- M types/workstation/users/me/ignore.txt
-?? types/workstation/users/me/home/dot_config/
+$ cd /var/lib/mothership/fleet && git status --short && git log -1 --format=%s origin/main
+Review on machine: 2 added, 1 ignored
+$ git -C /var/lib/mothership/fleet show --name-only --format= HEAD
+types/workstation/system.toml
+types/workstation/users/me/home/dot_config/newapp/settings.ini
+types/workstation/users/me/ignore.txt
 $ find /var/lib/mothership/fleet ~/.config/chezmoi -not -user me | wc -l
 0
 $ grep -A3 '"alpha"' /var/lib/mothership/fleet/types/workstation/system.toml
@@ -117,13 +119,12 @@ $ tail -1 /var/lib/mothership/fleet/types/workstation/users/me/ignore.txt
 home ~/.config/tokens
 ```
 
-I commit, and the fleet raises the level in `/etc/fleet.conf`. Apply leaves the file, since I
-edited it.
+The fleet raises the level in `/etc/fleet.conf`. Apply leaves the file, since I edited it.
 
 ```console
 $ cd /var/lib/mothership/fleet &&
 > printf 'managed = yes\nlevel = 2\n' > types/workstation/etc/fleet.conf &&
-> git add -A && git commit -qm "Keep beta and newapp, raise the level"
+> git add -A && git commit -S -qm "Keep beta and newapp, raise the level"
 ```
 
 `gamma` waits for next week. I add the proxy script to the fleet, revert my edits to
@@ -172,7 +173,7 @@ $ printf 'a\nr\nr\nr\n' | sudo mothership review
 Removing user me from group audio
 1 added, 3 reverted
 1 put off before and not due yet
-Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+Committed [0-9a-f]{12} Review on machine: 1 added (re)
 ```
 
 The machine is back to the fleet, and the files review added are mine. The script
@@ -204,7 +205,7 @@ change to it.
 ```console
 $ cd /var/lib/mothership/fleet &&
 > printf 'managed = yes\nlevel = 3\n' > types/workstation/etc/fleet.conf &&
-> git add -A && git commit -qm "Add the proxy, raise the level"
+> git add -A && git commit -S -qm "Add the proxy, raise the level"
 $ echo y | sudo mothership apply
 Coming from the fleet · 1
   Files
@@ -232,7 +233,7 @@ $ printf 'a\n' | sudo mothership review
   › a
 1 added
 1 put off before and not due yet
-Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+Committed [0-9a-f]{12} Review on machine: 1 added (re)
 $ ls /var/lib/mothership/fleet/types/workstation/users/me/home/dot_config | od -c | grep -c 351
 1
 $ sudo mothership scan | grep -c -e caf -e 'not scanned'

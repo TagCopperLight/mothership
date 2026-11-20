@@ -1,4 +1,5 @@
 mod account;
+mod commits;
 mod etc;
 pub mod files;
 mod home;
@@ -15,7 +16,10 @@ pub use print::{Columns, heading, line, print_groups, print_section};
 
 use crate::{
     chezmoi, file,
-    fleet::{Fleet, Member},
+    fleet::{
+        self, Fleet, Member, Unsaved,
+        checked::{self, Refused},
+    },
     item::{Change, Item, Section},
     kind::Kind,
     later::{self, Later},
@@ -44,9 +48,9 @@ pub struct Report {
     pub ignored: usize,
 }
 
-pub fn collect() -> Result<Report> {
+pub fn collect(dir: &Path) -> Result<Report> {
     let (fleet, db) = thread::scope(|s| {
-        let fleet = s.spawn(Fleet::load);
+        let fleet = s.spawn(|| Fleet::load_at(dir));
         let db = s.spawn(Db::load);
         Ok::<_, anyhow::Error>((join(fleet)?, join(db)?))
     })?;
@@ -214,8 +218,9 @@ impl<'a> Ships<'a> {
     }
 }
 
-pub fn run() -> Result<()> {
-    let report = collect()?;
+pub fn run(refused: Option<Refused>) -> Result<()> {
+    let mut report = collect(Path::new(checked::CURRENT))?;
+    report.shown.extend(refused.map(commits::refused));
     let fleet = &report.fleet;
     let style = Style::stdout();
     let later = Later::load()?;
@@ -234,9 +239,16 @@ pub fn run() -> Result<()> {
         print_section(fleet, section, &items, style, &waiting);
     }
     summary(&report, style, &waiting);
-    let unsaved = fleet.unsaved()?;
+    print_unsaved(fleet, Unsaved::Everything, style)?;
+    let ignored = format!("{} ignored", report.ignored);
+    println!("{}", style.paint(ignored, &[Paint::Dim]));
+    Ok(())
+}
+
+pub fn print_unsaved(fleet: &Fleet, which: Unsaved, style: Style) -> Result<()> {
+    let unsaved = fleet.unsaved(which)?;
     if !unsaved.is_empty() {
-        let git = format!("git -C {} status", fleet.dir.display());
+        let git = format!("git -C {} status", fleet::DIR);
         println!(
             "{}  {}",
             style.paint(
@@ -246,8 +258,6 @@ pub fn run() -> Result<()> {
             style.paint(git, &[Paint::Cyan])
         );
     }
-    let ignored = format!("{} ignored", report.ignored);
-    println!("{}", style.paint(ignored, &[Paint::Dim]));
     Ok(())
 }
 

@@ -98,7 +98,7 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     if first_start {
         boot::finish()?;
     }
-    scan::run()
+    scan::run(None)
 }
 
 fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<()> {

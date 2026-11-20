@@ -16,7 +16,11 @@ pub fn in_section(mut item: Item, section: Section) -> Item {
 
 pub fn name_recovery(dir: &Path) -> age::x25519::Identity {
     let key = age::x25519::Identity::generate();
-    let text = format!("[recovery]\nage = \"{}\"\n", key.to_public());
+    let signing = crate::sign::public(&crate::sign::recovery_key(&key)).unwrap();
+    let text = format!(
+        "[recovery]\nage = \"{}\"\nsigning = \"{signing}\"\n",
+        key.to_public()
+    );
     fs::write(dir.join(MANIFEST), text).unwrap();
     key
 }

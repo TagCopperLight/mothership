@@ -8,17 +8,20 @@ use crate::{
 use anyhow::Result;
 
 pub fn untrusted(fleet: &Fleet) -> Result<Vec<Item>> {
-    let hostname = host::name()?;
-    let mut items = Vec::new();
+    let mut locked = false;
     for key in trust::machine_keys(fleet)? {
-        if key.trusted || !trust::guards_secrets(fleet, &key.target)? {
-            continue;
-        }
-        let command = trust::trust_command(&key.target, &hostname, &key.public);
-        let mut item = Item::new(Kind::Key, Change::Added, key.target, "not trusted")
-            .noting(format!("run `{command}` where its secrets open"));
-        item.section = Section::Attention;
-        items.push(item);
+        locked |= !key.trusted && trust::guards_secrets(fleet, &key.target)?;
     }
-    Ok(items)
+    if !locked && trust::unlisted_signing(fleet)?.is_none() {
+        return Ok(Vec::new());
+    }
+    let hostname = host::name()?;
+    let Some(command) = trust::trust_command(fleet, &hostname)? else {
+        return Ok(Vec::new());
+    };
+    let mut item = Item::new(Kind::Key, Change::Added, hostname, "not trusted").noting(format!(
+        "run `{command}` on a machine that signs for the fleet"
+    ));
+    item.section = Section::Attention;
+    Ok(vec![item])
 }

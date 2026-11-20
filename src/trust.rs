@@ -4,12 +4,13 @@ use crate::{
         self, Fleet, Repo,
         homes::{self, Home},
     },
+    host,
     prompt::Prompt,
     secrets::{
         AGE, Keys, RECIPIENTS, ROOT_KEY, Recipient, Storage, encrypt_for, format, holds, key_path,
         make_key, public, read, root_key, user_key,
     },
-    style,
+    sign, style,
     user::User,
     walk,
 };
@@ -25,7 +26,6 @@ pub struct MachineKey {
     pub name: String,
     pub public: String,
     pub target: String,
-    pub list: PathBuf,
     pub trusted: bool,
 }
 
@@ -42,6 +42,9 @@ fn owners(fleet: &Fleet) -> Vec<(String, Option<&User>, PathBuf)> {
 }
 
 pub fn create_keys(fleet: &Fleet) -> Result<()> {
+    if sign::machine_key()?.is_none() {
+        sign::create_machine_key()?;
+    }
     for (_, user, _) in owners(fleet) {
         match user {
             None if root_key()?.is_none() => drop(make_key(Path::new(ROOT_KEY))?),
@@ -70,7 +73,6 @@ pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
             trusted: holds(&list, &public)?,
             name,
             public,
-            list,
         });
     }
     Ok(keys)
@@ -78,24 +80,160 @@ pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
 
 pub fn key(fleet: &Fleet) -> Result<()> {
     create_keys(fleet)?;
-    let keys = machine_keys(fleet)?;
-    for key in &keys {
-        println!("{:6}  {}", key.name, key.public);
+    for key in &machine_keys(fleet)? {
+        println!("{:7}  {}", key.name, key.public);
     }
-    let untrusted: Vec<&MachineKey> = keys.iter().filter(|k| !k.trusted).collect();
-    if !untrusted.is_empty() {
-        println!(
-            "Add them from a machine that opens their secrets, or here for a list that guards none:"
-        );
-        for key in untrusted {
-            println!("  {}", trust_command(&key.target, "<name>", &key.public));
+    let signing = sign::machine_key()?.context("create_keys made it")?;
+    println!("{:7}  {}", SIGNING, sign::public(&signing)?);
+    if let Some(command) = trust_command(fleet, &host::name()?)? {
+        println!("Run this on a machine that signs for the fleet:");
+        println!("  {command}");
+    }
+    Ok(())
+}
+
+pub const SIGNING: &str = "signing";
+
+pub fn pending(fleet: &Fleet) -> Result<Vec<String>> {
+    let mut entries: Vec<String> = machine_keys(fleet)?
+        .into_iter()
+        .filter(|key| !key.trusted)
+        .map(|key| format!("{}={}", key.name, key.public))
+        .collect();
+    if let Some(public) = unlisted_signing(fleet)? {
+        entries.push(format!("{SIGNING}={public}"));
+    }
+    Ok(entries)
+}
+
+pub fn trust_command(fleet: &Fleet, hostname: &str) -> Result<Option<String>> {
+    let entries = pending(fleet)?;
+    let quoted: Vec<String> = entries
+        .iter()
+        .map(|entry| match entry.contains(' ') {
+            true => format!("'{entry}'"),
+            false => entry.clone(),
+        })
+        .collect();
+    Ok((!entries.is_empty()).then(|| {
+        format!(
+            "sudo mothership trust {hostname} {} {}",
+            fleet.type_name,
+            quoted.join(" ")
+        )
+    }))
+}
+
+pub fn unlisted_signing(fleet: &Fleet) -> Result<Option<String>> {
+    let Some(key) = sign::machine_key()? else {
+        return Ok(None);
+    };
+    let text = file::read_if_any(&fleet.dir.join(sign::SIGNERS))?.unwrap_or_default();
+    let listed = sign::parse_signers(&text)?;
+    Ok(
+        match listed.iter().any(|signer| &signer.key == key.public_key()) {
+            true => None,
+            false => Some(sign::public(&key)?),
+        },
+    )
+}
+
+pub fn trust_host(
+    fleet: &Fleet,
+    keys: &Keys,
+    host: &str,
+    type_name: &str,
+    entries: &[String],
+    prompt: &mut Prompt,
+) -> Result<()> {
+    for entry in entries {
+        let (name, key) = entry
+            .split_once('=')
+            .with_context(|| format!("{entry} isn't <name>=<key>"))?;
+        if name == SIGNING {
+            add_signer(fleet, host, type_name, key, prompt)?;
+            continue;
+        }
+        let text = format!("{type_name}/{name}");
+        if !holds(&target(fleet, &text)?.list, key)? {
+            trust_with(fleet, keys, &text, host, key, prompt)?;
         }
     }
     Ok(())
 }
 
-pub fn trust_command(target: &str, name: &str, public: &str) -> String {
-    format!("sudo mothership trust {target} {name} {public}")
+#[derive(Clone, Copy)]
+enum Reach {
+    Type,
+    Everything,
+}
+
+fn add_signer(
+    fleet: &Fleet,
+    host: &str,
+    type_name: &str,
+    key: &str,
+    prompt: &mut Prompt,
+) -> Result<()> {
+    let path = fleet.dir.join(sign::SIGNERS);
+    let mut list = read(&path)?;
+    let new = &sign::parse_signers(&format!("# {host}\n{key}\n"))?[0];
+    if let Some(known) = list.iter().find(|entry| entry.name == host) {
+        if sign::parse_signers(&format(std::slice::from_ref(known)))?[0].key == new.key {
+            return Ok(());
+        }
+        bail!(
+            "{} already lists another key for {host}: retire it first",
+            sign::SIGNERS
+        );
+    }
+    let scope = format!("types/{type_name}");
+    let question = format!("{host} signs: t only {scope} · e everything ›");
+    let line = match prompt.ask(&question, &[('t', Reach::Type), ('e', Reach::Everything)])? {
+        Some(Reach::Type) => format!("{key} {scope}"),
+        Some(Reach::Everything) => key.to_owned(),
+        None => bail!("{host} signs nothing yet"),
+    };
+    list.push(Recipient {
+        name: host.to_owned(),
+        key: line,
+    });
+    file::write(&path, format(&list).as_bytes(), 0o644)?;
+    println!("{host} signs for the fleet now.");
+    Ok(())
+}
+
+pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()> {
+    let mut found = false;
+    for type_name in fleet::types(&fleet.dir)? {
+        let mut owners = vec!["root".to_owned()];
+        let users = fleet::type_dir(&fleet.dir, &type_name).join(fleet::USERS);
+        for entry in fs::read_dir(&users).into_iter().flatten() {
+            owners.push(entry?.file_name().to_string_lossy().into_owned());
+        }
+        for owner in owners {
+            let text = format!("{type_name}/{owner}");
+            if read(&target(fleet, &text)?.list)?
+                .iter()
+                .any(|r| r.name == host)
+            {
+                retire(fleet, &text, host, prompt)?;
+                found = true;
+            }
+        }
+    }
+    let path = fleet.dir.join(sign::SIGNERS);
+    let mut signers = read(&path)?;
+    if signers.iter().any(|entry| entry.name == host) {
+        signers.retain(|entry| entry.name != host);
+        file::write(&path, format(&signers).as_bytes(), 0o644)?;
+        println!("{host} signs nothing now.");
+        found = true;
+    }
+    if !found {
+        bail!("the fleet holds no key named {host}");
+    }
+    Ok(())
 }
 
 enum Scope {
@@ -144,10 +282,6 @@ pub fn guards_secrets(fleet: &Fleet, text: &str) -> Result<bool> {
     Ok(!secrets_of(fleet, &target(fleet, text)?)?.is_empty())
 }
 
-pub fn trust(fleet: &Fleet, text: &str, name: &str, key: &str, prompt: &mut Prompt) -> Result<()> {
-    trust_with(fleet, fleet.keys(), text, name, key, prompt)
-}
-
 pub fn trust_with(
     fleet: &Fleet,
     keys: &Keys,
@@ -180,7 +314,7 @@ pub fn trust_with(
         return Ok(());
     };
     println!(
-        "{name} opens the {} secrets of {text} now. Commit and push the fleet.",
+        "{name} opens the {} secrets of {text} now.",
         rewritten.len()
     );
     Ok(())
@@ -200,7 +334,7 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str, prompt: &mut Prompt) -> Res
         println!("Nothing changed.");
         return Ok(());
     };
-    println!("{name} is gone from {text}. Commit and push the fleet.");
+    println!("{name} is gone from {text}.");
     if rewritten.is_empty() {
         return Ok(());
     }

@@ -15,7 +15,7 @@ pub const SYSTEM_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 pub struct User {
     pub name: String,
     pub uid: u32,
-    gid: u32,
+    pub gid: u32,
     pub home: PathBuf,
     pub shell: String,
 }

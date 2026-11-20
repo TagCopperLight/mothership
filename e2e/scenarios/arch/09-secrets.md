@@ -1,25 +1,27 @@
 # Secrets go into the fleet encrypted
 
 The machine follows its fleet. `key` makes root's key and mine. Root's opens the secrets of
-`/etc`, mine those of my home, and each goes into its own list. This machine is the first of its
-type, so it trusts its own keys.
+`/etc`, mine those of my home, and each goes into its own list. This machine already signs for
+the fleet, so it trusts its own keys, and commits the lists.
 
 ```console
 $ echo y | sudo mothership apply &>/dev/null
-$ sudo mothership key | sed 's/age1[a-z0-9]*/<key>/'
-root    <key>
-me      <key>
-Add them from a machine that opens their secrets, or here for a list that guards none:
-  sudo mothership trust workstation/root <name> <key>
-  sudo mothership trust workstation/me <name> <key>
+$ sudo mothership key | sed 's/age1[a-z0-9]*/<key>/g'
+root     <key>
+me       <key>
+signing  ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBiaU3yvKl1XfZP1NPwoqvUpk/NKEmD0N2A069AmOCrB
+Run this on a machine that signs for the fleet:
+  sudo mothership trust machine workstation root=<key> me=<key>
 $ sudo stat -c '%a %U' /etc/mothership/key.txt ~/.config/mothership/key.txt
 600 root
 600 me
-$ sudo mothership trust workstation/root laptop "$(sudo grep -o 'age1.*' /etc/mothership/key.txt)"
-laptop opens the 0 secrets of workstation/root now. Commit and push the fleet.
-$ sudo mothership trust workstation/me laptop "$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
-laptop opens the 0 secrets of workstation/me now. Commit and push the fleet.
-$ sudo mothership trust workstation/dev laptop "$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
+$ sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" \
+> me="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
+laptop opens the 0 secrets of workstation/root now.
+laptop opens the 0 secrets of workstation/me now.
+Committed [0-9a-f]{12} Trust laptop as workstation (re)
+On laptop, type this code: [0-9a-f]{12} (re)
+$ sudo mothership trust laptop workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
 Error: workstation has no user dev
 [exit 1]
 ```
@@ -40,7 +42,6 @@ Changed on this machine · 3
     + ~/.ssh          new  secret  1 file
 
 3 to review     sudo mothership review
-The fleet has 2 changes not committed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 ```
 
@@ -76,7 +77,7 @@ $ printf 'a\ns\ny\na\ny\n' | sudo mothership review
   › a
   That adds 1 file. Go on [y/N]? y
 3 added
-Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+Committed [0-9a-f]{12} Review on machine: 3 added (re)
 $ stat -c '%a' ~/.config/app/token
 600
 $ cd /var/lib/mothership/fleet && find types/workstation/users/me/home/dot_ssh types/workstation/users/me/home/dot_config types/workstation/etc/wifi.conf.age | sort
@@ -91,7 +92,6 @@ $ grep -r SECRET /var/lib/mothership/fleet
 $ grep -c wifi /var/lib/mothership/fleet/types/workstation/system.toml
 0
 [exit 1]
-$ cd /var/lib/mothership/fleet && git add -A && git commit -qm "Add the secrets"
 ```
 
 An editor keeps its settings for its owner only, though they hold no secret. Review lets me say
@@ -110,7 +110,7 @@ $ printf 'n\n' | sudo mothership review
   i ignore · l later · p pass · q quit
   › n
 1 marked not secret, which the next review shows as ordinary files
-Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+Committed [0-9a-f]{12} Review on machine: 1 marked not secret (re)
 $ cat /var/lib/mothership/fleet/types/workstation/users/me/not-secret.txt
 ~/.config/editor
 $ sudo mothership scan
@@ -119,7 +119,6 @@ Changed on this machine · 1
     + ~/.config/editor  new  1 file
 
 1 to review     sudo mothership review
-The fleet has 1 change not committed and 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 $ rm -r ~/.config/editor
 ```
@@ -128,7 +127,9 @@ A secret the fleet already holds in clear shows up too. Review encrypts it and r
 change it.
 
 ```console
-$ echo "machine example.com login me" > ~/.netrc && chmod 600 ~/.netrc && chezmoi add ~/.netrc
+$ echo "machine example.com login me" > ~/.netrc && chmod 600 ~/.netrc &&
+> cd /var/lib/mothership/fleet && cp ~/.netrc types/workstation/users/me/home/private_dot_netrc &&
+> git add -A && git commit -S -qm "Add .netrc" && sudo mothership scan >/dev/null
 $ printf 'a\n' | sudo mothership review
 [1/1] Files
     ! ~/.netrc  secret in clear  git history keeps it: change it once encrypted
@@ -139,7 +140,7 @@ $ printf 'a\n' | sudo mothership review
   › a
   git history keeps the version in clear, so change it.
 1 added
-Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
+Committed [0-9a-f]{12} Review on machine: 1 added (re)
 $ ls /var/lib/mothership/fleet/types/workstation/users/me/home | grep netrc
 encrypted_private_dot_netrc.age
 ```
@@ -205,18 +206,16 @@ the secrets open, and apply leaves them alone.
 $ sudo mv /etc/mothership/key.txt /root/laptop.txt && mv ~/.config/mothership/key.txt ~/laptop.txt
 $ sudo mothership key >/dev/null
 $ sudo mothership scan
-Needs attention · 6
+Needs attention · 5
   Files
     ? /etc/wifi.conf       locked  this machine's key isn't on its list
     ? ~/.config/app/token  locked  this machine's key isn't on its list
     ? ~/.netrc             locked  this machine's key isn't on its list
     ? ~/.ssh/id_test       locked  this machine's key isn't on its list
   Keys
-    \+ workstation/me +not trusted +run `sudo mothership trust workstation/me machine age1[a-z0-9]+` where its secrets open (re)
-    \+ workstation/root +not trusted +run `sudo mothership trust workstation/root machine age1[a-z0-9]+` where its secrets open (re)
+    \+ machine +not trusted +run `sudo mothership trust machine workstation root=age1[a-z0-9]+ me=age1[a-z0-9]+` on a machine that signs for the fleet (re)
 
-6 to review     sudo mothership review
-The fleet has 2 changes not committed and 1 commit not pushed  git -C /var/lib/mothership/fleet status
+5 to review     sudo mothership review
 \d+ ignored (re)
 $ echo y | sudo mothership apply
 Left alone, since this machine's key can't open them:
@@ -226,7 +225,7 @@ Left alone, since this machine's key can't open them:
     ? ~/.netrc             locked  this machine's key isn't on its list
     ? ~/.ssh/id_test       locked  this machine's key isn't on its list
 
-6 changed on this machine, for sudo mothership review
+5 changed on this machine, for sudo mothership review
 Nothing to apply.
 ```
 
@@ -239,51 +238,50 @@ $ sudo mv /etc/mothership/key.txt /root/desktop.txt && sudo mv /root/laptop.txt 
 $ mv ~/.config/mothership/key.txt ~/desktop.txt && mv ~/laptop.txt ~/.config/mothership/key.txt
 $ cd /var/lib/mothership/fleet/types/workstation/users/me/home && mkdir .secrets &&
 > echo "PROXY-SECRET" | chezmoi encrypt > .secrets/proxy-key.age &&
-> echo '{{ include ".secrets/proxy-key.age" | decrypt | trim }}' > dot_proxy.tmpl
-$ chezmoi apply --force ~/.proxy && cat ~/.proxy
+> echo '{{ include ".secrets/proxy-key.age" | decrypt | trim }}' > dot_proxy.tmpl &&
+> git add -A && git commit -S -qm "Read the proxy key"
+$ echo y | sudo mothership apply >/dev/null && cat ~/.proxy
 PROXY-SECRET
-$ echo y | sudo mothership trust workstation/root desktop "$(sudo grep -o 'age1.*' /root/desktop.txt)"
+$ printf 'y\ny\n' | sudo mothership trust desktop workstation root="$(sudo grep -o 'age1.*' /root/desktop.txt)" \
+> me="$(grep -o 'age1.*' ~/desktop.txt)"
 Re-encrypting for workstation/root:
   /etc/wifi.conf  workstation/root
 Go on [y/N]? y
-desktop opens the 1 secrets of workstation/root now. Commit and push the fleet.
-$ echo y | sudo mothership trust workstation/me desktop "$(grep -o 'age1.*' ~/desktop.txt)"
+desktop opens the 1 secrets of workstation/root now.
 Re-encrypting for workstation/me:
   .secrets/proxy-key.age  workstation/me
   ~/.config/app/token     workstation/me
   ~/.netrc                workstation/me
   ~/.ssh/id_test          workstation/me
 Go on [y/N]? y
-desktop opens the 4 secrets of workstation/me now. Commit and push the fleet.
-$ sudo mothership trust workstation/me desktop "$(grep -o 'age1.*' ~/desktop.txt)"
-Error: workstation/me already holds this key, as desktop
-[exit 1]
+desktop opens the 4 secrets of workstation/me now.
+Committed [0-9a-f]{12} Trust desktop as workstation (re)
+On desktop, type this code: [0-9a-f]{12} (re)
 $ sudo mv /etc/mothership/key.txt /root/laptop.txt && sudo mv /root/desktop.txt /etc/mothership/key.txt
 $ mv ~/.config/mothership/key.txt ~/laptop.txt && mv ~/desktop.txt ~/.config/mothership/key.txt
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
-The fleet has 9 changes not committed and 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
-$ echo y | sudo mothership retire workstation/me laptop
+$ printf 'y\ny\n' | sudo mothership retire laptop
+Re-encrypting for workstation/root:
+  /etc/wifi.conf  workstation/root
+Go on [y/N]? y
+laptop is gone from workstation/root.
+git history keeps the versions laptop opens, and that machine may keep copies, so change these:
+  /etc/wifi.conf
 Re-encrypting for workstation/me:
   .secrets/proxy-key.age  workstation/me
   ~/.config/app/token     workstation/me
   ~/.netrc                workstation/me
   ~/.ssh/id_test          workstation/me
 Go on [y/N]? y
-laptop is gone from workstation/me. Commit and push the fleet.
+laptop is gone from workstation/me.
 git history keeps the versions laptop opens, and that machine may keep copies, so change these:
   .secrets/proxy-key.age
   ~/.config/app/token
   ~/.netrc
   ~/.ssh/id_test
-$ echo y | sudo mothership retire workstation/root laptop
-Re-encrypting for workstation/root:
-  /etc/wifi.conf  workstation/root
-Go on [y/N]? y
-laptop is gone from workstation/root. Commit and push the fleet.
-git history keeps the versions laptop opens, and that machine may keep copies, so change these:
-  /etc/wifi.conf
+Committed [0-9a-f]{12} Retire laptop (re)
 $ sed 's/age1[a-z0-9]*/<key>/' /var/lib/mothership/fleet/types/workstation/users/me/recipients.txt
 # desktop
 <key>

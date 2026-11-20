@@ -26,7 +26,7 @@ $ cd /var/lib/mothership/fleet &&
 > printf 'new = yes\n' > types/workstation/etc/new.conf &&
 > sed -i 's|^groups = .*|groups = ["wheel", "video"]|' types/workstation/users/me/user.toml &&
 > printf '# from the fleet\n' >> types/workstation/users/me/home/dot_bashrc &&
-> git add -A && git commit -qm "Change the workstation"
+> git add -A && git commit -S -qm "Change the workstation"
 ```
 
 Scan puts what I changed, which review sorts, apart from what the fleet changed, which apply
@@ -83,23 +83,22 @@ $ printf 'l\np\np\np\np\na\nq\n' | sudo mothership review
 1 added, 1 put off for later, 4 passed
 1 not seen yet, for next time
 5 coming from the fleet, for sudo mothership apply
-Check the changes with git -C /var/lib/mothership/fleet diff, then commit.
-$ cd /var/lib/mothership/fleet && git status --short
- D types/workstation/users/me/home/dot_bash_profile
+Committed [0-9a-f]{12} Review on machine: 1 added (re)
+$ git -C /var/lib/mothership/fleet show --name-status --format= HEAD
+D	types/workstation/users/me/home/dot_bash_profile
 ```
 
-Scan still shows `beta`, with when review brings it back, and leaves it out of the count. It
-also says that review's edit to the fleet waits for me to commit it.
+Scan still shows `beta`, with when review brings it back, and leaves it out of the count. Review
+pushed its commit and the one before it.
 
 ```console
 $ sudo mothership scan | head -3
 Changed on this machine · 6
   Packages
     + beta                 installed    later, back in 7 days  An app the fleet never lists
-$ sudo mothership scan | tail -5
+$ sudo mothership scan | tail -4
 5 to review     sudo mothership review
 5 to apply      sudo mothership apply
 1 put off for later
-The fleet has 1 change not committed and 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 ```

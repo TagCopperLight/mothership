@@ -20,7 +20,12 @@ RUN touch /var/log/systemctl.log && chmod 666 /var/log/systemctl.log
 FROM machine
 COPY fleet /var/lib/mothership/fleet
 COPY chezmoi/server.toml /tmp/chezmoi.toml
+COPY signing /tmp/signing
+COPY recovery.txt /tmp/recovery.txt
+COPY anchor.sh /tmp/anchor.sh
 RUN useradd -m -G sudo -s /bin/bash me \
+ && install -o me -g me -m 600 /tmp/recovery.txt /home/me/recovery.txt \
+ && install -D -m 600 /tmp/signing /etc/mothership/signing \
  && install -m 440 /var/lib/mothership/fleet/types/server/etc/sudoers.d/sudo /etc/sudoers.d/sudo \
  && printf 'type = "server"\n' | install -D -m 644 /dev/stdin /etc/mothership/machine.toml \
  && chown -R me:me /var/lib/mothership/fleet \
@@ -32,6 +37,7 @@ RUN useradd -m -G sudo -s /bin/bash me \
  && runuser -u me -- git init -q --bare /srv/fleet.git \
  && runuser -u me -- git remote add origin /srv/fleet.git \
  && runuser -u me -- git push -q -u origin main \
+ && /tmp/anchor.sh \
  && runuser -u me -- install -D -m 644 /tmp/chezmoi.toml /home/me/.config/chezmoi/chezmoi.toml \
  && cd / && runuser -u me -- env HOME=/home/me chezmoi apply
 USER me

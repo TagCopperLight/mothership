@@ -6,7 +6,7 @@ The fleet lists `zeta`, which only the AUR has, but names no AUR helper.
 $ cd /var/lib/mothership/fleet &&
 > sed -i '/^aur_helper/d' types/workstation/system.toml &&
 > sed -i 's/^  "gamma",$/  "gamma",\n  "zeta",/' types/workstation/system.toml &&
-> git commit -qam "List zeta without an AUR helper"
+> git commit -S -qam "List zeta without an AUR helper"
 ```
 
 Apply fails before it installs anything, and changes nothing else.
@@ -39,7 +39,7 @@ The fleet names `paru`, which the machine lacks.
 ```console
 $ cd /var/lib/mothership/fleet &&
 > sed -i 's/^packages = \[$/aur_helper = "paru"\n&/' types/workstation/system.toml &&
-> git commit -qam "Name paru as the AUR helper"
+> git commit -S -qam "Name paru as the AUR helper"
 ```
 
 Apply fails the same way, before pacman installs anything.

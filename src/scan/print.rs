@@ -18,6 +18,7 @@ impl Kind {
             Kind::User => Area::Users,
             Kind::Shared => Area::Shared,
             Kind::Key => Area::Keys,
+            Kind::Commit => Area::Commits,
             Kind::Dconf | Kind::Pref => Area::Settings,
         }
     }
@@ -32,6 +33,7 @@ pub enum Area {
     Users,
     Shared,
     Keys,
+    Commits,
     UserServices,
     Account,
     Settings,
@@ -47,6 +49,7 @@ impl Area {
             Area::Users => "Users",
             Area::Shared => "Shared files",
             Area::Keys => "Keys",
+            Area::Commits => "Fleet commits",
             Area::UserServices => "User services",
             Area::Account => "Account",
             Area::Settings => "Settings",

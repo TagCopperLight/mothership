@@ -8,6 +8,7 @@ packages = [
   "rust",
   "uv",
   "dconf",
+  "openssh",
   # Apps
   "alpha",
   "gamma",

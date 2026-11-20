@@ -8,7 +8,7 @@ $ echo y | sudo mothership apply &>/dev/null
 $ cd /var/lib/mothership/fleet && mkdir -p types/workstation/users/dev/home/dot_config/devapp &&
 > echo "theme = light" > types/workstation/users/dev/home/dot_config/devapp/conf &&
 > printf 'home ~/.cargo\nhome ~/.bash{rc,_profile,_logout}\n' > types/workstation/users/dev/ignore.txt &&
-> touch types/workstation/users/dev/user.toml && git add -A && git commit -qm "Add dev" && git push -q
+> touch types/workstation/users/dev/user.toml && git add -A && git commit -S -qm "Add dev" && git push -q
 $ printf 'y\ny\ny\n' | sudo mothership apply &>/dev/null
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
@@ -59,7 +59,6 @@ $ (sleep 6; printf 'a\n') | sudo mothership review
   › a
   failed: opening /home/dev/.config/devapp/key.txt: Permission denied (os error 13)
   › 
-Nothing changed in /var/lib/mothership/fleet.
 1 not seen yet, for next time
 $ sudo grep -rl AGE-SECRET-KEY /var/lib/mothership/fleet
 [exit 1]

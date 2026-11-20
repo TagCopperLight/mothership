@@ -1,99 +1,86 @@
-use super::repo;
 use crate::{
-    cmd::As,
-    fleet::{self, Fleet},
+    fleet::{
+        self, Fleet,
+        checked::{self, Anchor, Remote},
+    },
     prompt::Prompt,
-    secrets,
-    trust::MachineKey,
+    secrets, sign,
 };
 use anyhow::{Result, bail};
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
 #[derive(Clone, Copy)]
 enum Next {
-    Pull,
+    Code,
     Recovery,
 }
 
 pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
-    crate::trust::create_keys(&Fleet::load()?)?;
+    let admin = fleet::admin()?;
     loop {
-        let fleet = Fleet::load()?;
-        let mut waiting = Vec::new();
-        for key in crate::trust::machine_keys(&fleet)? {
-            if key.trusted {
-                continue;
-            }
-            if !crate::trust::guards_secrets(&fleet, &key.target)? {
-                crate::trust::trust(&fleet, &key.target, hostname, &key.public, prompt)?;
-            } else {
-                waiting.push(key);
-            }
-        }
-        if waiting.is_empty() {
-            return fleet.hand_back();
-        }
-        let (question, answers): (&str, &[(char, Next)]) = match print(&waiting, hostname)? {
-            true => (
-                "d done, pull the fleet · r type the recovery key ›",
-                &[('d', Next::Pull), ('r', Next::Recovery)],
-            ),
-            false => ("r type the recovery key ›", &[('r', Next::Recovery)]),
+        let anchored = checked::anchored()?;
+        let fleet = match anchored {
+            true => Fleet::load()?,
+            false => Fleet::load_at(Path::new(fleet::DIR))?,
         };
-        match prompt.ask(question, answers)? {
-            Some(Next::Pull) => repo::pull(Path::new(fleet::DIR), None, || {
-                As::User(fleet.admin()).command::<&str>("git", &[])
-            })?,
-            Some(Next::Recovery) => {
-                let mut keys = fleet.keys().clone();
-                let public = keys.add(&prompt.hidden("Recovery key:")?)?;
-                if public != fleet.recovery.key {
-                    bail!(
-                        "that isn't the recovery key the fleet's {} names",
-                        fleet::MANIFEST
-                    );
-                }
-                for key in &waiting {
-                    crate::trust::trust_with(
-                        &fleet,
-                        &keys,
-                        &key.target,
-                        hostname,
-                        &key.public,
-                        prompt,
-                    )?;
-                }
-                fleet.hand_back()?;
+        crate::trust::create_keys(&fleet)?;
+        let command = crate::trust::trust_command(&fleet, hostname)?;
+        match &command {
+            None if anchored => return Ok(()),
+            None => println!("This machine needs a fleet commit to trust first."),
+            Some(command) => {
+                println!("Run this on a machine that signs for the fleet:");
+                println!("  {command}");
             }
-            None => bail!("install stopped before the fleet trusted this machine's keys"),
+        }
+        let answers = [('c', Next::Code), ('r', Next::Recovery)];
+        match prompt.ask(
+            "c type the code it prints · r type the recovery key ›",
+            &answers,
+        )? {
+            Some(Next::Code) => {
+                let code = prompt.line("Code:")?;
+                checked::sync_from(&admin, Remote::Fetch, Anchor::Code(&code))?;
+            }
+            Some(Next::Recovery) => recover(prompt, hostname, &fleet, anchored)?,
+            None => bail!("install stopped before the fleet trusted this machine"),
         }
     }
 }
 
-fn print(waiting: &[MachineKey], hostname: &str) -> Result<bool> {
-    let mut by_machine: BTreeMap<String, Vec<&MachineKey>> = BTreeMap::new();
-    for key in waiting {
-        for name in secrets::names(&key.list)? {
-            if name != hostname {
-                by_machine.entry(name).or_default().push(key);
-            }
-        }
-    }
-    if by_machine.is_empty() {
-        println!(
-            "The fleet doesn't trust this machine's keys yet, and only the recovery key opens them."
+fn recover(prompt: &mut Prompt, hostname: &str, fleet: &Fleet, anchored: bool) -> Result<()> {
+    let age = secrets::identity(&prompt.hidden("Recovery key:")?)?;
+    if secrets::public(&age) != fleet.recovery.key {
+        bail!(
+            "that isn't the recovery key the fleet's {} names",
+            fleet::MANIFEST
         );
-        return Ok(false);
     }
-    println!("The fleet doesn't trust this machine's keys yet. Run these, then commit and push:");
-    for (machine, keys) in by_machine {
-        println!("  On {machine}:");
-        for key in keys {
-            println!(
-                "    {}",
-                crate::trust::trust_command(&key.target, hostname, &key.public)
-            );
+    let admin = fleet.admin();
+    if !anchored {
+        println!("The fleet's newest commits:");
+        for line in checked::newest(admin, 5)? {
+            println!("  {line}");
         }
+        if !prompt.confirm("Trust the fleet as it is")? {
+            bail!("install stopped before the fleet trusted this machine");
+        }
+        checked::sync_from(admin, Remote::Skip, Anchor::Tip)?;
     }
-    Ok(true)
+    let stage = checked::stage()?;
+    let staged = Fleet::load_at(&stage.dir)?;
+    let entries = crate::trust::pending(&staged)?;
+    let mut keys = staged.keys().clone();
+    keys.push(age.clone());
+    crate::trust::trust_host(
+        &staged,
+        &keys,
+        hostname,
+        &staged.type_name,
+        &entries,
+        prompt,
+    )?;
+    let message = format!("Trust {hostname} as {}", staged.type_name);
+    stage.commit(admin, &message, &sign::recovery_key(&age))?;
+    checked::sync(admin, Remote::Skip).map(drop)
 }

@@ -54,6 +54,33 @@ pub fn link(path: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn read_root_only(path: &Path) -> Result<Option<Vec<u8>>> {
+    let shown = path.display();
+    let Some(meta) =
+        if_found(fs::symlink_metadata(path)).with_context(|| format!("reading {shown}"))?
+    else {
+        return Ok(None);
+    };
+    if !meta.is_file() || meta.uid() != 0 || meta.mode() & 0o077 != 0 {
+        bail!(
+            "{shown} must be a file only root can read: `chown root: {shown} && chmod 600 {shown}`"
+        );
+    }
+    read(path)?
+        .with_context(|| format!("{shown} vanished"))
+        .map(Some)
+}
+
+pub fn create_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .and_then(|mut file| file.write_all(bytes))
+        .with_context(|| format!("writing {}", path.display()))
+}
+
 pub fn read_if_any(path: &Path) -> Result<Option<String>> {
     if_found(fs::read_to_string(path)).with_context(|| format!("reading {}", path.display()))
 }
