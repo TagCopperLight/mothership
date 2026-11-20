@@ -6,10 +6,10 @@ laptop's keys move aside: this machine becomes a new one, with keys of its own.
 ```console
 $ echo y | sudo mothership apply &>/dev/null
 $ sudo mothership key > /dev/null &&
-> sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" \
+> yes | sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" \
 > me="$(grep -o 'age1.*' ~/.config/mothership/key.txt)" > /dev/null
 $ echo "psk=WIFI-SECRET" | sudo install -m 600 /dev/stdin /etc/wifi.conf &&
-> printf 'a\ny\n' | sudo mothership review > /dev/null
+> printf 'a\ny\ny\n' | sudo mothership review > /dev/null
 $ sudo mv /etc/mothership/key.txt /root/laptop.txt && mv ~/.config/mothership/key.txt ~/laptop.txt &&
 > sudo mothership key > /dev/null &&
 > sudo mv /etc/mothership/key.txt /root/new.txt && mv ~/.config/mothership/key.txt ~/new.txt
@@ -19,7 +19,7 @@ On the laptop, trust takes the new machine's keys, commits and pushes, and print
 
 ```console
 $ sudo cp /root/laptop.txt /etc/mothership/key.txt && cp ~/laptop.txt ~/.config/mothership/key.txt &&
-> printf 'y\n' | sudo mothership trust newbox workstation root="$(sudo grep -o 'age1.*' /root/new.txt)" \
+> yes | sudo mothership trust newbox workstation root="$(sudo grep -o 'age1.*' /root/new.txt)" \
 > me="$(grep -o 'age1.*' ~/new.txt)" | tail -1 > ~/code && cat ~/code
 On newbox, type this code: [0-9a-f]{12} (re)
 ```
@@ -50,8 +50,11 @@ c type the code it prints · r type the recovery key › r
 Recovery key: 
 Re-encrypting for workstation/root:
   /etc/wifi.conf  workstation/root
-Go on [y/N]? y
 machine opens the 1 secrets of workstation/root now.
+Trust machine as workstation:
+  M types/workstation/etc/wifi.conf.age
+  M types/workstation/recipients.txt
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Trust machine as workstation (re)
 ...
 $ cd /var/lib/mothership/fleet && grep -c '^# ' types/workstation/recipients.txt types/workstation/users/me/recipients.txt

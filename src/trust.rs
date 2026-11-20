@@ -180,7 +180,7 @@ pub fn trust_host(
                 kind: github::Use::Login,
             });
         } else if !holds(&target(fleet, &text)?.list, key)? {
-            trust_with(fleet, keys, &text, host, key, prompt)?;
+            trust_with(fleet, keys, &text, host, key)?;
         }
     }
     Ok(uploads)
@@ -270,11 +270,11 @@ fn every_list(fleet: &Fleet) -> Result<Vec<Target>> {
     Ok(all)
 }
 
-pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()> {
+pub fn retire_host(fleet: &Fleet, host: &str) -> Result<()> {
     let mut found = false;
     for target in every_list(fleet)? {
         if read(&target.list)?.iter().any(|r| r.name == host) {
-            retire(fleet, &target.text, host, prompt)?;
+            retire(fleet, &target.text, host)?;
             found = true;
         }
         if let Scope::User(home) = &target.scope
@@ -294,12 +294,7 @@ pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()>
     Ok(())
 }
 
-pub fn reseal_everything(
-    fleet: &Fleet,
-    keys: &Keys,
-    dropped: &str,
-    prompt: &mut Prompt,
-) -> Result<()> {
+pub fn reseal_everything(fleet: &Fleet, keys: &Keys, dropped: &str) -> Result<()> {
     for target in every_list(fleet)? {
         let before = read(&target.list)?;
         let mut list = before.clone();
@@ -307,9 +302,7 @@ pub fn reseal_everything(
         if list == before && secrets_of(fleet, &target)?.is_empty() {
             continue;
         }
-        if rewrite(fleet, keys, &target, &list, prompt)?.is_none() {
-            bail!("the fleet's recovery key stays as it was");
-        }
+        rewrite(fleet, keys, &target, &list)?;
     }
     Ok(())
 }
@@ -371,14 +364,7 @@ pub fn guards_secrets(fleet: &Fleet, text: &str) -> Result<bool> {
     Ok(!secrets_of(fleet, &target(fleet, text)?)?.is_empty())
 }
 
-pub fn trust_with(
-    fleet: &Fleet,
-    keys: &Keys,
-    text: &str,
-    name: &str,
-    key: &str,
-    prompt: &mut Prompt,
-) -> Result<()> {
+pub fn trust_with(fleet: &Fleet, keys: &Keys, text: &str, name: &str, key: &str) -> Result<()> {
     let target = target(fleet, text)?;
     key.parse::<x25519::Recipient>()
         .map_err(|e| anyhow!("{key}: {e}"))?;
@@ -396,10 +382,7 @@ pub fn trust_with(
         name: name.to_owned(),
         key: key.to_owned(),
     });
-    let Some(rewritten) = rewrite(fleet, keys, &target, &list, prompt)? else {
-        println!("Nothing changed.");
-        return Ok(());
-    };
+    let rewritten = rewrite(fleet, keys, &target, &list)?;
     println!(
         "{name} opens the {} secrets of {text} now.",
         rewritten.len()
@@ -407,7 +390,7 @@ pub fn trust_with(
     Ok(())
 }
 
-pub fn retire(fleet: &Fleet, text: &str, name: &str, prompt: &mut Prompt) -> Result<()> {
+pub fn retire(fleet: &Fleet, text: &str, name: &str) -> Result<()> {
     let target = target(fleet, text)?;
     let mut list = read(&target.list)?;
     let retired = list
@@ -417,10 +400,7 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str, prompt: &mut Prompt) -> Res
         .key
         .clone();
     list.retain(|r| r.name != name);
-    let Some(rewritten) = rewrite(fleet, fleet.keys(), &target, &list, prompt)? else {
-        println!("Nothing changed.");
-        return Ok(());
-    };
+    let rewritten = rewrite(fleet, fleet.keys(), &target, &list)?;
     println!("{name} is gone from {text}.");
     if rewritten.is_empty() {
         return Ok(());
@@ -493,8 +473,7 @@ fn rewrite(
     keys: &Keys,
     target: &Target,
     list: &[Recipient],
-    prompt: &mut Prompt,
-) -> Result<Option<Vec<Rewritten>>> {
+) -> Result<Vec<Rewritten>> {
     let all = secrets_of(fleet, target)?;
     if !all.is_empty() {
         println!("Re-encrypting for {}:", target.text);
@@ -503,9 +482,6 @@ fn rewrite(
             .map(|secret| (secret.shown.clone(), secret.readers.join(", ")))
             .collect();
         style::print_pairs(&pairs);
-        if !prompt.confirm("Go on")? {
-            return Ok(None);
-        }
     }
     let mut sealed = Vec::new();
     for secret in all {
@@ -529,7 +505,7 @@ fn rewrite(
     }
     file::write(&target.list, format(list).as_bytes(), 0o644)
         .with_context(|| format!("writing {}", target.list.display()))?;
-    Ok(Some(rewritten))
+    Ok(rewritten)
 }
 
 enum Source {

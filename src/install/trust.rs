@@ -1,7 +1,7 @@
 use crate::{
     fleet::{
         self, Fleet,
-        checked::{self, Anchor, Remote},
+        checked::{self, Advance, Anchor, Outcome, Remote},
     },
     github,
     prompt::Prompt,
@@ -90,7 +90,10 @@ fn recover(prompt: &mut Prompt, hostname: &str, fleet: &Fleet, anchored: bool) -
         }
     }
     let message = format!("Trust {hostname} as {}", staged.type_name);
-    stage.commit(admin, &message, &sign::recovery_key(&age))?;
+    let key = sign::recovery_key(&age);
+    if let Outcome::Declined = stage.commit(admin, &message, &key, prompt, Advance::Merge)? {
+        bail!("install stopped before the fleet trusted this machine");
+    }
     github::add(admin, &uploads)?;
     checked::sync(admin, Remote::Skip).map(drop)
 }

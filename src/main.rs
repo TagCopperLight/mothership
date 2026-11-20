@@ -41,12 +41,12 @@ mod walk;
 use anyhow::bail;
 use fleet::{
     Fleet,
-    checked::{self, Remote},
+    checked::{self, Advance, Outcome, Remote},
 };
 use prompt::Prompt;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: mothership scan | review | apply | key | recovery \
+const USAGE: &str = "usage: mothership scan | review | apply | commit <message> | key | recovery \
                      | trust <host> <type> <name>=<key>... | retire <host> \
                      | install [--fleet <repo>] [--type <type>] [--option <option>]... \
                      [--hostname <name>] [--admin <user>] [--timezone <zone>] [--disk <disk>] \
@@ -59,7 +59,7 @@ enum Command {
     Apply,
     Key,
     Recovery,
-    Sign,
+    Commit,
     Trust,
     Retire,
     Install,
@@ -73,7 +73,7 @@ impl Command {
             "apply" => Command::Apply,
             "key" => Command::Key,
             "recovery" => Command::Recovery,
-            "sign" => Command::Sign,
+            "commit" => Command::Commit,
             "trust" => Command::Trust,
             "retire" => Command::Retire,
             "install" => Command::Install,
@@ -103,9 +103,6 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &[String]) -> anyhow::Result<()> {
-    if args.first().is_some_and(|first| first == "-Y") {
-        return sign::for_git(args);
-    }
     let Some((command, rest)) = args
         .split_first()
         .and_then(|(name, rest)| Some((Command::parse(name)?, rest)))
@@ -114,9 +111,6 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     };
     if !user::is_root() {
         bail!("mothership reads every user's home: run it with sudo");
-    }
-    if let (Command::Sign, []) = (command, rest) {
-        return sign::for_sudo();
     }
     let lock = lock()?;
     if lock.is_none() && !matches!(command, Command::Scan) {
@@ -129,8 +123,8 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         fleet::require_admin_sudo()?;
     }
     let remote = match command {
-        Command::Apply | Command::Review => Some(Remote::Fetch),
-        Command::Install | Command::Recovery | Command::Sign => None,
+        Command::Apply | Command::Review | Command::Commit => Some(Remote::Fetch),
+        Command::Install | Command::Recovery => None,
         Command::Scan if lock.is_none() => {
             println!(
                 "Another mothership command is running, so this shows the fleet as last checked."
@@ -163,31 +157,42 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         (Command::Recovery, []) => {
             recovery::run(std::path::Path::new(fleet::DIR), &mut Prompt::new())
         }
-        (Command::Trust, [host, type_name, keys @ ..]) if !keys.is_empty() => {
-            let message = format!("Trust {host} as {type_name}");
-            let mut uploads = Vec::new();
-            let commit = edit_fleet(&message, |fleet| {
-                uploads = trust::trust_host(
-                    fleet,
-                    fleet.keys(),
-                    host,
-                    type_name,
-                    keys,
-                    &mut Prompt::new(),
-                )?;
-                Ok(())
-            })?;
-            github::add(&fleet::admin()?, &uploads)?;
-            if let Some(commit) = commit {
-                println!("On {host}, type this code: {}", checked::short(&commit));
+        (Command::Commit, [message]) => {
+            let mut prompt = Prompt::new();
+            let admin = fleet::admin()?;
+            let stage = checked::stage()?;
+            stage.take_checkout(&admin)?;
+            let key = sign::require_machine_key()?;
+            let outcome = stage.commit(&admin, message, &key, &mut prompt, Advance::KeepEdits)?;
+            if let Outcome::Unchanged = outcome {
+                println!("Nothing to commit.");
             }
             Ok(())
         }
-        (Command::Retire, [host]) => {
-            edit_fleet(&format!("Retire {host}"), |fleet| {
-                trust::retire_host(fleet, host, &mut Prompt::new())
+        (Command::Trust, [host, type_name, keys @ ..]) if !keys.is_empty() => {
+            let message = format!("Trust {host} as {type_name}");
+            let mut uploads = Vec::new();
+            let (outcome, base) = edit_fleet(&message, |fleet, prompt| {
+                uploads = trust::trust_host(fleet, fleet.keys(), host, type_name, keys, prompt)?;
+                Ok(())
             })?;
-            github::remove(&fleet::admin()?, host)
+            let code = match outcome {
+                Outcome::Declined => return Ok(()),
+                Outcome::Unchanged => base,
+                Outcome::Pushed(commit) => commit,
+            };
+            github::add(&fleet::admin()?, &uploads)?;
+            println!("On {host}, type this code: {}", checked::short(&code));
+            Ok(())
+        }
+        (Command::Retire, [host]) => {
+            let (outcome, _) = edit_fleet(&format!("Retire {host}"), |fleet, _| {
+                trust::retire_host(fleet, host)
+            })?;
+            match outcome {
+                Outcome::Declined => Ok(()),
+                Outcome::Unchanged | Outcome::Pushed(_) => github::remove(&fleet::admin()?, host),
+            }
         }
         _ => usage(),
     }
@@ -200,13 +205,16 @@ fn usage() -> ! {
 
 fn edit_fleet(
     message: &str,
-    command: impl FnOnce(&Fleet) -> anyhow::Result<()>,
-) -> anyhow::Result<Option<String>> {
+    command: impl FnOnce(&Fleet, &mut Prompt) -> anyhow::Result<()>,
+) -> anyhow::Result<(Outcome, String)> {
     let key = sign::require_machine_key()?;
+    let mut prompt = Prompt::new();
     let stage = checked::stage()?;
+    let base = stage.base().to_owned();
     let fleet = Fleet::load_at(&stage.dir)?;
-    command(&fleet)?;
-    stage.commit(fleet.admin(), message, &key)
+    command(&fleet, &mut prompt)?;
+    let outcome = stage.commit(fleet.admin(), message, &key, &mut prompt, Advance::Merge)?;
+    Ok((outcome, base))
 }
 
 fn lock() -> anyhow::Result<Option<std::fs::File>> {

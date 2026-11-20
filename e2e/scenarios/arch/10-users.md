@@ -12,14 +12,13 @@ $ cd /var/lib/mothership/fleet && mkdir -p types/workstation/users/dev/home shar
 > ln -s ../../../../../shared/dot_gitconfig types/workstation/users/dev/home/dot_gitconfig &&
 > printf 'linger = true\n\n[[installers]]\nname = "greeter"\nrun = "mkdir ~/.greeter && echo hi > ~/.greeter/hi"\ncreates = "~/.greeter"\n' > types/workstation/users/dev/user.toml &&
 > printf 'home ~/.cargo\nhome ~/.bash{rc,_profile,_logout}\n' > types/workstation/users/dev/ignore.txt &&
-> git add -A && git commit -S -qm "Add dev"
+> echo y | sudo mothership commit "Add dev" >/dev/null
 $ sudo mothership scan
 Coming from the fleet · 1
   Users
     + dev  create it
 
 1 to apply      sudo mothership apply
-The fleet has 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 ```
 
@@ -60,7 +59,7 @@ sourceDir = "/var/lib/mothership/current/types/workstation/users/dev/home"
 $ sudo mothership scan | sed -n 2,3p
   Keys
     \+ machine +not trusted +run `sudo mothership trust machine workstation .* 'dev=ssh-ed25519 [A-Za-z0-9+/]+' .*` on a machine that signs for the fleet (re)
-$ sudo mothership trust machine workstation dev="$(sudo cat /home/dev/.ssh/id_ed25519.pub)" | head -1
+$ yes | sudo mothership trust machine workstation dev="$(sudo cat /home/dev/.ssh/id_ed25519.pub)" > ~/out; head -1 ~/out
 workstation/dev on machine has an SSH key in the fleet now.
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
@@ -72,7 +71,7 @@ files it writes into the fleet are mine, and dev's chezmoi state stays dev's.
 
 ```console
 $ sudo -u dev bash -c 'mkdir -p ~/.config/devapp && echo "theme = light" > ~/.config/devapp/conf'
-$ printf 'a\ny\n' | sudo mothership review
+$ printf 'a\ny\ny\n' | sudo mothership review
 [1/1] Files · dev
     + ~/.config/devapp  new  1 file
       ── conf
@@ -83,6 +82,9 @@ $ printf 'a\ny\n' | sudo mothership review
   › a
   That adds 1 file. Go on [y/N]? y
 1 added
+Review on machine: 1 added:
+  A types/workstation/users/dev/home/dot_config/devapp/conf
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 added (re)
 $ cd /var/lib/mothership/fleet && find types -name conf
 types/workstation/users/dev/home/dot_config/devapp/conf
@@ -100,7 +102,7 @@ into `shared/`, and the link stays. Apply then brings it to me.
 
 ```console
 $ sudo -u dev bash -c 'echo "[user]" >> ~/.gitconfig'
-$ printf 'a\ny\n' | sudo mothership review
+$ printf 'a\ny\ny\n' | sudo mothership review
 [1/1] Files · dev
     ~ ~/.gitconfig  edited
       @@ -1,3 +1,4 @@
@@ -116,6 +118,9 @@ $ printf 'a\ny\n' | sudo mothership review
   shared/dot_gitconfig is shared: dev's version reaches workstation/me too.
   Go on [y/N]? y
 1 added
+Review on machine: 1 added:
+  M shared/dot_gitconfig
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 added (re)
 $ cd /var/lib/mothership/fleet && git show --name-only --format= HEAD && test -L types/workstation/users/dev/home/dot_gitconfig && tail -1 shared/dot_gitconfig
 shared/dot_gitconfig
@@ -145,9 +150,12 @@ Run this on a machine that signs for the fleet:
   sudo mothership trust machine workstation root=<key> dev=<key> me=<key>
 $ cd /var/lib/mothership/fleet && mkdir -p types/server/etc types/server/users/dev &&
 > touch types/server/system.toml types/server/users/dev/user.toml types/server/users/dev/recipients.txt &&
-> git add -A && git commit -S -qm "Add a server type"
-$ sudo mothership trust laptop server dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
+> echo y | sudo mothership commit "Add a server type" >/dev/null
+$ yes | sudo mothership trust laptop server dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
 laptop opens the 0 secrets of server/dev now.
+Trust laptop as server:
+  M types/server/users/dev/recipients.txt
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Trust laptop as server (re)
 On laptop, type this code: [0-9a-f]{12} (re)
 $ sed 's/age1[a-z0-9]*/<key>/' /var/lib/mothership/fleet/types/server/users/dev/recipients.txt
@@ -160,8 +168,11 @@ it for the lists of both homes, and asks first. My key also opens dev's list und
 `devbox`: retiring `devbox` leaves the secret open to my key through my own home.
 
 ```console
-$ sudo mothership trust laptop workstation me="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
+$ yes | sudo mothership trust laptop workstation me="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
 laptop opens the 0 secrets of workstation/me now.
+Trust laptop as workstation:
+  A types/workstation/users/me/recipients.txt
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Trust laptop as workstation (re)
 On laptop, type this code: [0-9a-f]{12} (re)
 $ cd /var/lib/mothership/fleet && mkdir -p shared/.secrets types/workstation/users/{me,dev}/home/.secrets &&
@@ -169,32 +180,42 @@ $ cd /var/lib/mothership/fleet && mkdir -p shared/.secrets types/workstation/use
 > for user in me dev; do ln -s ../../../../../../shared/.secrets/token.age types/workstation/users/$user/home/.secrets/token.age; done &&
 > echo '{{ include ".secrets/token.age" | decrypt | trim }}' > shared/dot_token.tmpl &&
 > ln -s ../../../../../shared/dot_token.tmpl types/workstation/users/dev/home/dot_token.tmpl &&
-> git add -A && git commit -S -qm "Share a token"
-$ echo y | sudo mothership trust minipc workstation dev="$(sudo grep -o 'age1.*' /home/dev/.config/mothership/key.txt)" 
+> echo y | sudo mothership commit "Share a token" >/dev/null
+$ yes | sudo mothership trust minipc workstation dev="$(sudo grep -o 'age1.*' /home/dev/.config/mothership/key.txt)" 
 Re-encrypting for workstation/dev:
   .secrets/token.age  workstation/dev, workstation/me
-Go on [y/N]? y
 minipc opens the 1 secrets of workstation/dev now.
+Trust minipc as workstation:
+  M shared/.secrets/token.age
+  A types/workstation/users/dev/recipients.txt
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Trust minipc as workstation (re)
 On minipc, type this code: [0-9a-f]{12} (re)
 $ echo n | sudo mothership trust devbox workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
 Re-encrypting for workstation/dev:
   .secrets/token.age  workstation/dev, workstation/me
-Go on [y/N]? n
-Nothing changed.
-$ echo y | sudo mothership trust devbox workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)" | tail -3
 devbox opens the 1 secrets of workstation/dev now.
+Trust devbox as workstation:
+  M shared/.secrets/token.age
+  M types/workstation/users/dev/recipients.txt
+Commit and push [y/N]? n
+Nothing changed.
+$ yes | sudo mothership trust devbox workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)" | tail -3
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Trust devbox as workstation (re)
 On devbox, type this code: [0-9a-f]{12} (re)
-$ echo y | sudo mothership retire devbox
+$ yes | sudo mothership retire devbox
 Re-encrypting for workstation/dev:
   .secrets/token.age  workstation/dev, workstation/me
-Go on [y/N]? y
 devbox is gone from workstation/dev.
 git history keeps the versions devbox opens, and that machine may keep copies, so change these:
   .secrets/token.age
 devbox's key still opens these, through another home that shares them:
   .secrets/token.age  workstation/me
+Retire devbox:
+  M shared/.secrets/token.age
+  M types/workstation/users/dev/recipients.txt
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Retire devbox (re)
 $ echo y | sudo mothership apply
 Coming from the fleet · 1
@@ -222,7 +243,7 @@ Changed on this machine · 2
 
 2 to review     sudo mothership review
 \d+ ignored (re)
-$ printf 'a\ny\ni\n' | sudo mothership review
+$ printf 'a\ny\ni\ny\n' | sudo mothership review
 [1/2] Users
     + guest  not in the fleet
   a  add         list the user in the type, with an empty home
@@ -235,6 +256,12 @@ $ printf 'a\ny\ni\n' | sudo mothership review
   i ignore · l later · p pass · q quit
   › i
 1 added, 1 ignored
+Review on machine: 1 added, 1 ignored:
+  M types/workstation/ignore.txt
+  A types/workstation/users/guest/home/.keep
+  A types/workstation/users/guest/recipients.txt
+  A types/workstation/users/guest/user.toml
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 added, 1 ignored (re)
 $ cd /var/lib/mothership/fleet && git show --name-only --format= HEAD && tail -1 types/workstation/ignore.txt
 types/workstation/ignore.txt
@@ -253,15 +280,15 @@ A file in `shared/` that no home links needs attention: it reaches nobody. Ignor
 `shared` line in the type's `ignore.txt`.
 
 ```console
-$ cd /var/lib/mothership/fleet && touch shared/dot_unused && git add -A && git commit -S -qm "Leave a file unlinked"
+$ cd /var/lib/mothership/fleet && touch shared/dot_unused && echo y | sudo mothership commit "Leave a file unlinked" >/dev/null
 $ sudo mothership scan | head -4
 Needs attention · 1
   Shared files
     + dot_unused  linked by no home  link it from a home, or delete it
 
-$ printf 'i\n' | sudo mothership review | tail -3
-1 ignored
-1 coming from the fleet, for sudo mothership apply
+$ printf 'i\ny\n' | sudo mothership review | tail -3
+  M types/workstation/ignore.txt
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 ignored (re)
 $ tail -1 /var/lib/mothership/fleet/types/workstation/ignore.txt
 shared dot_unused

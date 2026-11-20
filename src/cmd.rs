@@ -61,7 +61,7 @@ pub fn stdout<S: AsRef<OsStr>>(who: As, program: &str, args: &[S]) -> Result<Str
 
 pub fn bytes<S: AsRef<OsStr>>(who: As, program: &str, args: &[S]) -> Result<Vec<u8>> {
     let limit = who.limit(USER_QUERY_LIMIT);
-    capture(who.command(program, args), program, args, limit, None)
+    capture(who.command(program, args), program, args, limit, None, None)
 }
 
 pub fn bytes_allowing_exit<S: AsRef<OsStr>>(
@@ -71,11 +71,27 @@ pub fn bytes_allowing_exit<S: AsRef<OsStr>>(
     code: i32,
 ) -> Result<Vec<u8>> {
     let limit = who.limit(USER_QUERY_LIMIT);
-    capture(who.command(program, args), program, args, limit, Some(code))
+    capture(
+        who.command(program, args),
+        program,
+        args,
+        limit,
+        Some(code),
+        None,
+    )
 }
 
 pub fn output<S: AsRef<OsStr>>(command: Command, program: &str, args: &[S]) -> Result<Vec<u8>> {
-    capture(command, program, args, None, None)
+    capture(command, program, args, None, None, None)
+}
+
+pub fn output_with_input<S: AsRef<OsStr>>(
+    command: Command,
+    program: &str,
+    args: &[S],
+    input: &[u8],
+) -> Result<Vec<u8>> {
+    capture(command, program, args, None, None, Some(input))
 }
 
 fn capture<S: AsRef<OsStr>>(
@@ -84,20 +100,30 @@ fn capture<S: AsRef<OsStr>>(
     args: &[S],
     limit: Option<Duration>,
     also_ok: Option<i32>,
+    input: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
-    let child = command
-        .stdin(Stdio::null())
+    let mut child = command
+        .stdin(match input {
+            Some(_) => Stdio::piped(),
+            None => Stdio::null(),
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("running {program}"))?;
-    let (status, out, err) = finish(child, limit, Sink::Keep)?;
+    let writer = input.map(|bytes| feed(&mut child, bytes));
+    let finished = finish(child, limit, Sink::Keep);
+    let written = writer.map(|w| w.join().expect("the writing thread doesn't panic"));
+    let (status, out, err) = finished?;
     if !status.success() && status.code() != also_ok {
         bail!(
             "{program} {} failed: {}",
             shown(args),
             style::clean(String::from_utf8_lossy(&err).trim())
         );
+    }
+    if let Some(written) = written {
+        written.with_context(|| format!("writing to {program}"))?;
     }
     Ok(out)
 }
@@ -123,14 +149,27 @@ pub fn with_input<S: AsRef<OsStr>>(who: As, program: &str, args: &[S], input: &[
     let mut cmd = who.command(program, args);
     cmd.stdin(Stdio::piped());
     let mut child = spawn(cmd, program)?;
-    let previous = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
-    let written = child.stdin.take().expect("piped above").write_all(input);
-    unsafe { libc::signal(libc::SIGPIPE, previous) };
+    let writer = feed(&mut child, input);
     let (status, ..) = finish(child, who.limit(USER_RUN_LIMIT), Sink::Show)?;
+    let written = writer.join().expect("the writing thread doesn't panic");
     if !status.success() {
         bail!("{program} {} failed", shown(args));
     }
     written.with_context(|| format!("writing to {program}"))
+}
+
+fn feed(child: &mut Child, input: &[u8]) -> thread::JoinHandle<io::Result<()>> {
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    let input = input.to_vec();
+    thread::spawn(move || {
+        unsafe {
+            let mut pipe: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut pipe);
+            libc::sigaddset(&mut pipe, libc::SIGPIPE);
+            libc::pthread_sigmask(libc::SIG_BLOCK, &pipe, std::ptr::null_mut());
+        }
+        stdin.write_all(&input)
+    })
 }
 
 pub fn status<S: AsRef<OsStr>>(command: Command, program: &str, args: &[S]) -> Result<()> {

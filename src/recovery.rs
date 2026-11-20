@@ -2,7 +2,7 @@ use crate::{
     file,
     fleet::{
         self, Fleet, MANIFEST, Manifest,
-        checked::{self, Remote},
+        checked::{self, Advance, Outcome, Remote},
     },
     prompt::Prompt,
     secrets::{self, Keys},
@@ -78,9 +78,12 @@ fn change(prompt: &mut Prompt) -> Result<()> {
     let fleet = Fleet::load_at(&stage.dir)?;
     let mut keys = Keys::default();
     keys.push(old.clone());
-    trust::reseal_everything(&fleet, &keys, &old_public, prompt)?;
-    stage.commit(&admin, "Change the recovery key", &sign::recovery_key(&old))?;
-    println!("The old recovery key opens what git history keeps, so change those secrets too.");
+    trust::reseal_everything(&fleet, &keys, &old_public)?;
+    let key = sign::recovery_key(&old);
+    let message = "Change the recovery key";
+    if let Outcome::Pushed(_) = stage.commit(&admin, message, &key, prompt, Advance::Merge)? {
+        println!("The old recovery key opens what git history keeps, so change those secrets too.");
+    }
     Ok(())
 }
 

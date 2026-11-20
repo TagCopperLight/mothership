@@ -8,9 +8,9 @@ $ echo y | sudo mothership apply &>/dev/null
 $ cd /var/lib/mothership/fleet && mkdir -p types/workstation/users/dev/home/dot_config/devapp &&
 > echo "theme = light" > types/workstation/users/dev/home/dot_config/devapp/conf &&
 > printf 'home ~/.cargo\nhome ~/.bash{rc,_profile,_logout}\n' > types/workstation/users/dev/ignore.txt &&
-> touch types/workstation/users/dev/user.toml && git add -A && git commit -S -qm "Add dev" && git push -q
+> touch types/workstation/users/dev/user.toml && echo y | sudo mothership commit "Add dev" >/dev/null
 $ printf 'y\ny\ny\n' | sudo mothership apply &>/dev/null &&
-> sudo mothership trust machine workstation dev="$(sudo cat /home/dev/.ssh/id_ed25519.pub)" > /dev/null
+> yes | sudo mothership trust machine workstation dev="$(sudo cat /home/dev/.ssh/id_ed25519.pub)" > /dev/null
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
 \d+ ignored (re)

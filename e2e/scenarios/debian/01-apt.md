@@ -55,7 +55,7 @@ Review adds both packages. apt can't install `omega`, so it goes into `built_pac
 file's diff and its revert both come from the package apt keeps in its cache.
 
 ```console
-$ printf 'a\na\nr\n' | sudo mothership review
+$ printf 'a\na\nr\ny\n' | sudo mothership review
 [1/3] Packages
     + beta  installed  An app the fleet never lists
   a  add         add it to `packages` in system.toml
@@ -81,6 +81,9 @@ $ printf 'a\na\nr\n' | sudo mothership review
   i ignore · l later · p pass · q quit
   › r
 2 added, 1 reverted
+Review on machine: 2 added:
+  M types/server/system.toml
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 2 added (re)
 $ cat /etc/gamma.conf
 volume = 5
@@ -98,7 +101,7 @@ dependency.
 $ sudo apt-get install -y epsilon > /dev/null 2>&1
 $ cd /var/lib/mothership/fleet &&
 > sed -i '/"alpha",/d; /"gamma",/d' types/server/system.toml
-> git -c user.name=Me -c user.email=me@example.com commit -S -qam "Drop alpha and gamma"
+> echo y | sudo mothership commit "Drop alpha and gamma" >/dev/null
 $ echo y | sudo mothership apply
 Coming from the fleet · 2
   Packages
@@ -124,7 +127,7 @@ When the fleet lists `gamma` again, apply brings its config file back with it.
 
 ```console
 $ cd /var/lib/mothership/fleet &&
-> git -c user.name=Me -c user.email=me@example.com revert -S --no-edit HEAD > /dev/null
+> git revert --no-commit HEAD && echo y | sudo mothership commit "List alpha and gamma again" >/dev/null
 $ echo y | sudo mothership apply > /dev/null
 $ cat /etc/gamma.conf
 volume = 5

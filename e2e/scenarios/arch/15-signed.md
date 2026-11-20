@@ -32,18 +32,20 @@ It also tries to sign itself in, with a key of its own.
 ```console
 $ ssh-keygen -q -t ed25519 -N '' -f ~/rogue && cd /var/lib/mothership/fleet &&
 > git reset -q --hard HEAD~ && printf '\n# rogue\n%s\n' "$(cut -d' ' -f1,2 ~/rogue.pub)" >> signers.txt &&
-> git -c user.signingkey=$HOME/rogue -c gpg.ssh.program=ssh-keygen commit -S -qam "Let me in" &&
+> git -c gpg.format=ssh -c user.signingkey=$HOME/rogue commit -S -qam "Let me in" &&
 > git push -qf
 $ sudo mothership scan | grep refused
     \+ [0-9a-f]{12} Let me in +refused, by Me +a key the fleet doesn't list signed it: sign it again or drop it, then push (re)
 ```
 
-I drop it. The agent's work on a branch applies once I merge it, signed.
+I drop it. The agent's work on a branch applies once I bring it in and commit it through
+mothership.
 
 ```console
 $ cd /var/lib/mothership/fleet && git reset -q --hard HEAD~ && git push -qf &&
 > git checkout -q -b agent && sed -i 's/^  "gamma",$/  "gamma",\n  "zeta",/' types/workstation/system.toml &&
-> git commit -qam "Add zeta" && git checkout -q main && git merge -S -q --no-ff -m "Merge the agent's zeta" agent
+> git commit -qam "Add zeta" && git checkout -q main && git merge --squash -q agent >/dev/null &&
+> echo y | sudo mothership commit "Add the agent's zeta" >/dev/null
 $ echo y | sudo mothership apply > ~/out; head -3 ~/out
 Coming from the fleet · 1
   Packages
@@ -54,7 +56,7 @@ Root never runs git in my checkout: a hook the agent plants there runs as me.
 
 ```console
 $ cd /var/lib/mothership/fleet && git config core.fsmonitor 'touch /tmp/ran-by-$(id -un)' &&
-> git commit -S -q --allow-empty -m "Nothing" 2>/dev/null && echo y | sudo mothership apply &> /dev/null
+> touch nothing && echo y | sudo mothership commit "Add an empty file" &>/dev/null && echo y | sudo mothership apply &> /dev/null
 $ ls /tmp | grep ran-by
 ran-by-me
 ```
@@ -65,9 +67,9 @@ It stops before signing, and pushes nothing.
 ```console
 $ cd /var/lib/mothership/fleet && git config --unset core.fsmonitor &&
 > sed -i '/^ssh-ed25519/s/$/ types\/server/' signers.txt &&
-> git commit -S -qam "Sign only for servers" && git push -q && echo y | sudo mothership apply &> /dev/null
+> echo y | sudo mothership commit "Sign only for servers" >/dev/null && echo y | sudo mothership apply &> /dev/null
 $ echo "new" | sudo install -m 644 /dev/stdin /etc/scoped.conf
-$ printf 'a\n' | sudo mothership review 2>&1 | tail -1
+$ printf 'a\ny\n' | sudo mothership review 2>&1 | tail -1
 Error: the fleet's machines would refuse this commit, so nothing changed: machine can't sign a change to types/workstation/etc/scoped.conf
 $ git -C /var/lib/mothership/fleet log -1 --format=%s
 Sign only for servers

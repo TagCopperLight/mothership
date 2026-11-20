@@ -35,10 +35,10 @@ fn a_failure_reports_the_stderr() {
 
 #[test]
 fn an_accepted_exit_code_is_not_a_failure() {
-    let ok = capture(sh("echo a; exit 1"), "sh", &["-c"], None, Some(1)).unwrap();
+    let ok = capture(sh("echo a; exit 1"), "sh", &["-c"], None, Some(1), None).unwrap();
     assert_eq!(ok, b"a\n");
-    assert!(capture(sh("exit 2"), "sh", &["-c"], None, Some(1)).is_err());
-    assert!(capture(sh("exit 1"), "sh", &["-c"], None, None).is_err());
+    assert!(capture(sh("exit 2"), "sh", &["-c"], None, Some(1), None).is_err());
+    assert!(capture(sh("exit 1"), "sh", &["-c"], None, None, None).is_err());
 }
 
 #[test]
@@ -66,4 +66,10 @@ fn a_command_within_its_limit_finishes_normally() {
     let (status, out, _) = finish(child, Some(Duration::from_secs(30)), Sink::Keep).unwrap();
     assert!(status.success());
     assert_eq!(out, b"ok\n");
+}
+
+#[test]
+fn input_reaches_the_program() {
+    let out = output_with_input(sh("tr a b"), "sh", &["-c"], b"aaa").unwrap();
+    assert_eq!(out, b"bbb");
 }

@@ -9,7 +9,7 @@ $ echo y | sudo mothership apply &>/dev/null
 The fleet adds a cargo tool from git, and an installer script, to my part of the type.
 
 ```console
-$ cd /var/lib/mothership/fleet && cat >> types/workstation/users/me/user.toml <<'TOML' && git commit -S -qam "Add tools"
+$ cd /var/lib/mothership/fleet && cat >> types/workstation/users/me/user.toml <<'TOML' && echo y | sudo mothership commit "Add tools" >/dev/null
 > [[installers]]
 > name = "greeter"
 > run = "mkdir ~/.greeter && echo hi > ~/.greeter/hi"
@@ -42,7 +42,7 @@ The fleet moves `hello` to its `loud` branch, and apply reinstalls it from there
 ```console
 $ cd /var/lib/mothership/fleet &&
 > sed -i 's|"file:///crates/hello" }|"file:///crates/hello", branch = "loud" }|' types/workstation/users/me/user.toml &&
-> git commit -S -qam "Follow the loud branch"
+> echo y | sudo mothership commit "Follow the loud branch" >/dev/null
 $ echo y | sudo mothership apply
 Coming from the fleet · 1
   Tools
@@ -59,7 +59,7 @@ doesn't run the installer again: the missing folder waits for review.
 
 ```console
 $ cd /var/lib/mothership/fleet && sed -i '/^\[tools\]/,$d' types/workstation/users/me/user.toml &&
-> git commit -S -qam "Drop hello" && rm -r ~/.greeter
+> echo y | sudo mothership commit "Drop hello" >/dev/null && rm -r ~/.greeter
 $ echo y | sudo mothership apply
 Coming from the fleet · 1
   Tools
@@ -80,7 +80,7 @@ source, and once added, the scan finds nothing left to say about it.
 
 ```console
 $ cargo install -q --git file:///crates/hello --branch loud hello &>/dev/null
-$ printf 'a\nq\n' | sudo mothership review
+$ printf 'a\nq\ny\n' | sudo mothership review
 [1/2] Tools
     + cargo hello  installed  from file:///crates/hello, branch loud
   a  add         write this machine's source into `tools.cargo` in user.toml
@@ -109,7 +109,7 @@ other two again, so review only offers to add the script.
 ```console
 $ mkdir -p ~/.local/opt ~/.local/bin && cp /usr/bin/true ~/.local/bin/stamp && cp /usr/bin/true ~/.local/opt/App.AppImage &&
 > printf '#!/bin/sh\necho hi\n' > ~/.local/bin/hi
-$ printf 'p\np\np\nq\n' | sudo mothership review
+$ printf 'p\np\np\nq\ny\n' | sudo mothership review
 [1/4] Tools
     + ~/.local/bin/stamp  installed
   can't add: nothing in the fleet downloads it: write an installer for it

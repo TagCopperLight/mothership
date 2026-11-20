@@ -8,8 +8,6 @@ git --git-dir "$lib/fleet.git" update-ref refs/mothership/checked "$commit"
 mkdir -p "$lib/checked/$commit"
 git --git-dir "$lib/fleet.git" archive "$commit" | tar -x --no-same-owner -C "$lib/checked/$commit"
 ln -s "$lib/checked/$commit" "$lib/current"
-key="key::$(cat /tmp/signing.pub)"
 cd "$lib/fleet"
-runuser -u me -- git config gpg.format ssh
-runuser -u me -- git config gpg.ssh.program /usr/local/bin/mothership
-runuser -u me -- git config user.signingkey "$key"
+runuser -u me -- git config user.name Me
+runuser -u me -- git config user.email me@example.com

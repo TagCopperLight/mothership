@@ -26,7 +26,7 @@ the fleet's packages, put `gamma` off, add the new app's config, ignore the toke
 the rest. Review never shows a secret's contents. Then I quit.
 
 ```console
-$ printf 'a\nl\np\na\ny\ni\np\np\nq\n' | sudo mothership review
+$ printf 'a\nl\np\na\ny\ni\np\np\nq\ny\n' | sudo mothership review
 [1/8] Packages
     + beta  installed  An app the fleet never lists
   a  add         add it to `packages` in system.toml
@@ -95,6 +95,11 @@ $ printf 'a\nl\np\na\ny\ni\np\np\nq\n' | sudo mothership review
   › q
 2 added, 1 ignored, 1 put off for later, 3 passed
 1 not seen yet, for next time
+Review on machine: 2 added, 1 ignored:
+  M types/workstation/system.toml
+  A types/workstation/users/me/home/dot_config/newapp/settings.ini
+  M types/workstation/users/me/ignore.txt
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 2 added, 1 ignored (re)
 ```
 
@@ -124,14 +129,14 @@ The fleet raises the level in `/etc/fleet.conf`. Apply leaves the file, since I 
 ```console
 $ cd /var/lib/mothership/fleet &&
 > printf 'managed = yes\nlevel = 2\n' > types/workstation/etc/fleet.conf &&
-> git add -A && git commit -S -qm "Keep beta and newapp, raise the level"
+> echo y | sudo mothership commit "Keep beta and newapp, raise the level" >/dev/null
 ```
 
 `gamma` waits for next week. I add the proxy script to the fleet, revert my edits to
 `/etc/fleet.conf` and `~/.gitconfig`, and leave the `audio` group.
 
 ```console
-$ printf 'a\nr\nr\nr\n' | sudo mothership review
+$ printf 'a\nr\nr\nr\ny\n' | sudo mothership review
 [1/4] Files
     + /etc/profile.d/proxy.sh  new
       export HTTP_PROXY=http://proxy:3128
@@ -173,6 +178,10 @@ $ printf 'a\nr\nr\nr\n' | sudo mothership review
 Removing user me from group audio
 1 added, 3 reverted
 1 put off before and not due yet
+Review on machine: 1 added:
+  A types/workstation/etc/profile.d/proxy.sh
+  M types/workstation/system.toml
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 added (re)
 ```
 
@@ -205,7 +214,7 @@ change to it.
 ```console
 $ cd /var/lib/mothership/fleet &&
 > printf 'managed = yes\nlevel = 3\n' > types/workstation/etc/fleet.conf &&
-> git add -A && git commit -S -qm "Add the proxy, raise the level"
+> echo y | sudo mothership commit "Add the proxy, raise the level" >/dev/null
 $ echo y | sudo mothership apply
 Coming from the fleet · 1
   Files
@@ -223,7 +232,7 @@ itself.
 
 ```console
 $ printf 'x = 1\n' > "$(printf '/home/me/.config/caf\351.conf')"
-$ printf 'a\n' | sudo mothership review
+$ printf 'a\ny\n' | sudo mothership review
 [1/1] Files
     + ~/.config/caf�.conf  new
       x = 1
@@ -233,6 +242,9 @@ $ printf 'a\n' | sudo mothership review
   › a
 1 added
 1 put off before and not due yet
+Review on machine: 1 added:
+  A types/workstation/users/me/home/dot_config/caf�.conf
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 added (re)
 $ ls /var/lib/mothership/fleet/types/workstation/users/me/home/dot_config | od -c | grep -c 351
 1

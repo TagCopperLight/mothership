@@ -106,7 +106,6 @@ fn trusting_a_key_opens_every_secret_of_its_list_to_it() {
         "workstation/root",
         "desktop",
         &public(&desktop),
-        &mut Prompt::answering("y"),
     )
     .unwrap();
     assert_eq!(names(&fleet.recipients()), ["laptop", "desktop"]);
@@ -140,7 +139,6 @@ fn a_secret_this_machine_can_not_open_stops_trust_before_any_write() {
         "workstation/root",
         "desktop",
         &public(&other),
-        &mut Prompt::answering("y"),
     );
     let error = format!("{:#}", error.err().unwrap());
     assert!(error.starts_with("none of this machine's keys opens"));
@@ -158,14 +156,7 @@ fn a_name_the_list_holds_is_refused_until_it_is_retired() {
     let fleet = fleet_with(dir.path(), &list, &[]);
     let mut keys = Keys::default();
     keys.push(laptop);
-    let error = trust_with(
-        &fleet,
-        &keys,
-        "workstation/root",
-        "laptop",
-        &public(&other),
-        &mut Prompt::answering("y"),
-    );
+    let error = trust_with(&fleet, &keys, "workstation/root", "laptop", &public(&other));
     let error = error.err().unwrap().to_string();
     assert!(error.contains("sudo mothership retire laptop"));
     assert_eq!(fs::read_to_string(fleet.recipients()).unwrap(), list);
@@ -242,37 +233,11 @@ fn trusting_a_key_for_one_home_keeps_a_shared_secret_open_to_the_other_homes() {
         "workstation/tag",
         "desktop",
         &public(&desktop),
-        &mut Prompt::answering("y"),
     )
     .unwrap();
     assert!(opens(&desktop, &shared.file));
     assert!(opens(&shared.laptop, &shared.file));
     assert!(opens(&shared.minipc, &shared.file));
-}
-
-#[test]
-fn saying_no_to_trust_changes_nothing() {
-    let shared = shared_secret();
-    let before = fs::read(&shared.file).unwrap();
-    let list = shared
-        .fleet
-        .dir
-        .join("types/workstation/users/tag")
-        .join(RECIPIENTS);
-    let names_before = names(&list);
-    let mut keys = Keys::default();
-    keys.push(shared.laptop.clone());
-    trust_with(
-        &shared.fleet,
-        &keys,
-        "workstation/tag",
-        "desktop",
-        &public(&x25519::Identity::generate()),
-        &mut Prompt::answering("n"),
-    )
-    .unwrap();
-    assert_eq!(fs::read(&shared.file).unwrap(), before);
-    assert_eq!(names(&list), names_before);
 }
 
 #[test]
@@ -337,10 +302,10 @@ fn trust_lists_a_host_s_ssh_and_signing_keys_and_retire_drops_them() {
             .ends_with("lists another key for desktop: retire it first")
     );
 
-    retire_host(&fleet, "desktop", &mut Prompt::answering("y")).unwrap();
+    retire_host(&fleet, "desktop").unwrap();
     assert!(read(&ssh_keys).unwrap().is_empty());
     assert!(read(&signers).unwrap().is_empty());
-    assert!(retire_host(&fleet, "desktop", &mut Prompt::answering("y")).is_err());
+    assert!(retire_host(&fleet, "desktop").is_err());
 }
 
 #[test]
@@ -378,7 +343,7 @@ fn a_new_recovery_key_opens_every_secret_and_the_old_one_none() {
     let mut keys = Keys::default();
     keys.push(old.clone());
 
-    reseal_everything(&fleet, &keys, &public(&old), &mut Prompt::answering("y")).unwrap();
+    reseal_everything(&fleet, &keys, &public(&old)).unwrap();
     assert!(opens(&new, &file));
     assert!(opens(&laptop, &file));
     assert!(!opens(&old, &file));

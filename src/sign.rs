@@ -1,16 +1,11 @@
-use crate::{cmd, file, secrets, update::BINARY};
+use crate::{file, secrets};
 use age::{secrecy::ExposeSecret, x25519};
 use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest, Sha256};
 use ssh_key::{
     HashAlg, LineEnding, PrivateKey, PublicKey, SshSig, private::Ed25519Keypair, rand_core::OsRng,
 };
-use std::{
-    fs,
-    io::{self, Write},
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-};
+use std::path::{Path, PathBuf};
 
 pub const KEY: &str = "/etc/mothership/signing";
 pub const SIGNERS: &str = "signers.txt";
@@ -49,69 +44,6 @@ pub fn sign(key: &PrivateKey, payload: &[u8]) -> Result<String> {
     Ok(key
         .sign(NAMESPACE, HashAlg::Sha512, payload)?
         .to_pem(LineEnding::LF)?)
-}
-
-pub fn for_git(args: &[String]) -> Result<()> {
-    let ["-Y", "sign", .., buffer] = args.iter().map(String::as_str).collect::<Vec<_>>()[..] else {
-        bail!(
-            "git asked mothership for more than a signature: {}",
-            args.join(" ")
-        );
-    };
-    let payload = fs::read(buffer).with_context(|| format!("reading {buffer}"))?;
-    show(&payload)?;
-    let mut sudo = Command::new("sudo")
-        .args([BINARY, "sign"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .context("running sudo")?;
-    sudo.stdin
-        .take()
-        .expect("piped above")
-        .write_all(&payload)?;
-    let out = sudo.wait_with_output()?;
-    if !out.status.success() {
-        bail!("sudo mothership sign failed");
-    }
-    fs::write(format!("{buffer}.sig"), out.stdout).with_context(|| format!("writing {buffer}.sig"))
-}
-
-fn show(payload: &[u8]) -> Result<()> {
-    let Ok(mut tty) = fs::OpenOptions::new().write(true).open("/dev/tty") else {
-        return Ok(());
-    };
-    let text = String::from_utf8_lossy(payload);
-    let header = |name: &str| {
-        text.lines()
-            .take_while(|line| !line.is_empty())
-            .find_map(|line| line.strip_prefix(name))
-            .map(str::to_owned)
-    };
-    let message = text.split_once("\n\n").map_or("", |(_, message)| message);
-    let mut shown = format!(
-        "Signing for the fleet:\n  {}\n",
-        message.trim().replace('\n', "\n  ")
-    );
-    if let (Some(tree), Some(parent)) = (header("tree "), header("parent ")) {
-        let args = ["diff-tree", "--stat", &parent, &tree];
-        let mut git = Command::new("git");
-        git.args(args);
-        let stat = cmd::output(git, "git", &args)?;
-        shown.push_str(&String::from_utf8_lossy(&stat));
-    }
-    tty.write_all(shown.as_bytes())
-        .context("writing to the terminal")
-}
-
-pub fn for_sudo() -> Result<()> {
-    let payload = file::read_limited(io::stdin(), "the payload")?;
-    if !payload.starts_with(b"tree ") {
-        bail!("mothership signs fleet commits only");
-    }
-    let signature = sign(&require_machine_key()?, &payload)?;
-    io::stdout().write_all(signature.as_bytes())?;
-    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq)]

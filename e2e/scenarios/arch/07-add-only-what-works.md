@@ -23,7 +23,7 @@ repos nor the AUR, so it goes into the packages apply checks but never installs.
 doesn't offer to add them.
 
 ```console
-$ printf 'a\na\np\np\np\nq\n' | sudo mothership review
+$ printf 'a\na\np\np\np\ny\n' | sudo mothership review
 [1/5] Packages
     + omega  installed  An app built on this machine
   a  add         add it to `packages` in system.toml

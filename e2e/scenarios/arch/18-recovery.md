@@ -6,9 +6,9 @@ makes the new one, encrypts every secret again and commits, signed with the old 
 ```console
 $ echo y | sudo mothership apply &>/dev/null
 $ sudo mothership key > /dev/null &&
-> sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" > /dev/null
+> yes | sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" > /dev/null
 $ echo "psk=WIFI-SECRET" | sudo install -m 600 /dev/stdin /etc/wifi.conf &&
-> printf 'a\ny\n' | sudo mothership review > /dev/null
+> printf 'a\ny\ny\n' | sudo mothership review > /dev/null
 $ printf '%s\nn\ny\n' "$(grep AGE-SECRET ~/recovery.txt)" | sudo mothership recovery > ~/out; cat ~/out | sed 's/AGE-SECRET-KEY-[A-Z0-9]*/<new key>/'
 The fleet's recovery key now: 
 The new recovery key:
@@ -17,7 +17,10 @@ The recovery key opens every secret, signs any change, and nothing else keeps it
   <new key>
 Re-encrypting for workstation/root:
   /etc/wifi.conf  workstation/root
-Go on [y/N]? y
+Change the recovery key:
+  M mothership.toml
+  M types/workstation/etc/wifi.conf.age
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Change the recovery key (re)
 The old recovery key opens what git history keeps, so change those secrets too.
 $ sudo mothership scan | grep -c refused

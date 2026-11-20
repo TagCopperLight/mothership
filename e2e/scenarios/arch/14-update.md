@@ -6,7 +6,7 @@ The fleet pins the mothership this machine already runs, so apply goes on as usu
 $ cd /var/lib/mothership/fleet && sha=$(sha256sum /usr/local/bin/mothership | cut -d' ' -f1) &&
 > { printf 'version = "0.1.0"\n\n[sha256]\nx86_64 = "%s"\n\n' "$sha"; cat mothership.toml; } > pinned &&
 > mv pinned mothership.toml &&
-> git add mothership.toml && git commit -S -qm "Pin mothership"
+> git add mothership.toml && echo y | sudo mothership commit "Pin mothership" >/dev/null
 $ echo n | sudo mothership apply | tail -1
 Apply [y/N]? n
 ```
@@ -16,7 +16,7 @@ no, since the fleet's changes may need that version.
 
 ```console
 $ cd /var/lib/mothership/fleet && sed -i 's/^x86_64 = .*/x86_64 = "0000"/; s/0.1.0/0.2.0/' mothership.toml &&
-> git commit -S -qam "Move to 0.2.0"
+> echo y | sudo mothership commit "Move to 0.2.0" >/dev/null
 $ echo n | sudo mothership apply
 The fleet runs mothership 0.2.0.
 Update [y/N]? n

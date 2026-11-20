@@ -16,13 +16,17 @@ Run this on a machine that signs for the fleet:
 $ sudo stat -c '%a %U' /etc/mothership/key.txt ~/.config/mothership/key.txt
 600 root
 600 me
-$ sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" \
+$ yes | sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" \
 > me="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
 laptop opens the 0 secrets of workstation/root now.
 laptop opens the 0 secrets of workstation/me now.
+Trust laptop as workstation:
+  A types/workstation/recipients.txt
+  A types/workstation/users/me/recipients.txt
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Trust laptop as workstation (re)
 On laptop, type this code: [0-9a-f]{12} (re)
-$ sudo mothership trust laptop workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
+$ yes | sudo mothership trust laptop workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
 Error: workstation has no user dev
 [exit 1]
 ```
@@ -50,7 +54,7 @@ Review adds the marked ones encrypted, and I answer **secret** for the token. Th
 secret in clear.
 
 ```console
-$ printf 'a\ns\ny\na\n' | sudo mothership review
+$ printf 'a\ns\ny\na\ny\n' | sudo mothership review
 [1/3] Files
     + /etc/wifi.conf  new  secret
       psk=WIFI-SECRET
@@ -76,6 +80,11 @@ $ printf 'a\ns\ny\na\n' | sudo mothership review
   i ignore · l later · p pass · q quit
   › a
 3 added
+Review on machine: 3 added:
+  A types/workstation/etc/wifi.conf.age
+  A types/workstation/users/me/home/dot_config/app/encrypted_private_token.age
+  A types/workstation/users/me/home/private_dot_ssh/encrypted_private_id_test.age
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 3 added (re)
 $ stat -c '%a' ~/.config/app/token
 600
@@ -99,7 +108,7 @@ so, and the scan shows the folder as an ordinary one from then on.
 ```console
 $ mkdir -p ~/.config/editor && echo "theme = dark" > ~/.config/editor/settings &&
 > chmod 600 ~/.config/editor/settings
-$ printf 'n\n' | sudo mothership review
+$ printf 'n\ny\n' | sudo mothership review
 [1/1] Files
     + ~/.config/editor  new  secret  1 file
       ── settings
@@ -109,6 +118,9 @@ $ printf 'n\n' | sudo mothership review
   i ignore · l later · p pass · q quit
   › n
 1 marked not secret, which the next review shows as ordinary files
+Review on machine: 1 marked not secret:
+  A types/workstation/users/me/not-secret.txt
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 marked not secret (re)
 $ cat /var/lib/mothership/fleet/types/workstation/users/me/not-secret.txt
 ~/.config/editor
@@ -128,8 +140,8 @@ change it.
 ```console
 $ echo "machine example.com login me" > ~/.netrc && chmod 600 ~/.netrc &&
 > cd /var/lib/mothership/fleet && cp ~/.netrc types/workstation/users/me/home/private_dot_netrc &&
-> git add -A && git commit -S -qm "Add .netrc" && sudo mothership scan >/dev/null
-$ printf 'a\n' | sudo mothership review
+> echo y | sudo mothership commit "Add .netrc" >/dev/null && sudo mothership scan >/dev/null
+$ printf 'a\ny\n' | sudo mothership review
 [1/1] Files
     ! ~/.netrc  secret in clear  git history keeps it: change it once encrypted
       machine example.com login me
@@ -139,6 +151,10 @@ $ printf 'a\n' | sudo mothership review
   › a
   git history keeps the version in clear, so change it.
 1 added
+Review on machine: 1 added:
+  A types/workstation/users/me/home/encrypted_private_dot_netrc.age
+  D types/workstation/users/me/home/private_dot_netrc
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 added (re)
 $ ls /var/lib/mothership/fleet/types/workstation/users/me/home | grep netrc
 encrypted_private_dot_netrc.age
@@ -162,7 +178,7 @@ Apply [y/N]? y
 $ sudo stat -c '%a %U' /etc/wifi.conf && sudo cat /etc/wifi.conf
 600 root
 psk=WIFI-SECRET
-$ printf 'r\n' | sudo mothership review
+$ printf 'r\ny\n' | sudo mothership review
 [1/1] Files
     ~ ~/.ssh/id_test  edited  secret
       @@ -1 +1 @@
@@ -183,7 +199,7 @@ is one.
 
 ```console
 $ echo "psk=OTHER" | sudo install -m 600 /dev/stdin /etc/wifi.conf
-$ printf 'r\n' | sudo mothership review
+$ printf 'r\ny\n' | sudo mothership review
 [1/1] Files
     ~ /etc/wifi.conf  edited  secret
       @@ -1 +1 @@
@@ -238,22 +254,29 @@ $ mv ~/.config/mothership/key.txt ~/desktop.txt && mv ~/laptop.txt ~/.config/mot
 $ cd /var/lib/mothership/fleet/types/workstation/users/me/home && mkdir .secrets &&
 > echo "PROXY-SECRET" | chezmoi encrypt > .secrets/proxy-key.age &&
 > echo '{{ include ".secrets/proxy-key.age" | decrypt | trim }}' > dot_proxy.tmpl &&
-> git add -A && git commit -S -qm "Read the proxy key"
+> echo y | sudo mothership commit "Read the proxy key" >/dev/null
 $ echo y | sudo mothership apply >/dev/null && cat ~/.proxy
 PROXY-SECRET
-$ printf 'y\ny\n' | sudo mothership trust desktop workstation root="$(sudo grep -o 'age1.*' /root/desktop.txt)" \
+$ yes | sudo mothership trust desktop workstation root="$(sudo grep -o 'age1.*' /root/desktop.txt)" \
 > me="$(grep -o 'age1.*' ~/desktop.txt)"
 Re-encrypting for workstation/root:
   /etc/wifi.conf  workstation/root
-Go on [y/N]? y
 desktop opens the 1 secrets of workstation/root now.
 Re-encrypting for workstation/me:
   .secrets/proxy-key.age  workstation/me
   ~/.config/app/token     workstation/me
   ~/.netrc                workstation/me
   ~/.ssh/id_test          workstation/me
-Go on [y/N]? y
 desktop opens the 4 secrets of workstation/me now.
+Trust desktop as workstation:
+  M types/workstation/etc/wifi.conf.age
+  M types/workstation/recipients.txt
+  M types/workstation/users/me/home/.secrets/proxy-key.age
+  M types/workstation/users/me/home/dot_config/app/encrypted_private_token.age
+  M types/workstation/users/me/home/encrypted_private_dot_netrc.age
+  M types/workstation/users/me/home/private_dot_ssh/encrypted_private_id_test.age
+  M types/workstation/users/me/recipients.txt
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Trust desktop as workstation (re)
 On desktop, type this code: [0-9a-f]{12} (re)
 $ sudo mv /etc/mothership/key.txt /root/laptop.txt && sudo mv /root/desktop.txt /etc/mothership/key.txt
@@ -261,10 +284,9 @@ $ mv ~/.config/mothership/key.txt ~/laptop.txt && mv ~/desktop.txt ~/.config/mot
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
 \d+ ignored (re)
-$ printf 'y\ny\n' | sudo mothership retire laptop
+$ yes | sudo mothership retire laptop
 Re-encrypting for workstation/root:
   /etc/wifi.conf  workstation/root
-Go on [y/N]? y
 laptop is gone from workstation/root.
 git history keeps the versions laptop opens, and that machine may keep copies, so change these:
   /etc/wifi.conf
@@ -273,13 +295,21 @@ Re-encrypting for workstation/me:
   ~/.config/app/token     workstation/me
   ~/.netrc                workstation/me
   ~/.ssh/id_test          workstation/me
-Go on [y/N]? y
 laptop is gone from workstation/me.
 git history keeps the versions laptop opens, and that machine may keep copies, so change these:
   .secrets/proxy-key.age
   ~/.config/app/token
   ~/.netrc
   ~/.ssh/id_test
+Retire laptop:
+  M types/workstation/etc/wifi.conf.age
+  M types/workstation/recipients.txt
+  M types/workstation/users/me/home/.secrets/proxy-key.age
+  M types/workstation/users/me/home/dot_config/app/encrypted_private_token.age
+  M types/workstation/users/me/home/encrypted_private_dot_netrc.age
+  M types/workstation/users/me/home/private_dot_ssh/encrypted_private_id_test.age
+  M types/workstation/users/me/recipients.txt
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Retire laptop (re)
 $ sed 's/age1[a-z0-9]*/<key>/' /var/lib/mothership/fleet/types/workstation/users/me/recipients.txt
 # desktop

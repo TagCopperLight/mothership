@@ -18,13 +18,14 @@ All of them run with `sudo`.
 | `apply` | Brings the fleet's changes since the last apply, after showing the plan. It never undoes a change made on the machine. |
 | `scan` | Lists what differs: what changed on the machine, and what's coming from the fleet. |
 | `review` | Goes through the machine's changes one by one: **add** it to the fleet, **revert** it, **ignore** it, or decide **later**. It then commits and pushes the answers, signed. |
+| `commit <message>` | Signs and pushes your own edits in the fleet's folder. |
 | `key` | Creates the machine's keys and prints them. |
 | `recovery` | Gives a new fleet its recovery key, which opens every secret, or replaces it and encrypts every secret again. |
 | `trust <host> <type> <name>=<key>...` | Lets a new machine's keys open their lists' secrets and sign for the fleet, and prints the code to type on it. |
 | `retire <host>` | Removes a machine's keys, and prints the secrets you should change. |
 | `install` | Sets up a new machine from the fleet. |
 
-A machine applies only commits signed by a key `signers.txt` lists, or by the recovery key, and only what is committed. Sign your own commits in the fleet with `git commit -S`: mothership signs them through `sudo`.
+A machine applies only commits signed by a key `signers.txt` lists, or by the recovery key, and only what is committed. Every command that changes the fleet shows the commit and asks before it signs and pushes.
 
 Secrets are encrypted with [age](https://age-encryption.org). Root and each user have their own key, and their own list of keys allowed to open their secrets. Every secret also opens with the fleet's recovery key, which you keep on paper. Review treats a file other users can't read as a secret, and adds it encrypted.
 

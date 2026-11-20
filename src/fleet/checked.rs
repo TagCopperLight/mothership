@@ -2,8 +2,8 @@ use super::{DIR, MANIFEST, Manifest};
 use crate::{
     cmd::{self, As},
     file,
+    prompt::Prompt,
     sign::{self, Commit, SIGNERS, Signer},
-    update::BINARY,
     user::User,
 };
 use anyhow::{Context, Result, bail};
@@ -11,7 +11,6 @@ use ssh_key::PrivateKey;
 use std::{
     ffi::OsStr,
     fs,
-    io::Write,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
@@ -54,27 +53,8 @@ impl Git {
     }
 
     fn with_input(&self, args: &[&str], input: &str) -> Result<String> {
-        let mut child = self
-            .command(args)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .context("running git")?;
-        child
-            .stdin
-            .take()
-            .expect("piped above")
-            .write_all(input.as_bytes())?;
-        let out = child.wait_with_output()?;
-        if !out.status.success() {
-            bail!(
-                "git {} failed: {}",
-                args.join(" "),
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
-        Ok(String::from_utf8(out.stdout)?.trim_end().to_owned())
+        let out = cmd::output_with_input(self.command(args), "git", args, input.as_bytes())?;
+        Ok(String::from_utf8(out)?.trim_end().to_owned())
     }
 
     fn succeeds(&self, args: &[&str]) -> Result<bool> {
@@ -280,7 +260,6 @@ fn fetch(git: &Git, admin: &User, remote: Remote) -> Result<(String, String)> {
         cmd::root("git", &["init", "--quiet", "--bare", GIT_DIR])?;
         git.out(&["config", "fetch.fsckObjects", "true"])?;
     }
-    sign_through_mothership(admin)?;
     if let Remote::Fetch = remote
         && let Err(e) = in_checkout(admin, &["fetch", "--quiet", "origin"])
     {
@@ -312,25 +291,6 @@ fn fetch(git: &Git, admin: &User, remote: Remote) -> Result<(String, String)> {
         None => main.clone(),
     };
     Ok((main, tip))
-}
-
-fn sign_through_mothership(admin: &User) -> Result<()> {
-    let Some(key) = sign::machine_key()? else {
-        return Ok(());
-    };
-    let wanted = [
-        ("gpg.format", "ssh".to_owned()),
-        ("gpg.ssh.program", BINARY.to_owned()),
-        ("user.signingkey", format!("key::{}", sign::public(&key)?)),
-    ];
-    let config = |args: &[&str]| in_checkout(admin, &[&["config", "--local"][..], args].concat());
-    let listed = config(&["--list"])?;
-    for (name, value) in wanted {
-        if !listed.lines().any(|line| line == format!("{name}={value}")) {
-            config(&[name, &value])?;
-        }
-    }
-    Ok(())
 }
 
 pub fn newest(admin: &User, count: usize) -> Result<Vec<String>> {
@@ -421,8 +381,64 @@ pub fn stage() -> Result<Stage> {
     Ok(Stage { dir, base })
 }
 
+pub enum Outcome {
+    Unchanged,
+    Declined,
+    Pushed(String),
+}
+
+#[derive(Clone, Copy)]
+pub enum Advance {
+    Merge,
+    KeepEdits,
+}
+
+pub struct Prepared {
+    base: String,
+    commit: String,
+    message: String,
+}
+
 impl Stage {
-    pub fn commit(self, admin: &User, message: &str, key: &PrivateKey) -> Result<Option<String>> {
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+
+    pub fn take_checkout(&self, admin: &User) -> Result<()> {
+        let git = |args: &[&str]| in_checkout(admin, args);
+        if git(&["branch", "--show-current"])?.trim() != "main" {
+            bail!("{DIR} isn't on main: switch to it first");
+        }
+        if git(&["rev-parse", "HEAD"])?.trim() != self.base {
+            bail!(
+                "main in {DIR} isn't at {}, the commit this machine checked",
+                short(&self.base)
+            );
+        }
+        let index = tempfile::TempDir::new()?;
+        admin.own(index.path())?;
+        let index = format!("GIT_INDEX_FILE={}", index.path().join("index").display());
+        let indexed = |args: &[&str]| {
+            let args = [&[index.as_str(), "git", "-C", DIR][..], args].concat();
+            cmd::bytes(As::User(admin), "env", &args)
+        };
+        indexed(&["read-tree", "HEAD"])?;
+        indexed(&["add", "--all"])?;
+        let patch = indexed(&["diff", "--cached", "--binary", "HEAD"])?;
+        if patch.is_empty() {
+            return Ok(());
+        }
+        let mut apply = Git::at(GIT_DIR).command(&["apply", "--whitespace=nowarn", "-"]);
+        apply.current_dir(&self.dir).env("GIT_WORK_TREE", &self.dir);
+        cmd::output_with_input(apply, "git", &["apply"], &patch).map(drop)
+    }
+
+    pub fn prepare(
+        self,
+        admin: &User,
+        message: &str,
+        key: &PrivateKey,
+    ) -> Result<Option<Prepared>> {
         let git = Git::at(GIT_DIR);
         let index = tempfile::TempDir::new()?;
         let staged = |args: &[&str]| -> Result<String> {
@@ -470,7 +486,56 @@ impl Stage {
         if let Err(why) = verify(&git, &self.base, &commit) {
             bail!("the fleet's machines would refuse this commit, so nothing changed: {why:#}");
         }
-        git.out(&["update-ref", STAGED, &commit])?;
+        Ok(Some(Prepared {
+            base: self.base,
+            commit,
+            message: message.to_owned(),
+        }))
+    }
+
+    pub fn commit(
+        self,
+        admin: &User,
+        message: &str,
+        key: &PrivateKey,
+        prompt: &mut Prompt,
+        advance: Advance,
+    ) -> Result<Outcome> {
+        let Some(prepared) = self.prepare(admin, message, key)? else {
+            return Ok(Outcome::Unchanged);
+        };
+        prepared.show()?;
+        if !prompt.confirm("Commit and push")? {
+            println!("Nothing changed.");
+            return Ok(Outcome::Declined);
+        }
+        prepared.publish(admin, advance).map(Outcome::Pushed)
+    }
+}
+
+impl Prepared {
+    pub fn show(&self) -> Result<()> {
+        let git = Git::at(GIT_DIR);
+        let args = [
+            "-c",
+            "core.quotePath=false",
+            "diff-tree",
+            "-r",
+            "--name-status",
+            &self.base,
+            &self.commit,
+        ];
+        let files = cmd::output(git.command(&args), "git", &args)?;
+        println!("{}:", self.message);
+        for line in String::from_utf8_lossy(&files).lines() {
+            println!("  {}", line.replacen('\t', " ", 1));
+        }
+        Ok(())
+    }
+
+    pub fn publish(self, admin: &User, advance: Advance) -> Result<String> {
+        let git = Git::at(GIT_DIR);
+        git.out(&["update-ref", STAGED, &self.commit])?;
         let bundle = tempfile::Builder::new().suffix(".bundle").tempfile()?;
         let path = bundle.path().to_string_lossy().into_owned();
         git.out(&[
@@ -482,8 +547,8 @@ impl Stage {
             &format!("^{}", self.base),
         ])?;
         fs::set_permissions(bundle.path(), fs::Permissions::from_mode(0o644))?;
-        publish(admin, &self.base, &commit, bundle.path())?;
-        println!("Committed {} {message}", short(&commit));
+        publish(admin, &self.base, &self.commit, bundle.path(), advance)?;
+        println!("Committed {} {}", short(&self.commit), self.message);
         if let Some(refused) = sync(admin, Remote::Skip)?.refused {
             println!(
                 "This machine refuses {}: {}",
@@ -491,18 +556,21 @@ impl Stage {
                 refused.why
             );
         }
-        Ok(Some(commit))
+        Ok(self.commit)
     }
 }
 
-fn publish(admin: &User, base: &str, commit: &str, bundle: &Path) -> Result<()> {
+fn publish(admin: &User, base: &str, commit: &str, bundle: &Path, advance: Advance) -> Result<()> {
     let git = |args: &[&str]| in_checkout(admin, args);
     let main = git(&["rev-parse", "--verify", "main"])?;
     if main.trim() != base {
         bail!("main moved in {DIR} while mothership worked: run it again");
     }
     git(&["fetch", "--quiet", &bundle.to_string_lossy(), STAGED])?;
-    advance_main(admin, base, commit)?;
+    match advance {
+        Advance::Merge => advance_main(admin, base, commit)?,
+        Advance::KeepEdits => git(&["reset", "--quiet", commit]).map(drop)?,
+    }
     if let Err(e) = git(&["push", "--quiet", "origin", "main"]) {
         println!("Couldn't push the fleet, so push it yourself: {e:#}");
     }

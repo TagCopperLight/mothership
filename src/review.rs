@@ -1,6 +1,9 @@
 use crate::{
     edit::{self, Add},
-    fleet::{Fleet, checked},
+    fleet::{
+        Fleet,
+        checked::{self, Advance},
+    },
     host,
     item::{Adding, Item, Secret, Section},
     later::{self, DAY, Later},
@@ -17,15 +20,17 @@ use anyhow::{Error, Result};
 pub fn run() -> Result<()> {
     let stage = checked::stage()?;
     let report = scan::collect(&stage.dir)?;
-    let result = ask(&report);
+    let mut prompt = Prompt::new();
+    let result = ask(&report, &mut prompt);
     let message = match &result {
         Ok(tally) if !tally.parts().is_empty() => {
             format!("Review on {}: {}", host::name()?, tally.parts().join(", "))
         }
         _ => format!("Review on {}", host::name()?),
     };
+    let admin = report.fleet.admin();
     let committed = sign::require_machine_key()
-        .and_then(|key| stage.commit(report.fleet.admin(), &message, &key));
+        .and_then(|key| stage.commit(admin, &message, &key, &mut prompt, Advance::Merge));
     result?;
     committed.map(drop)
 }
@@ -120,7 +125,7 @@ impl Answer<'_> {
     }
 }
 
-fn ask(report: &scan::Report) -> Result<Tally> {
+fn ask(report: &scan::Report, prompt: &mut Prompt) -> Result<Tally> {
     let fleet = &report.fleet;
     let style = Style::stdout();
     let mut later = Later::load()?;
@@ -141,7 +146,6 @@ fn ask(report: &scan::Report) -> Result<Tally> {
         .filter(|item| later.due(fleet, item, now))
         .collect();
 
-    let mut prompt = Prompt::new();
     let mut tally = Tally::default();
     let mut last: Option<String> = None;
     let mut seen = 0;
@@ -213,12 +217,12 @@ fn ask(report: &scan::Report) -> Result<Tally> {
             let outcome = match answer {
                 Answer::Quit => break 'items,
                 Answer::Add(add) | Answer::Secret(add) => add
-                    .apply(fleet, member, &mut prompt, &item.seen)
+                    .apply(fleet, member, prompt, &item.seen)
                     .map(|added| added.then_some("added to the fleet")),
                 Answer::NotSecret => edit::not_secret(fleet, member, &item.subject)
                     .map(|()| Some("marked not secret")),
                 Answer::Revert(revert) => {
-                    revert_one(fleet, &mut record, (item.member, revert), &mut prompt)
+                    revert_one(fleet, &mut record, (item.member, revert), prompt)
                         .map(|reverted| reverted.then_some("reverted"))
                 }
                 Answer::Ignore => {

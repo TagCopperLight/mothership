@@ -26,7 +26,7 @@ $ cd /var/lib/mothership/fleet &&
 > printf 'new = yes\n' > types/workstation/etc/new.conf &&
 > sed -i 's|^groups = .*|groups = ["wheel", "video"]|' types/workstation/users/me/user.toml &&
 > printf '# from the fleet\n' >> types/workstation/users/me/home/dot_bashrc &&
-> git add -A && git commit -S -qm "Change the workstation"
+> echo y | sudo mothership commit "Change the workstation" >/dev/null
 ```
 
 Scan puts what I changed, which review sorts, apart from what the fleet changed, which apply
@@ -59,7 +59,6 @@ Coming from the fleet · 5
 
 7 to review     sudo mothership review
 5 to apply      sudo mothership apply
-The fleet has 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 ```
 
@@ -67,7 +66,7 @@ Review asks only about my changes. I put `beta` off and agree to the deletion, w
 file out of the fleet.
 
 ```console
-$ printf 'l\np\np\np\np\na\nq\n' | sudo mothership review
+$ printf 'l\np\np\np\np\na\nq\ny\n' | sudo mothership review
 ...
 [6/7] Files
     - ~/.bash_profile  deleted
@@ -83,6 +82,9 @@ $ printf 'l\np\np\np\np\na\nq\n' | sudo mothership review
 1 added, 1 put off for later, 4 passed
 1 not seen yet, for next time
 5 coming from the fleet, for sudo mothership apply
+Review on machine: 1 added:
+  D types/workstation/users/me/home/dot_bash_profile
+Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 added (re)
 $ git -C /var/lib/mothership/fleet show --name-status --format= HEAD
 D	types/workstation/users/me/home/dot_bash_profile
