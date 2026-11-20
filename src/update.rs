@@ -4,17 +4,28 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use std::{env, fs, os::unix::process::CommandExt, path::Path, process::Command};
+use std::{
+    collections::BTreeMap, env, fs, os::unix::process::CommandExt, path::Path, process::Command,
+};
 
 pub const BINARY: &str = "/usr/local/bin/mothership";
 const PIN: &str = "mothership.toml";
 const RELEASES: &str = "https://github.com/TagCopperLight/mothership/releases/download";
-const ASSET: &str = "mothership-x86_64";
 
 #[derive(Deserialize)]
 struct Pin {
     version: String,
-    sha256: String,
+    sha256: BTreeMap<String, String>,
+}
+
+impl Pin {
+    fn sha256(&self) -> Result<&str> {
+        let arch = env::consts::ARCH;
+        self.sha256
+            .get(arch)
+            .map(String::as_str)
+            .with_context(|| format!("the fleet's {PIN} names no mothership binary for {arch}"))
+    }
 }
 
 pub enum Outcome {
@@ -28,7 +39,8 @@ pub fn follow_fleet(approve: &mut dyn FnMut() -> Result<bool>) -> Result<Outcome
     };
     let installed =
         hash::sha256_file(Path::new(BINARY)).with_context(|| format!("reading {BINARY}"))?;
-    if installed.as_deref() == Some(pin.sha256.as_str()) {
+    let wanted = pin.sha256()?;
+    if installed.as_deref() == Some(wanted) {
         return Ok(Outcome::Current);
     }
     println!("The fleet runs mothership {}.", pin.version);
@@ -36,7 +48,7 @@ pub fn follow_fleet(approve: &mut dyn FnMut() -> Result<bool>) -> Result<Outcome
         return Ok(Outcome::Declined);
     }
     let restart = running_installed()?;
-    file::write(Path::new(BINARY), &download(&pin)?, 0o755)?;
+    file::write(Path::new(BINARY), &download(&pin.version, wanted)?, 0o755)?;
     if restart {
         let error = Command::new(BINARY).args(env::args_os().skip(1)).exec();
         return Err(error).with_context(|| format!("starting {BINARY}"));
@@ -51,13 +63,10 @@ fn pin(fleet: &Path) -> Result<Option<Pin>> {
         .transpose()
 }
 
-fn download(pin: &Pin) -> Result<Vec<u8>> {
-    if env::consts::ARCH != "x86_64" {
-        bail!("mothership's releases hold only an x86_64 binary");
-    }
-    let url = format!("{RELEASES}/v{}/{ASSET}", pin.version);
+fn download(version: &str, sha256: &str) -> Result<Vec<u8>> {
+    let url = format!("{RELEASES}/v{version}/mothership-{}", env::consts::ARCH);
     let bytes = cmd::bytes(As::Root, "curl", &["-fsSL", &url])?;
-    if hash::sha256(&bytes) != pin.sha256 {
+    if hash::sha256(&bytes) != sha256 {
         bail!("{url} isn't the binary {PIN} names");
     }
     Ok(bytes)

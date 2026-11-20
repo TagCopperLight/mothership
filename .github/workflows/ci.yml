@@ -20,3 +20,8 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: ./ci.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mothership-x86_64
+          path: target/musl/release/mothership
+          if-no-files-found: error

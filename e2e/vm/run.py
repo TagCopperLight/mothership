@@ -22,7 +22,9 @@ from pathlib import Path
 import pexpect
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent.parent
+sys.path.insert(0, str(HERE.parent))
+import binary
+
 CACHE = Path.home() / ".cache/mothership-vm"
 ISO = CACHE / "archlinux-x86_64.iso"
 OVMF = Path("/usr/share/edk2/x64")
@@ -33,7 +35,7 @@ PASSWORD = "tester-password"
 HOST = "10.0.2.2"
 INSTALL_TIMEOUT = 3600
 NO_PASSWORD = "/etc/sudoers.d/zz-mothership-install"
-TOOLS = ["qemu-system-x86_64", "qemu-img", "swtpm", "bsdtar", "cargo"]
+TOOLS = ["qemu-system-x86_64", "qemu-img", "swtpm", "bsdtar", "docker"]
 
 
 def main() -> int:
@@ -45,7 +47,7 @@ def main() -> int:
         sys.exit(f"the VM test needs edk2-ovmf, for {OVMF}")
     if not ISO.exists():
         sys.exit(f"{ISO} is missing")
-    subprocess.run(["cargo", "build", "--release", "--locked", "--quiet"], cwd=ROOT, check=True)
+    binary.build()
     with tempfile.TemporaryDirectory(prefix="mothership-vm-") as tmp:
         tmp = Path(tmp)
         port = serve(site(tmp / "site"))
@@ -74,7 +76,7 @@ def site(dir: Path) -> Path:
     subprocess.run([*git, "commit", "-qm", "The fleet"], cwd=work, check=True)
     subprocess.run(["git", "clone", "-q", "--bare", str(work), str(dir / "fleet.git")], check=True)
     subprocess.run(["tar", "--owner=0", "--group=0", "-cf", str(dir / "fleet.tar"), "-C", str(dir), "fleet.git"], check=True)
-    shutil.copy(ROOT / "target/release/mothership", dir / "mothership")
+    shutil.copy(binary.BINARY, dir / "mothership")
     PACKAGES.mkdir(exist_ok=True)
     for repo in ["core", "extra"]:
         packages = dir / repo / "os/x86_64"

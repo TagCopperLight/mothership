@@ -4,20 +4,16 @@
 
 
 import difflib
-import os
 import re
 import subprocess
 import sys
 from functools import cache
 from pathlib import Path
 
+import binary
+
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
 EXIT = re.compile(r"\[exit (\d+)\]")
-BINARIES = {
-    "arch": ROOT / "target/debug/mothership",
-    "debian": ROOT / "target/debian/debug/mothership",
-}
 
 
 def main() -> int:
@@ -25,8 +21,8 @@ def main() -> int:
     scenarios = sorted(HERE.glob("scenarios/*/*.md"))
     if wanted:
         scenarios = [s for s in scenarios if s.stem in wanted]
-    systems = sorted({system(s) for s in scenarios})
-    for name in systems:
+    binary.build()
+    for name in sorted({system(s) for s in scenarios}):
         build(name)
     failed = [f"{system(s)}/{s.stem}" for s in scenarios if not run(s)]
     print(f"\n{len(scenarios) - len(failed)} of {len(scenarios)} scenarios pass")
@@ -44,17 +40,6 @@ def image(system: str) -> str:
 
 
 def build(system: str) -> None:
-    if system == "debian":
-        cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
-        subprocess.run(
-            ["docker", "run", "--rm", "--network", "host", "-u", f"{os.getuid()}:{os.getgid()}",
-             "-e", "CARGO_HOME=/cargo", "-v", f"{cargo_home}:/cargo", "-v", f"{ROOT}:/src",
-             "-w", "/src", "rust:1-bookworm",
-             "cargo", "build", "--locked", "--quiet", "--target-dir", "target/debian"],
-            check=True,
-        )
-    else:
-        subprocess.run(["cargo", "build", "--locked", "--quiet"], cwd=ROOT, check=True)
     subprocess.run(["docker", "build", "--quiet", "--network", "host", "-t", image(system),
                     "-f", str(HERE / f"{system}.Dockerfile"), str(HERE)],
                    check=True, stdout=subprocess.DEVNULL)
@@ -85,7 +70,7 @@ def run(path: Path) -> bool:
         ["docker", "run", "-d", "--rm", "--network", "none", "--cap-add", "SYS_ADMIN",
          "--security-opt", "apparmor=unconfined",
          "--hostname", "machine", "--add-host", "machine:127.0.0.1",
-         "-v", f"{BINARIES[name]}:/usr/local/bin/mothership:ro", image(name), "sleep", "infinity"],
+         "-v", f"{binary.BINARY}:/usr/local/bin/mothership:ro", image(name), "sleep", "infinity"],
         check=True, capture_output=True, text=True,
     ).stdout.strip()
     try:
