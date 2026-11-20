@@ -9,6 +9,7 @@ $ echo y | sudo mothership apply &>/dev/null
 $ sudo mothership key | sed 's/age1[a-z0-9]*/<key>/g'
 root     <key>
 me       <key>
+me       ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPznprSpdY8b3HM0Sy/iwuhzpCwaaMA8rvhDULqPQV9P
 signing  ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBiaU3yvKl1XfZP1NPwoqvUpk/NKEmD0N2A069AmOCrB
 Run this on a machine that signs for the fleet:
   sudo mothership trust machine workstation root=<key> me=<key>
@@ -30,7 +31,7 @@ I add an SSH key, a Wi-Fi password only root can read, and a token anyone can re
 marks what only its owner can read, and misses the token.
 
 ```console
-$ mkdir -p ~/.ssh ~/.config/app &&
+$ mkdir -p ~/.config/app &&
 > echo "SSH-SECRET" > ~/.ssh/id_test && chmod 600 ~/.ssh/id_test &&
 > echo "TOKEN-SECRET" > ~/.config/app/token
 $ echo "psk=WIFI-SECRET" | sudo install -m 600 /dev/stdin /etc/wifi.conf
@@ -39,7 +40,7 @@ Changed on this machine · 3
   Files
     + /etc/wifi.conf  new  secret
     + ~/.config/app   new  1 file
-    + ~/.ssh          new  secret  1 file
+    + ~/.ssh/id_test  new  secret
 
 3 to review     sudo mothership review
 \d+ ignored (re)
@@ -49,7 +50,7 @@ Review adds the marked ones encrypted, and I answer **secret** for the token. Th
 secret in clear.
 
 ```console
-$ printf 'a\ns\ny\na\ny\n' | sudo mothership review
+$ printf 'a\ns\ny\na\n' | sudo mothership review
 [1/3] Files
     + /etc/wifi.conf  new  secret
       psk=WIFI-SECRET
@@ -68,25 +69,23 @@ $ printf 'a\ns\ny\na\ny\n' | sudo mothership review
   › s
   That adds 1 file. Go on [y/N]? y
 [3/3] Files
-    + ~/.ssh  new  secret  1 file
-      ── id_test
+    + ~/.ssh/id_test  new  secret
       SSH-SECRET
   a  add         add it to chezmoi, encrypted
   n  not secret  list it in not-secret.txt, and add it later in clear
   i ignore · l later · p pass · q quit
   › a
-  That adds 1 file. Go on [y/N]? y
 3 added
 Committed [0-9a-f]{12} Review on machine: 3 added (re)
 $ stat -c '%a' ~/.config/app/token
 600
-$ cd /var/lib/mothership/fleet && find types/workstation/users/me/home/dot_ssh types/workstation/users/me/home/dot_config types/workstation/etc/wifi.conf.age | sort
+$ cd /var/lib/mothership/fleet && find types/workstation/users/me/home/private_dot_ssh types/workstation/users/me/home/dot_config types/workstation/etc/wifi.conf.age | sort
 types/workstation/etc/wifi.conf.age
 types/workstation/users/me/home/dot_config
 types/workstation/users/me/home/dot_config/app
 types/workstation/users/me/home/dot_config/app/encrypted_private_token.age
-types/workstation/users/me/home/dot_ssh
-types/workstation/users/me/home/dot_ssh/encrypted_private_id_test.age
+types/workstation/users/me/home/private_dot_ssh
+types/workstation/users/me/home/private_dot_ssh/encrypted_private_id_test.age
 $ grep -r SECRET /var/lib/mothership/fleet
 [exit 1]
 $ grep -c wifi /var/lib/mothership/fleet/types/workstation/system.toml

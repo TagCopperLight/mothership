@@ -3,16 +3,20 @@ use crate::{
     host,
     item::{Change, Item, Section},
     kind::Kind,
-    trust,
+    trust::{self, Sort},
 };
 use anyhow::Result;
 
 pub fn untrusted(fleet: &Fleet) -> Result<Vec<Item>> {
-    let mut locked = false;
+    let mut needed = false;
     for key in trust::machine_keys(fleet)? {
-        locked |= !key.trusted && trust::guards_secrets(fleet, &key.target)?;
+        needed |= !key.trusted
+            && match key.sort {
+                Sort::Age => trust::guards_secrets(fleet, &key.target)?,
+                Sort::Ssh | Sort::Signing => true,
+            };
     }
-    if !locked && trust::unlisted_signing(fleet)?.is_none() {
+    if !needed {
         return Ok(Vec::new());
     }
     let hostname = host::name()?;

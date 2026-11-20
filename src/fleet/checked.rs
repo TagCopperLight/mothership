@@ -507,6 +507,12 @@ fn in_checkout(admin: &User, args: &[&str]) -> Result<String> {
     cmd::stdout(As::User(admin), "git", &[&["-C", DIR][..], args].concat())
 }
 
+pub fn origin(admin: &User) -> Result<String> {
+    Ok(in_checkout(admin, &["remote", "get-url", "origin"])?
+        .trim()
+        .to_owned())
+}
+
 fn advance_main(admin: &User, from: &str, to: &str) -> Result<()> {
     let git = |args: &[&str]| in_checkout(admin, args);
     match git(&["branch", "--show-current"])?.trim() {

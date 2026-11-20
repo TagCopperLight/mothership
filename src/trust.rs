@@ -4,13 +4,13 @@ use crate::{
         self, Fleet, Repo,
         homes::{self, Home},
     },
-    host,
+    github, host,
     prompt::Prompt,
     secrets::{
         AGE, Keys, RECIPIENTS, ROOT_KEY, Recipient, Storage, encrypt_for, format, holds, key_path,
         make_key, public, read, root_key, user_key,
     },
-    sign, style,
+    sign, ssh, style,
     user::User,
     walk,
 };
@@ -22,21 +22,27 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Sort {
+    Age,
+    Ssh,
+    Signing,
+}
+
 pub struct MachineKey {
     pub name: String,
+    pub sort: Sort,
     pub public: String,
     pub target: String,
     pub trusted: bool,
 }
 
+pub const SIGNING: &str = "signing";
+
 fn owners(fleet: &Fleet) -> Vec<(String, Option<&User>, PathBuf)> {
-    let mut owners = vec![("root".to_owned(), None, fleet.recipients())];
+    let mut owners = vec![("root".to_owned(), None, fleet.type_dir.clone())];
     for member in &fleet.members {
-        owners.push((
-            member.name.clone(),
-            Some(member.user()),
-            member.recipients(),
-        ));
+        owners.push((member.name.clone(), Some(member.user()), member.dir.clone()));
     }
     owners
 }
@@ -48,10 +54,15 @@ pub fn create_keys(fleet: &Fleet) -> Result<()> {
     for (_, user, _) in owners(fleet) {
         match user {
             None if root_key()?.is_none() => drop(make_key(Path::new(ROOT_KEY))?),
-            Some(user) if user_key(user)?.is_none() => {
-                user.with_rights(|| make_key(&key_path(user)))?;
+            None => {}
+            Some(user) => {
+                if user_key(user)?.is_none() {
+                    user.with_rights(|| make_key(&key_path(user)))?;
+                }
+                if ssh::user_key(user)?.is_none() {
+                    ssh::create_key(user)?;
+                }
             }
-            _ => {}
         }
     }
     Ok(())
@@ -59,20 +70,44 @@ pub fn create_keys(fleet: &Fleet) -> Result<()> {
 
 pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
     let mut keys = Vec::new();
-    for (name, user, list) in owners(fleet) {
-        let key = match user {
+    for (name, user, dir) in owners(fleet) {
+        let target = format!("{}/{name}", fleet.type_name);
+        let age = match user {
             None => root_key()?,
             Some(user) => user_key(user)?,
         };
-        let Some(key) = key else {
-            continue;
-        };
-        let public = public(&key);
+        if let Some(key) = age {
+            let public = public(&key);
+            keys.push(MachineKey {
+                name: name.clone(),
+                sort: Sort::Age,
+                trusted: holds(&dir.join(RECIPIENTS), &public)?,
+                public,
+                target: target.clone(),
+            });
+        }
+        if let Some(user) = user
+            && let Some(public) = ssh::user_key(user)?
+        {
+            keys.push(MachineKey {
+                name,
+                sort: Sort::Ssh,
+                trusted: holds(&dir.join(ssh::KEYS), &public)?,
+                public,
+                target,
+            });
+        }
+    }
+    if let Some(key) = sign::machine_key()? {
+        let text = file::read_if_any(&fleet.dir.join(sign::SIGNERS))?.unwrap_or_default();
         keys.push(MachineKey {
-            target: format!("{}/{name}", fleet.type_name),
-            trusted: holds(&list, &public)?,
-            name,
-            public,
+            name: SIGNING.to_owned(),
+            sort: Sort::Signing,
+            trusted: sign::parse_signers(&text)?
+                .iter()
+                .any(|signer| &signer.key == key.public_key()),
+            public: sign::public(&key)?,
+            target: sign::SIGNERS.to_owned(),
         });
     }
     Ok(keys)
@@ -83,8 +118,6 @@ pub fn key(fleet: &Fleet) -> Result<()> {
     for key in &machine_keys(fleet)? {
         println!("{:7}  {}", key.name, key.public);
     }
-    let signing = sign::machine_key()?.context("create_keys made it")?;
-    println!("{:7}  {}", SIGNING, sign::public(&signing)?);
     if let Some(command) = trust_command(fleet, &host::name()?)? {
         println!("Run this on a machine that signs for the fleet:");
         println!("  {command}");
@@ -92,18 +125,12 @@ pub fn key(fleet: &Fleet) -> Result<()> {
     Ok(())
 }
 
-pub const SIGNING: &str = "signing";
-
 pub fn pending(fleet: &Fleet) -> Result<Vec<String>> {
-    let mut entries: Vec<String> = machine_keys(fleet)?
+    Ok(machine_keys(fleet)?
         .into_iter()
         .filter(|key| !key.trusted)
         .map(|key| format!("{}={}", key.name, key.public))
-        .collect();
-    if let Some(public) = unlisted_signing(fleet)? {
-        entries.push(format!("{SIGNING}={public}"));
-    }
-    Ok(entries)
+        .collect())
 }
 
 pub fn trust_command(fleet: &Fleet, hostname: &str) -> Result<Option<String>> {
@@ -124,20 +151,6 @@ pub fn trust_command(fleet: &Fleet, hostname: &str) -> Result<Option<String>> {
     }))
 }
 
-pub fn unlisted_signing(fleet: &Fleet) -> Result<Option<String>> {
-    let Some(key) = sign::machine_key()? else {
-        return Ok(None);
-    };
-    let text = file::read_if_any(&fleet.dir.join(sign::SIGNERS))?.unwrap_or_default();
-    let listed = sign::parse_signers(&text)?;
-    Ok(
-        match listed.iter().any(|signer| &signer.key == key.public_key()) {
-            true => None,
-            false => Some(sign::public(&key)?),
-        },
-    )
-}
-
 pub fn trust_host(
     fleet: &Fleet,
     keys: &Keys,
@@ -145,21 +158,68 @@ pub fn trust_host(
     type_name: &str,
     entries: &[String],
     prompt: &mut Prompt,
-) -> Result<()> {
+) -> Result<Vec<github::Key>> {
+    let mut uploads = Vec::new();
     for entry in entries {
         let (name, key) = entry
             .split_once('=')
             .with_context(|| format!("{entry} isn't <name>=<key>"))?;
-        if name == SIGNING {
-            add_signer(fleet, host, type_name, key, prompt)?;
-            continue;
-        }
         let text = format!("{type_name}/{name}");
-        if !holds(&target(fleet, &text)?.list, key)? {
+        if name == SIGNING {
+            let public = add_signer(fleet, host, type_name, key, prompt)?;
+            uploads.push(github::Key {
+                title: host.to_owned(),
+                public,
+                kind: github::Use::Signing,
+            });
+        } else if key.starts_with("ssh-") {
+            let public = add_ssh_key(fleet, &text, host, key)?;
+            uploads.push(github::Key {
+                title: github::title(host, name),
+                public,
+                kind: github::Use::Login,
+            });
+        } else if !holds(&target(fleet, &text)?.list, key)? {
             trust_with(fleet, keys, &text, host, key, prompt)?;
         }
     }
-    Ok(())
+    Ok(uploads)
+}
+
+fn listed_as(list: &[Recipient], path: &Path, host: &str, key: &str) -> Result<bool> {
+    let same = |known: &Recipient| {
+        known
+            .key
+            .split_whitespace()
+            .take(2)
+            .eq(key.split_whitespace())
+    };
+    match list.iter().find(|entry| entry.name == host) {
+        Some(known) if same(known) => Ok(true),
+        Some(_) => bail!(
+            "{} already lists another key for {host}: retire it first",
+            path.display()
+        ),
+        None => Ok(false),
+    }
+}
+
+fn add_ssh_key(fleet: &Fleet, text: &str, host: &str, key: &str) -> Result<String> {
+    let Scope::User(home) = target(fleet, text)?.scope else {
+        bail!("root has no SSH key in the fleet, only its users do");
+    };
+    let public = ssh::normalize(key)?;
+    let path = home.dir(&fleet.dir).join(ssh::KEYS);
+    let mut list = read(&path)?;
+    if !listed_as(&list, &path, host, &public)? {
+        list.push(Recipient {
+            name: host.to_owned(),
+            key: public.clone(),
+        });
+        file::write(&path, format(&list).as_bytes(), 0o644)?;
+        println!("{text} on {host} has an SSH key in the fleet now.");
+    }
+    Ok(public)
 }
 
 #[derive(Clone, Copy)]
@@ -174,24 +234,18 @@ fn add_signer(
     type_name: &str,
     key: &str,
     prompt: &mut Prompt,
-) -> Result<()> {
+) -> Result<String> {
     let path = fleet.dir.join(sign::SIGNERS);
     let mut list = read(&path)?;
-    let new = &sign::parse_signers(&format!("# {host}\n{key}\n"))?[0];
-    if let Some(known) = list.iter().find(|entry| entry.name == host) {
-        if sign::parse_signers(&format(std::slice::from_ref(known)))?[0].key == new.key {
-            return Ok(());
-        }
-        bail!(
-            "{} already lists another key for {host}: retire it first",
-            sign::SIGNERS
-        );
+    let public = ssh::normalize(key)?;
+    if listed_as(&list, &path, host, &public)? {
+        return Ok(public);
     }
     let scope = format!("types/{type_name}");
     let question = format!("{host} signs: t only {scope} · e everything ›");
     let line = match prompt.ask(&question, &[('t', Reach::Type), ('e', Reach::Everything)])? {
-        Some(Reach::Type) => format!("{key} {scope}"),
-        Some(Reach::Everything) => key.to_owned(),
+        Some(Reach::Type) => format!("{public} {scope}"),
+        Some(Reach::Everything) => public.clone(),
         None => bail!("{host} signs nothing yet"),
     };
     list.push(Recipient {
@@ -200,18 +254,19 @@ fn add_signer(
     });
     file::write(&path, format(&list).as_bytes(), 0o644)?;
     println!("{host} signs for the fleet now.");
-    Ok(())
+    Ok(public)
 }
 
 pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()> {
     let mut found = false;
     for type_name in fleet::types(&fleet.dir)? {
-        let mut owners = vec!["root".to_owned()];
         let users = fleet::type_dir(&fleet.dir, &type_name).join(fleet::USERS);
-        for entry in fs::read_dir(&users).into_iter().flatten() {
-            owners.push(entry?.file_name().to_string_lossy().into_owned());
+        let mut owners = vec![("root".to_owned(), None)];
+        for dir in walk::children(&users)? {
+            let name = dir.file_name().unwrap_or_default().to_string_lossy();
+            owners.push((name.into_owned(), Some(dir)));
         }
-        for owner in owners {
+        for (owner, dir) in owners {
             let text = format!("{type_name}/{owner}");
             if read(&target(fleet, &text)?.list)?
                 .iter()
@@ -220,13 +275,15 @@ pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()>
                 retire(fleet, &text, host, prompt)?;
                 found = true;
             }
+            if let Some(dir) = dir
+                && drop_named(&dir.join(ssh::KEYS), host)?
+            {
+                println!("{text} on {host} has no SSH key in the fleet now.");
+                found = true;
+            }
         }
     }
-    let path = fleet.dir.join(sign::SIGNERS);
-    let mut signers = read(&path)?;
-    if signers.iter().any(|entry| entry.name == host) {
-        signers.retain(|entry| entry.name != host);
-        file::write(&path, format(&signers).as_bytes(), 0o644)?;
+    if drop_named(&fleet.dir.join(sign::SIGNERS), host)? {
         println!("{host} signs nothing now.");
         found = true;
     }
@@ -234,6 +291,17 @@ pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()>
         bail!("the fleet holds no key named {host}");
     }
     Ok(())
+}
+
+fn drop_named(path: &Path, name: &str) -> Result<bool> {
+    let mut list = read(path)?;
+    let before = list.len();
+    list.retain(|entry| entry.name != name);
+    if list.len() == before {
+        return Ok(false);
+    }
+    file::write(path, format(&list).as_bytes(), 0o644)?;
+    Ok(true)
 }
 
 enum Scope {
@@ -301,9 +369,7 @@ pub fn trust_with(
         bail!("{text} already holds this key, as {}", known.name);
     }
     if list.iter().any(|r| r.name == name) {
-        bail!(
-            "{text} already holds a key named {name}: run `mothership retire {text} {name}` first"
-        );
+        bail!("{text} already holds a key named {name}: run `sudo mothership retire {name}` first");
     }
     list.push(Recipient {
         name: name.to_owned(),

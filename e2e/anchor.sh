@@ -1,5 +1,4 @@
 #!/bin/sh
-# Does what install does once the machine trusts a fleet commit.
 set -eu
 lib=/var/lib/mothership
 git init -q --bare "$lib/fleet.git"

@@ -24,7 +24,8 @@ The fleet has 1 commit not pushed  git -C /var/lib/mothership/fleet status
 ```
 
 Apply creates `dev`, then goes round again for what the new account brings: dev's chezmoi
-config, linger and the installer, then dev's files. dev gets a key too.
+config, linger and the installer, then dev's files. dev gets keys too, and scan says the fleet
+doesn't list dev's SSH key yet.
 
 ```console
 $ printf 'y\ny\ny\n' | sudo mothership apply
@@ -49,15 +50,20 @@ Coming from the fleet · 1
 Apply [y/N]? y
 $ ls /var/lib/systemd/linger
 dev
-$ sudo stat -c '%U %a %n' /home/dev/.greeter/hi /home/dev/.gitconfig /home/dev/.config/mothership/key.txt
+$ sudo stat -c '%U %a %n' /home/dev/.greeter/hi /home/dev/.gitconfig /home/dev/.config/mothership/key.txt /home/dev/.ssh/id_ed25519
 dev 644 /home/dev/.greeter/hi
 dev 644 /home/dev/.gitconfig
 dev 600 /home/dev/.config/mothership/key.txt
+dev 600 /home/dev/.ssh/id_ed25519
 $ sudo grep sourceDir /home/dev/.config/chezmoi/chezmoi.toml
 sourceDir = "/var/lib/mothership/current/types/workstation/users/dev/home"
+$ sudo mothership scan | sed -n 2,3p
+  Keys
+    \+ machine +not trusted +run `sudo mothership trust machine workstation .* 'dev=ssh-ed25519 [A-Za-z0-9+/]+' .*` on a machine that signs for the fleet (re)
+$ sudo mothership trust machine workstation dev="$(sudo cat /home/dev/.ssh/id_ed25519.pub)" | head -1
+workstation/dev on machine has an SSH key in the fleet now.
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
-The fleet has 1 commit not pushed  git -C /var/lib/mothership/fleet status
 \d+ ignored (re)
 ```
 
@@ -131,7 +137,9 @@ user of another type, whose secrets I list from the fleet's rules for that type.
 $ sudo mothership key | sed 's/age1[a-z0-9]*/<key>/g'
 root     <key>
 dev      <key>
+dev      ssh-ed25519 [A-Za-z0-9+/]+ (re)
 me       <key>
+me       ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPznprSpdY8b3HM0Sy/iwuhzpCwaaMA8rvhDULqPQV9P
 signing  ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBiaU3yvKl1XfZP1NPwoqvUpk/NKEmD0N2A069AmOCrB
 Run this on a machine that signs for the fleet:
   sudo mothership trust machine workstation root=<key> dev=<key> me=<key>

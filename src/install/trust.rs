@@ -3,6 +3,7 @@ use crate::{
         self, Fleet,
         checked::{self, Anchor, Remote},
     },
+    github,
     prompt::Prompt,
     secrets, sign,
 };
@@ -72,7 +73,7 @@ fn recover(prompt: &mut Prompt, hostname: &str, fleet: &Fleet, anchored: bool) -
     let entries = crate::trust::pending(&staged)?;
     let mut keys = staged.keys().clone();
     keys.push(age.clone());
-    crate::trust::trust_host(
+    let uploads = crate::trust::trust_host(
         &staged,
         &keys,
         hostname,
@@ -82,5 +83,6 @@ fn recover(prompt: &mut Prompt, hostname: &str, fleet: &Fleet, anchored: bool) -
     )?;
     let message = format!("Trust {hostname} as {}", staged.type_name);
     stage.commit(admin, &message, &sign::recovery_key(&age))?;
+    github::add(admin, &uploads)?;
     checked::sync(admin, Remote::Skip).map(drop)
 }

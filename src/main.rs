@@ -4,6 +4,7 @@ mod cmd;
 mod edit;
 mod file;
 mod fleet;
+mod github;
 mod hardware;
 mod hash;
 mod host;
@@ -25,6 +26,7 @@ mod scan;
 mod secrets;
 mod sign;
 mod snapshot;
+mod ssh;
 mod style;
 #[cfg(test)]
 #[path = "../tests/support.rs"]
@@ -163,25 +165,30 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         }
         (Command::Trust, [host, type_name, keys @ ..]) if !keys.is_empty() => {
             let message = format!("Trust {host} as {type_name}");
+            let mut uploads = Vec::new();
             let commit = edit_fleet(&message, |fleet| {
-                trust::trust_host(
+                uploads = trust::trust_host(
                     fleet,
                     fleet.keys(),
                     host,
                     type_name,
                     keys,
                     &mut Prompt::new(),
-                )
+                )?;
+                Ok(())
             })?;
+            github::add(&fleet::admin()?, &uploads)?;
             if let Some(commit) = commit {
                 println!("On {host}, type this code: {}", checked::short(&commit));
             }
             Ok(())
         }
-        (Command::Retire, [host]) => edit_fleet(&format!("Retire {host}"), |fleet| {
-            trust::retire_host(fleet, host, &mut Prompt::new())
-        })
-        .map(drop),
+        (Command::Retire, [host]) => {
+            edit_fleet(&format!("Retire {host}"), |fleet| {
+                trust::retire_host(fleet, host, &mut Prompt::new())
+            })?;
+            github::remove(&fleet::admin()?, host)
+        }
         _ => usage(),
     }
 }

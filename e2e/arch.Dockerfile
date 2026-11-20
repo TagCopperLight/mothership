@@ -27,9 +27,13 @@ COPY fleet /var/lib/mothership/fleet
 COPY chezmoi/workstation.toml /tmp/chezmoi.toml
 COPY recovery.txt /tmp/recovery.txt
 COPY signing /tmp/signing
+COPY ssh /tmp/ssh
 COPY anchor.sh /tmp/anchor.sh
 RUN useradd -m -G wheel -s /bin/bash me \
  && install -D -m 600 /tmp/signing /etc/mothership/signing \
+ && install -d -o me -g me -m 700 /home/me/.ssh \
+ && install -o me -g me -m 600 /tmp/ssh /home/me/.ssh/id_ed25519 \
+ && ssh-keygen -y -f /tmp/ssh | install -o me -g me -m 644 /dev/stdin /home/me/.ssh/id_ed25519.pub \
  && install -o me -g me -m 600 /tmp/recovery.txt /home/me/recovery.txt \
  && install -m 440 /var/lib/mothership/fleet/types/workstation/etc/sudoers.d/wheel /etc/sudoers.d/wheel \
  && printf 'type = "workstation"\n' | install -D -m 644 /dev/stdin /etc/mothership/machine.toml \

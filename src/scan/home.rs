@@ -5,7 +5,7 @@ use crate::{
     fleet::{Manager, Member},
     preview::Preview,
     secrets::{self, Storage},
-    systemd, walk,
+    ssh, systemd, walk,
 };
 use anyhow::Result;
 use std::{
@@ -22,6 +22,8 @@ pub fn scan(member: &Member, managed: &[PathBuf]) -> Result<Vec<Item>> {
     let mut known: HashSet<PathBuf> = managed.iter().cloned().collect();
     known.insert(home.join(".config/chezmoi"));
     known.insert(secrets::key_path(user));
+    known.insert(ssh::key_path(user));
+    known.insert(ssh::public_path(user));
     known.insert(home.join(".config/dconf"));
     known.extend(
         member

@@ -167,7 +167,7 @@ fn a_name_the_list_holds_is_refused_until_it_is_retired() {
         &mut Prompt::answering("y"),
     );
     let error = error.err().unwrap().to_string();
-    assert!(error.contains("mothership retire workstation/root laptop"));
+    assert!(error.contains("sudo mothership retire laptop"));
     assert_eq!(fs::read_to_string(fleet.recipients()).unwrap(), list);
 }
 
@@ -273,4 +273,72 @@ fn saying_no_to_trust_changes_nothing() {
     .unwrap();
     assert_eq!(fs::read(&shared.file).unwrap(), before);
     assert_eq!(names(&list), names_before);
+}
+
+#[test]
+fn trust_lists_a_host_s_ssh_and_signing_keys_and_retire_drops_them() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let user_dir = dir.path().join("types/workstation/users/me");
+    fs::create_dir_all(user_dir.join("home")).unwrap();
+    fs::write(user_dir.join(fleet::USER_TOML), "").unwrap();
+    let fleet = fleet_with(dir.path(), "", &[]);
+    let random = || {
+        let key = ssh_key::PrivateKey::random(
+            &mut ssh_key::rand_core::OsRng,
+            ssh_key::Algorithm::Ed25519,
+        )
+        .unwrap();
+        sign::public(&key).unwrap()
+    };
+    let (login, signing) = (random(), random());
+    let entries = [
+        format!("me={login} me@laptop"),
+        format!("{SIGNING}={signing}"),
+    ];
+    let trust = |entries: &[String]| {
+        trust_host(
+            &fleet,
+            &Keys::default(),
+            "desktop",
+            "workstation",
+            entries,
+            &mut Prompt::answering("t"),
+        )
+    };
+
+    let uploads = trust(&entries).unwrap();
+    assert_eq!(
+        uploads,
+        [
+            github::Key {
+                title: "desktop/me".into(),
+                public: login.clone(),
+                kind: github::Use::Login,
+            },
+            github::Key {
+                title: "desktop".into(),
+                public: signing.clone(),
+                kind: github::Use::Signing,
+            },
+        ]
+    );
+    let ssh_keys = user_dir.join(ssh::KEYS);
+    assert_eq!(read(&ssh_keys).unwrap()[0].key, login);
+    let signers = dir.path().join(sign::SIGNERS);
+    assert_eq!(
+        read(&signers).unwrap()[0].key,
+        format!("{signing} types/workstation")
+    );
+    assert_eq!(trust(&entries).unwrap().len(), 2);
+    let error = trust(&[format!("me={}", random())]).err().unwrap();
+    assert!(
+        error
+            .to_string()
+            .ends_with("lists another key for desktop: retire it first")
+    );
+
+    retire_host(&fleet, "desktop", &mut Prompt::answering("y")).unwrap();
+    assert!(read(&ssh_keys).unwrap().is_empty());
+    assert!(read(&signers).unwrap().is_empty());
+    assert!(retire_host(&fleet, "desktop", &mut Prompt::answering("y")).is_err());
 }
