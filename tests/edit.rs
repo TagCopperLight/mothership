@@ -67,6 +67,7 @@ struct Checkout {
 impl Checkout {
     fn new() -> Self {
         let dir = TempDir::new().unwrap();
+        crate::support::name_recovery(dir.path());
         let type_dir = dir.path().join("types/workstation");
         fs::create_dir_all(type_dir.join("etc/grub.d")).unwrap();
         fs::write(type_dir.join("etc/battery.conf"), "").unwrap();

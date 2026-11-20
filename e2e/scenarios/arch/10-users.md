@@ -133,7 +133,7 @@ $ sudo mothership key | sed 's/age1[a-z0-9]*/<key>/'
 root    <key>
 dev     <key>
 me      <key>
-Add them from a machine that opens the secrets, or here for the first one:
+Add them from a machine that opens their secrets, or here for a list that guards none:
   sudo mothership trust workstation/root <name> <key>
   sudo mothership trust workstation/dev <name> <key>
   sudo mothership trust workstation/me <name> <key>

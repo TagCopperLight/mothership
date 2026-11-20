@@ -53,7 +53,8 @@ pub fn copy(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage, seen: &See
                     fleet.recipients().display()
                 );
             }
-            bytes = secrets::encrypt(&fleet.recipients(), &bytes)?;
+            let list = fleet.sealed_for(secrets::read(&fleet.recipients())?);
+            bytes = secrets::encrypt_for(&list, &bytes)?;
         }
         let mode = meta.permissions().mode() & 0o7777;
         let executable = mode & 0o111 != 0;

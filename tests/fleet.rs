@@ -20,6 +20,7 @@ services = ["prober.service"]
 
 fn checkout(system: &str) -> TempDir {
     let dir = TempDir::new().unwrap();
+    crate::support::name_recovery(dir.path());
     let type_dir = dir.path().join("types/workstation");
     fs::create_dir_all(type_dir.join("etc/pam.d")).unwrap();
     fs::write(type_dir.join("etc/pam.d/sudo"), "").unwrap();
@@ -151,7 +152,7 @@ fn etc_secrets_open_with_root_key_only() {
     let etc = dir.path().join("types/workstation/etc");
     fs::write(
         etc.join("wifi.conf.age"),
-        secrets::encrypt(&list, b"psk=1").unwrap(),
+        crate::support::seal(&list, b"psk=1"),
     )
     .unwrap();
     let mut fleet = Fleet::of(

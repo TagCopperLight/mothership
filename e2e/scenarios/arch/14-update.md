@@ -4,7 +4,8 @@ The fleet pins the mothership this machine already runs, so apply goes on as usu
 
 ```console
 $ cd /var/lib/mothership/fleet && sha=$(sha256sum /usr/local/bin/mothership | cut -d' ' -f1) &&
-> printf 'version = "0.1.0"\n\n[sha256]\nx86_64 = "%s"\n' "$sha" > mothership.toml &&
+> { printf 'version = "0.1.0"\n\n[sha256]\nx86_64 = "%s"\n\n' "$sha"; cat mothership.toml; } > pinned &&
+> mv pinned mothership.toml &&
 > git add mothership.toml && git commit -qm "Pin mothership"
 $ echo n | sudo mothership apply | tail -1
 Apply [y/N]? n

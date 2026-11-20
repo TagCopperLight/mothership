@@ -5,7 +5,7 @@ use crate::{
     ignore::{Ignore, Paths},
     kind::Level,
     package::{self},
-    secrets::{self, Keys, Storage},
+    secrets::{self, Keys, Recipient, Storage},
     style,
     user::{self, User},
     walk,
@@ -22,6 +22,9 @@ use std::{
 
 mod config;
 pub mod homes;
+mod manifest;
+
+pub use manifest::{MANIFEST, Manifest, Pin};
 
 use config::Block;
 pub use config::{
@@ -42,6 +45,7 @@ pub struct Repo {
     pub ignore: Ignore,
     pub not_secret: Paths,
     pub profiles: Vec<Profile>,
+    pub recovery: Recipient,
 }
 
 pub struct Fleet {
@@ -288,6 +292,9 @@ impl Repo {
         hardware: &BTreeSet<Hardware>,
     ) -> Result<Self> {
         homes::check(&dir)?;
+        let recovery = Manifest::read(&dir)?.recovery().with_context(|| {
+            format!("the fleet's {MANIFEST} names no recovery key: run `mothership recovery`")
+        })?;
         let type_dir = type_dir(&dir, device_type);
         let system_path = type_dir.join(SYSTEM_TOML);
         let mut system: System = read_toml(&system_path)?;
@@ -377,7 +384,15 @@ impl Repo {
             ignore,
             not_secret,
             profiles,
+            recovery,
         })
+    }
+
+    pub fn sealed_for(&self, mut list: Vec<Recipient>) -> Vec<Recipient> {
+        if !list.iter().any(|r| r.key == self.recovery.key) {
+            list.push(self.recovery.clone());
+        }
+        list
     }
 
     pub fn options(&self) -> Vec<String> {

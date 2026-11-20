@@ -304,6 +304,7 @@ fn fleet(dir: &Path, system: &str, user: &str, etc: &[&str]) -> Fleet {
     }
     fs::write(type_dir.join(crate::fleet::SYSTEM_TOML), system).unwrap();
     fs::write(type_dir.join("users/me/user.toml"), user).unwrap();
+    crate::support::name_recovery(dir);
     let repo =
         crate::fleet::Repo::new(dir.to_path_buf(), "workstation", &[], &BTreeSet::new()).unwrap();
     Fleet::of(repo, &crate::user::by_uid(0).unwrap())

@@ -19,11 +19,12 @@ All of them run with `sudo`.
 | `scan` | Lists what differs: what changed on the machine, and what's coming from the fleet. |
 | `review` | Goes through the machine's changes one by one: **add** it to the fleet, **revert** it, **ignore** it, or decide **later**. You commit and push the result yourself. |
 | `key` | Creates the machine's keys and prints them. |
+| `recovery` | Gives a new fleet its recovery key, which opens every secret. |
 | `trust <type>/<root\|user> <name> <key>` | Lets a key open a list's secrets. |
 | `retire <type>/<root\|user> <name>` | Removes a key, and prints the secrets you should change. |
 | `install` | Sets up a new machine from the fleet. |
 
-Secrets are encrypted with [age](https://age-encryption.org). Root and each user have their own key, and their own list of keys allowed to open their secrets. Review treats a file other users can't read as a secret, and adds it encrypted.
+Secrets are encrypted with [age](https://age-encryption.org). Root and each user have their own key, and their own list of keys allowed to open their secrets. Every secret also opens with the fleet's recovery key, which you keep on paper. Review treats a file other users can't read as a secret, and adds it encrypted.
 
 ## Setting up a machine
 
@@ -49,7 +50,7 @@ From the Arch ISO, install also partitions and encrypts the disk:
 ## Writing a fleet
 
 ```text
-mothership.toml           the mothership release every machine runs, with each binary's SHA-256
+mothership.toml           the recovery key, and the mothership release every machine runs
 shared/                   files and secrets several homes get, linked from each home
 types/workstation/
 ├── system.toml           packages, services, hardware and options

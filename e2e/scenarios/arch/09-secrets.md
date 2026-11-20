@@ -9,7 +9,7 @@ $ echo y | sudo mothership apply &>/dev/null
 $ sudo mothership key | sed 's/age1[a-z0-9]*/<key>/'
 root    <key>
 me      <key>
-Add them from a machine that opens the secrets, or here for the first one:
+Add them from a machine that opens their secrets, or here for a list that guards none:
   sudo mothership trust workstation/root <name> <key>
   sudo mothership trust workstation/me <name> <key>
 $ sudo stat -c '%a %U' /etc/mothership/key.txt ~/.config/mothership/key.txt
@@ -229,7 +229,7 @@ Nothing to apply.
 
 Back on the laptop, a template takes a secret value from my home's `.secrets/` folder, which
 chezmoi writes nowhere. The laptop trusts the desktop in both lists, then the desktop retires the
-laptop and lists what to change. A list never loses its last key.
+laptop and lists what to change.
 
 ```console
 $ sudo mv /etc/mothership/key.txt /root/desktop.txt && sudo mv /root/laptop.txt /etc/mothership/key.txt
@@ -281,9 +281,6 @@ Go on [y/N]? y
 laptop is gone from workstation/root. Commit and push the fleet.
 git history keeps the versions laptop opens, and that machine may keep copies, so change these:
   /etc/wifi.conf
-$ sudo mothership retire workstation/root desktop
-Error: desktop is the last key of workstation/root: trust another one first
-[exit 1]
 $ sed 's/age1[a-z0-9]*/<key>/' /var/lib/mothership/fleet/types/workstation/users/me/recipients.txt
 # desktop
 <key>

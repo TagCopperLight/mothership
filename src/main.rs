@@ -17,6 +17,7 @@ mod pref;
 mod preview;
 mod prompt;
 mod record;
+mod recovery;
 mod revert;
 mod review;
 mod scan;
@@ -38,7 +39,7 @@ use fleet::Fleet;
 use prompt::Prompt;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: mothership scan | review | apply | key \
+const USAGE: &str = "usage: mothership scan | review | apply | key | recovery \
                      | trust <type>/<root|user> <name> <key> | retire <type>/<root|user> <name> \
                      | install [--fleet <repo>] [--type <type>] [--option <option>]... \
                      [--hostname <name>] [--admin <user>] [--timezone <zone>] [--disk <disk>] \
@@ -50,6 +51,7 @@ enum Command {
     Review,
     Apply,
     Key,
+    Recovery,
     Trust,
     Retire,
     Install,
@@ -62,6 +64,7 @@ impl Command {
             "review" => Command::Review,
             "apply" => Command::Apply,
             "key" => Command::Key,
+            "recovery" => Command::Recovery,
             "trust" => Command::Trust,
             "retire" => Command::Retire,
             "install" => Command::Install,
@@ -117,6 +120,9 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         (Command::Apply, []) => apply::run(),
         (Command::Install, flags) => install::run(flags),
         (Command::Key, []) => trust::key(&Fleet::load()?),
+        (Command::Recovery, []) => {
+            recovery::run(std::path::Path::new(fleet::DIR), &mut Prompt::new())
+        }
         (Command::Trust, [target, name, key]) => {
             edit_fleet(|fleet| trust::trust(fleet, target, name, key, &mut Prompt::new()))
         }

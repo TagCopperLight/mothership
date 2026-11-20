@@ -187,7 +187,7 @@ fn confirm_shared(
 }
 
 fn own_list(fleet: &Fleet, member: &Member) -> Result<String> {
-    trust::home_list(&fleet.dir, &member.home())
+    trust::home_list(fleet, &member.home())
 }
 
 fn update_shared(
@@ -199,7 +199,7 @@ fn update_shared(
 ) -> Result<()> {
     let shared = homes::target(&fleet.dir, source)?;
     let link = fs::read_link(source)?;
-    let recipients = trust::home_list(&fleet.dir, source)?;
+    let recipients = trust::home_list(fleet, source)?;
     root.run(
         &recipients,
         snapshot,

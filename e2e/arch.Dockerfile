@@ -25,7 +25,9 @@ RUN touch /var/log/systemctl.log && chmod 666 /var/log/systemctl.log
 FROM machine
 COPY fleet /var/lib/mothership/fleet
 COPY chezmoi/workstation.toml /tmp/chezmoi.toml
+COPY recovery.txt /tmp/recovery.txt
 RUN useradd -m -G wheel -s /bin/bash me \
+ && install -o me -g me -m 600 /tmp/recovery.txt /home/me/recovery.txt \
  && install -m 440 /var/lib/mothership/fleet/types/workstation/etc/sudoers.d/wheel /etc/sudoers.d/wheel \
  && printf 'type = "workstation"\n' | install -D -m 644 /dev/stdin /etc/mothership/machine.toml \
  && chown -R me:me /var/lib/mothership/fleet \

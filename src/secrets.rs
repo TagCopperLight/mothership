@@ -15,7 +15,6 @@ use std::{
 pub const RECIPIENTS: &str = "recipients.txt";
 pub const ROOT_KEY: &str = "/etc/mothership/key.txt";
 pub const AGE: &str = ".age";
-pub const RECOVERY: &str = "recovery";
 
 pub fn key_path(user: &User) -> PathBuf {
     user.home.join(".config/mothership/key.txt")
@@ -96,10 +95,6 @@ pub fn user_key(user: &User) -> Result<Option<x25519::Identity>> {
         Some(bytes) => parse_key(&bytes, &path).map(Some),
         None => Ok(None),
     }
-}
-
-pub fn encrypt(list: &Path, bytes: &[u8]) -> Result<Vec<u8>> {
-    encrypt_for(&read(list)?, bytes).with_context(|| format!("encrypting for {}", list.display()))
 }
 
 pub fn encrypt_for(list: &[Recipient], bytes: &[u8]) -> Result<Vec<u8>> {

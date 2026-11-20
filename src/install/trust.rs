@@ -23,7 +23,7 @@ pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
             if key.trusted {
                 continue;
             }
-            if secrets::names(&key.list)?.is_empty() {
+            if !crate::trust::guards_secrets(&fleet, &key.target)? {
                 crate::trust::trust(&fleet, &key.target, hostname, &key.public, prompt)?;
             } else {
                 waiting.push(key);
@@ -46,10 +46,11 @@ pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
             Some(Next::Recovery) => {
                 let mut keys = fleet.keys().clone();
                 let public = keys.add(&prompt.hidden("Recovery key:")?)?;
-                for key in &waiting {
-                    if !secrets::holds(&key.list, &public)? {
-                        bail!("that key isn't in {}", key.list.display());
-                    }
+                if public != fleet.recovery.key {
+                    bail!(
+                        "that isn't the recovery key the fleet's {} names",
+                        fleet::MANIFEST
+                    );
                 }
                 for key in &waiting {
                     crate::trust::trust_with(
@@ -72,7 +73,7 @@ fn print(waiting: &[MachineKey], hostname: &str) -> Result<bool> {
     let mut by_machine: BTreeMap<String, Vec<&MachineKey>> = BTreeMap::new();
     for key in waiting {
         for name in secrets::names(&key.list)? {
-            if name != secrets::RECOVERY && name != hostname {
+            if name != hostname {
                 by_machine.entry(name).or_default().push(key);
             }
         }

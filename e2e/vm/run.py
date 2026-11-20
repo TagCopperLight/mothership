@@ -230,7 +230,7 @@ def install(args: list[str], port: int, log) -> None:
         wait(vm, "r type the recovery key")
         vm.send("r")
         wait(vm, "Recovery key:")
-        secret = next(line for line in (HERE / "recovery.txt").read_text().splitlines()
+        secret = next(line for line in (HERE.parent / "recovery.txt").read_text().splitlines()
                       if line.startswith("AGE-SECRET-KEY-"))
         vm.sendline(secret)
         wait(vm, "Secure Boot holds this machine's keys now.", timeout=INSTALL_TIMEOUT)

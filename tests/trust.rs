@@ -1,5 +1,5 @@
 use super::*;
-use crate::secrets::{encrypt, names};
+use crate::secrets::names;
 use std::{fs, os::unix::fs::symlink};
 
 #[test]
@@ -74,9 +74,10 @@ fn fleet_with(dir: &Path, list: &str, secrets: &[(&str, &[u8], &Path)]) -> Fleet
     fs::write(type_dir.join(fleet::SYSTEM_TOML), "").unwrap();
     fs::write(type_dir.join(RECIPIENTS), list).unwrap();
     for (name, text, sealed_for) in secrets {
-        let sealed = encrypt(sealed_for, text).unwrap();
+        let sealed = crate::support::seal(sealed_for, text);
         fs::write(type_dir.join("etc").join(name), sealed).unwrap();
     }
+    crate::support::name_recovery(dir);
     let repo = crate::fleet::Repo::new(dir.to_path_buf(), "workstation", &[], &Default::default())
         .unwrap();
     Fleet::of(repo, &crate::support::current_user())
@@ -200,7 +201,7 @@ fn shared_secret() -> SharedSecret {
     fs::write(&both, lists).unwrap();
     fs::create_dir_all(root.join("shared/.secrets")).unwrap();
     let file = root.join("shared/.secrets/proxy-key.age");
-    fs::write(&file, encrypt(&both, b"proxy").unwrap()).unwrap();
+    fs::write(&file, crate::support::seal(&both, b"proxy")).unwrap();
     for type_name in ["workstation", "server"] {
         fs::write(
             root.join("types").join(type_name).join(fleet::SYSTEM_TOML),
@@ -208,6 +209,7 @@ fn shared_secret() -> SharedSecret {
         )
         .unwrap();
     }
+    crate::support::name_recovery(root);
     let repo = crate::fleet::Repo::new(root.to_path_buf(), "workstation", &[], &Default::default())
         .unwrap();
     SharedSecret {

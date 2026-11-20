@@ -45,7 +45,7 @@ fn opens_what_it_encrypts_for_its_own_key_only() {
     assert!(!holds(&list, &public(&other)).unwrap());
 
     let sealed = dir.path().join("secret.age");
-    fs::write(&sealed, encrypt(&list, b"psk=1").unwrap()).unwrap();
+    fs::write(&sealed, crate::support::seal(&list, b"psk=1")).unwrap();
     assert!(
         fs::read_to_string(&sealed)
             .unwrap()

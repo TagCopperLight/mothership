@@ -1,7 +1,7 @@
 use crate::{
     chezmoi, file,
     fleet::{
-        self, Fleet,
+        self, Fleet, Repo,
         homes::{self, Home},
     },
     prompt::Prompt,
@@ -68,7 +68,9 @@ pub fn key(fleet: &Fleet) -> Result<()> {
     }
     let untrusted: Vec<&MachineKey> = keys.iter().filter(|k| !k.trusted).collect();
     if !untrusted.is_empty() {
-        println!("Add them from a machine that opens the secrets, or here for the first one:");
+        println!(
+            "Add them from a machine that opens their secrets, or here for a list that guards none:"
+        );
         for key in untrusted {
             println!("  {}", trust_command(&key.target, "<name>", &key.public));
         }
@@ -120,6 +122,10 @@ fn target(fleet: &Fleet, text: &str) -> Result<Target> {
         scope,
         list,
     })
+}
+
+pub fn guards_secrets(fleet: &Fleet, text: &str) -> Result<bool> {
+    Ok(!secrets_of(fleet, &target(fleet, text)?)?.is_empty())
 }
 
 pub fn trust(fleet: &Fleet, text: &str, name: &str, key: &str, prompt: &mut Prompt) -> Result<()> {
@@ -174,9 +180,6 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str, prompt: &mut Prompt) -> Res
         .key
         .clone();
     list.retain(|r| r.name != name);
-    if list.is_empty() {
-        bail!("{name} is the last key of {text}: trust another one first");
-    }
     let Some(rewritten) = rewrite(fleet, fleet.keys(), &target, &list, prompt)? else {
         println!("Nothing changed.");
         return Ok(());
@@ -215,8 +218,10 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str, prompt: &mut Prompt) -> Res
     Ok(())
 }
 
-pub fn home_list(fleet_dir: &Path, source: &Path) -> Result<String> {
-    Ok(format(&home_recipients(fleet_dir, source, None)?))
+pub fn home_list(repo: &Repo, source: &Path) -> Result<String> {
+    Ok(format(
+        &repo.sealed_for(home_recipients(&repo.dir, source, None)?),
+    ))
 }
 
 fn home_recipients(
@@ -267,10 +272,10 @@ fn rewrite(
     }
     let mut sealed = Vec::new();
     for secret in all {
-        let recipients = match &secret.source {
+        let recipients = fleet.sealed_for(match &secret.source {
             Source::Home(path) => home_recipients(&fleet.dir, path, Some((&target.list, list)))?,
             Source::Etc(_) => list.to_vec(),
-        };
+        });
         let file = secret.source.file(&fleet.dir)?;
         let bytes = encrypt_for(&recipients, &keys.decrypt(&file)?)?;
         sealed.push((file, bytes, secret, recipients));
