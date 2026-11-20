@@ -113,6 +113,7 @@ pub fn short(commit: &str) -> &str {
 pub struct Refused {
     pub commit: String,
     pub author: String,
+    pub date: String,
     pub subject: String,
     pub why: String,
 }
@@ -139,13 +140,16 @@ pub fn check(git: &Git, from: &str, to: &str) -> Result<Checked> {
     let mut good = from.to_owned();
     for commit in list.lines() {
         if let Err(why) = verify(git, &good, commit) {
-            let line = git.out(&["log", "-1", "--format=%an%x00%s", commit])?;
-            let (author, subject) = line.split_once('\0').unwrap_or((&line, ""));
+            let line = git.out(&["log", "-1", "--format=%an%x00%as%x00%s", commit])?;
+            let [author, date, subject] = line.splitn(3, '\0').collect::<Vec<_>>()[..] else {
+                bail!("git log printed {line}");
+            };
             return Ok(Checked {
                 commit: good,
                 refused: Some(Refused {
                     commit: commit.to_owned(),
                     author: author.to_owned(),
+                    date: date.to_owned(),
                     subject: subject.to_owned(),
                     why: format!("{why:#}"),
                 }),
@@ -279,6 +283,10 @@ fn fetch(git: &Git, admin: &User, remote: Remote) -> Result<(String, String)> {
         "+refs/remotes/origin/*:refs/incoming/origin/*",
     ];
     git.out(&args)?;
+    tips(git)
+}
+
+fn tips(git: &Git) -> Result<(String, String)> {
     let main = git
         .rev(MAIN)?
         .with_context(|| format!("{DIR} has no main branch"))?;
@@ -420,6 +428,14 @@ pub fn stage() -> Result<Stage> {
     let base = git
         .rev(CHECKED)?
         .context("this machine has checked no commit of the fleet yet")?;
+    let (_, tip) = tips(&git)?;
+    if tip != base {
+        bail!(
+            "the fleet's main goes past {}, the last commit this machine accepts: remove the \
+             commits after it from main, then push",
+            short(&base)
+        );
+    }
     let dir = PathBuf::from(STAGING);
     if dir.exists() {
         fs::remove_dir_all(&dir).with_context(|| format!("removing {STAGING}"))?;

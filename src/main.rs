@@ -141,9 +141,11 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         && !matches!(command, Command::Scan)
     {
         println!(
-            "This machine refuses {} \"{}\" by {}, and what follows it: {}",
+            "This machine refuses {} \"{}\" of {}, which claims to be by {}, and what follows \
+             it: {}",
             checked::short(&commit.commit),
             commit.subject,
+            commit.date,
             commit.author,
             commit.why
         );
@@ -170,6 +172,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             Ok(())
         }
         (Command::Trust, [host, type_name, keys @ ..]) if !keys.is_empty() => {
+            host::check(host)?;
             let message = format!("Trust {host} as {type_name}");
             let mut uploads = Vec::new();
             let (outcome, base) = edit_fleet(&message, |fleet, prompt| {
@@ -186,6 +189,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             Ok(())
         }
         (Command::Retire, [host]) => {
+            host::check(host)?;
             let (outcome, _) = edit_fleet(&format!("Retire {host}"), |fleet, prompt| {
                 trust::retire_host(fleet, host, prompt)
             })?;

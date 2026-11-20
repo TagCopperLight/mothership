@@ -1,8 +1,21 @@
 use crate::{cmd, file};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use std::{fs, path::Path};
 
 const HOSTS: &str = "/etc/hosts";
+
+pub fn check(name: &str) -> Result<()> {
+    let valid = (1..=63).contains(&name.len())
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !valid {
+        bail!("{name} isn't a hostname: use up to 63 of a-z, 0-9 and -, with no - at either end");
+    }
+    Ok(())
+}
 
 pub fn name() -> Result<String> {
     Ok(fs::read_to_string("/etc/hostname")

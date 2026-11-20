@@ -1,6 +1,7 @@
 use super::disk::Layout;
 use crate::{
     fleet::{self, Machine, Repo},
+    host,
     prompt::{Choice, Prompt},
 };
 use anyhow::{Result, anyhow, bail};
@@ -146,26 +147,15 @@ pub fn admin(flags: &Flags, prompt: &mut Prompt, members: &[String]) -> Result<S
     Ok(members[prompt.choose("Admin, who commits and pushes the fleet", &choices)?].clone())
 }
 
-fn valid_hostname(name: &str) -> bool {
-    (1..=63).contains(&name.len())
-        && !name.starts_with('-')
-        && !name.ends_with('-')
-        && name
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-}
-
 pub fn hostname(flags: &Flags, prompt: &mut Prompt) -> Result<String> {
-    const RULE: &str = "use up to 63 of a-z, 0-9 and -, with no - at either end";
     match &flags.hostname {
-        Some(name) if valid_hostname(name) => Ok(name.clone()),
-        Some(name) => bail!("{name} isn't a hostname: {RULE}"),
+        Some(name) => host::check(name).map(|()| name.clone()),
         None => loop {
             let name = prompt.line("Hostname:")?;
-            if valid_hostname(&name) {
-                return Ok(name);
+            match host::check(&name) {
+                Ok(()) => return Ok(name),
+                Err(e) => println!("{e}."),
             }
-            println!("That isn't a hostname: {RULE}.");
         },
     }
 }

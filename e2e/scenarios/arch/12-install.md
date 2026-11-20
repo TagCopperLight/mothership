@@ -26,7 +26,7 @@ On newbox, type this code: [0-9a-f]{12} (re)
 
 The new machine has checked no commit yet, so an attacker who can push could have rewritten the
 fleet. Every command but install refuses to run, and install starts from the commit whose code I
-type, and checks what follows it.
+type, and checks what follows it. A code it can't find, it asks again.
 
 ```console
 $ sudo mv /root/new.txt /etc/mothership/key.txt && mv ~/new.txt ~/.config/mothership/key.txt &&
@@ -34,10 +34,13 @@ $ sudo mv /root/new.txt /etc/mothership/key.txt && mv ~/new.txt ~/.config/mother
 $ echo n | sudo mothership apply
 Error: this machine trusts no commit of the fleet yet: run `sudo mothership install`
 [exit 1]
-$ printf 'c\n%s\n' "$(grep -o '[0-9a-f]*$' ~/code)" | sudo mothership install > ~/out; head -3 ~/out
+$ printf 'c\nbadc0de\nc\n%s\n' "$(grep -o '[0-9a-f]*$' ~/code)" | sudo mothership install > ~/out; head -6 ~/out
 This machine needs a fleet commit to trust first.
 c type the code it prints · r type the recovery key › c
-Code: [0-9a-f]{12} (re)
+Code: badc0de
+That code doesn't work: the fleet has no commit badc0de
+This machine needs a fleet commit to trust first.
+c type the code it prints · r type the recovery key › c
 $ sudo cat /etc/wifi.conf
 psk=WIFI-SECRET
 ```

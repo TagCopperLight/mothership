@@ -19,12 +19,12 @@ $ cd /var/lib/mothership/fleet && git commit -qam "Add zeta" && git push -q
 $ sudo mothership scan
 Needs attention · 1
   Fleet commits
-    \+ [0-9a-f]{12} Add zeta +refused, by Me +nobody signed it: sign it again or drop it, then push (re)
+    \+ [0-9a-f]{12} Add zeta +refused, \d{4}-\d\d-\d\d, claims to be by Me +nobody signed it: remove it from main, then push (re)
 
 1 to review     sudo mothership review
 \d+ ignored (re)
 $ echo n | sudo mothership apply | head -1
-This machine refuses [0-9a-f]{12} "Add zeta" by Me, and what follows it: nobody signed it (re)
+This machine refuses [0-9a-f]{12} "Add zeta" of \d{4}-\d\d-\d\d, which claims to be by Me, and what follows it: nobody signed it (re)
 ```
 
 It also tries to sign itself in, with a key of its own.
@@ -35,7 +35,9 @@ $ ssh-keygen -q -t ed25519 -N '' -f ~/rogue && cd /var/lib/mothership/fleet &&
 > git -c gpg.format=ssh -c user.signingkey=$HOME/rogue commit -S -qam "Let me in" &&
 > git push -qf
 $ sudo mothership scan | grep refused
-    \+ [0-9a-f]{12} Let me in +refused, by Me +a key the fleet doesn't list signed it: sign it again or drop it, then push (re)
+    \+ [0-9a-f]{12} Let me in +refused, \d{4}-\d\d-\d\d, claims to be by Me +a key the fleet doesn't list signed it: remove it from main, then push (re)
+$ echo y | sudo mothership commit "On top" 2>&1 | tail -1
+Error: the fleet's main goes past [0-9a-f]{12}, the last commit this machine accepts: remove the commits after it from main, then push (re)
 ```
 
 I drop it. The agent's work on a branch applies once I bring it in and commit it through

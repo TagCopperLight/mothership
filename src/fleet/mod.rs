@@ -541,6 +541,18 @@ fn profiles(fleet_dir: &Path, dir: &Path) -> Result<Vec<Profile>> {
     Ok(profiles)
 }
 
+pub fn check_logins(fleet_dir: &Path) -> Result<()> {
+    for type_name in types(fleet_dir)? {
+        for dir in walk::children(&type_dir(fleet_dir, &type_name).join(USERS))? {
+            let path = dir.join(USER_TOML);
+            let config: UserConfig = read_toml(&path)?;
+            let shown = path.strip_prefix(fleet_dir).unwrap_or(&path);
+            logins::resolve(fleet_dir, shown, &config.ssh_from)?;
+        }
+    }
+    Ok(())
+}
+
 fn read_toml<T: de::DeserializeOwned>(path: &Path) -> Result<T> {
     toml::from_str(
         &fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?,

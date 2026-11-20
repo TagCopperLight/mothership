@@ -47,10 +47,10 @@ fn flags_refuse_what_they_can_not_mean() {
 #[test]
 fn a_hostname_follows_rfc_1123() {
     for name in ["box", "mini-pc", "a1", &"a".repeat(63)] {
-        assert!(valid_hostname(name), "{name}");
+        assert!(crate::host::check(name).is_ok(), "{name}");
     }
     for name in ["", "-help", "box-", "Box", "a_b", "a.b", &"a".repeat(64)] {
-        assert!(!valid_hostname(name), "{name}");
+        assert!(crate::host::check(name).is_err(), "{name}");
     }
 }
 

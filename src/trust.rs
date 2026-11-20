@@ -307,7 +307,7 @@ pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()>
     if !found {
         bail!("the fleet holds no key named {host}");
     }
-    Ok(())
+    fleet::check_logins(&fleet.dir).with_context(|| format!("{host} stays"))
 }
 
 pub fn reseal_everything(

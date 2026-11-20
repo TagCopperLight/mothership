@@ -17,6 +17,13 @@ $ ssh -o BatchMode=yes localhost echo logged in
 logged in
 ```
 
+Retiring the only machine whose key a user lets in would lock that user out, so retire refuses.
+
+```console
+$ yes | sudo mothership retire machine 2>&1 | tail -1
+Error: machine stays: types/workstation/users/me/user.toml's ssh_from finds no SSH key in the fleet, so every login would be refused
+```
+
 A name the fleet lacks stops mothership before it writes anything, and so does a list with no key
 in it.
 

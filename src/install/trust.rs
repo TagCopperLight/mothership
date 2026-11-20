@@ -41,7 +41,9 @@ pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
         )? {
             Some(Next::Code) => {
                 let code = prompt.line("Code:")?;
-                checked::sync_from(&admin, Remote::Fetch, Anchor::Code(&code))?;
+                if let Err(e) = checked::sync_from(&admin, Remote::Fetch, Anchor::Code(&code)) {
+                    println!("That code doesn't work: {e:#}");
+                }
             }
             Some(Next::Recovery) => recover(prompt, hostname, &fleet, anchored)?,
             None => bail!("install stopped before the fleet trusted this machine"),
