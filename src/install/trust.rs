@@ -81,6 +81,14 @@ fn recover(prompt: &mut Prompt, hostname: &str, fleet: &Fleet, anchored: bool) -
         &entries,
         prompt,
     )?;
+    for (name, question) in [
+        ("user.name", "Your name, for the fleet's commits:"),
+        ("user.email", "Your email, for the fleet's commits:"),
+    ] {
+        if checked::author(admin, name)?.is_none() {
+            checked::set_author(admin, name, &prompt.line(question)?)?;
+        }
+    }
     let message = format!("Trust {hostname} as {}", staged.type_name);
     stage.commit(admin, &message, &sign::recovery_key(&age))?;
     github::add(admin, &uploads)?;

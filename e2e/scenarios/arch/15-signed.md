@@ -58,3 +58,17 @@ $ cd /var/lib/mothership/fleet && git config core.fsmonitor 'touch /tmp/ran-by-$
 $ ls /tmp | grep ran-by
 ran-by-me
 ```
+
+Once this machine signs only for another type, a review here would change files it can't sign.
+It stops before signing, and pushes nothing.
+
+```console
+$ cd /var/lib/mothership/fleet && git config --unset core.fsmonitor &&
+> sed -i '/^ssh-ed25519/s/$/ types\/server/' signers.txt &&
+> git commit -S -qam "Sign only for servers" && git push -q && echo y | sudo mothership apply &> /dev/null
+$ echo "new" | sudo install -m 644 /dev/stdin /etc/scoped.conf
+$ printf 'a\n' | sudo mothership review 2>&1 | tail -1
+Error: the fleet's machines would refuse this commit, so nothing changed: machine can't sign a change to types/workstation/etc/scoped.conf
+$ git -C /var/lib/mothership/fleet log -1 --format=%s
+Sign only for servers
+```

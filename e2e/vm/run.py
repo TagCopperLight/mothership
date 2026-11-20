@@ -240,6 +240,9 @@ def install(args: list[str], port: int, log) -> None:
             vm.sendline("y")
         wait(vm, "vmtest signs:")
         vm.send("e")
+        for question, answer in [("Your name", "Tester"), ("Your email", "tester@example.com")]:
+            wait(vm, question)
+            vm.sendline(answer)
         wait(vm, "Secure Boot holds this machine's keys now.", timeout=INSTALL_TIMEOUT)
         wait(vm, "The system is installed.", timeout=300)
         vm.expect("VM# ")

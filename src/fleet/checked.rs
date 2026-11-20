@@ -441,9 +441,12 @@ impl Stage {
             return Ok(None);
         }
         let config = |name: &str| -> Result<String> {
-            let value = in_checkout(admin, &["config", name])
-                .with_context(|| format!("reading {name} in {DIR}"))?;
-            Ok(value.trim().to_owned())
+            author(admin, name)?.with_context(|| {
+                format!(
+                    "{} has no git {name}: set it with `git -C {DIR} config {name} …`",
+                    admin.name
+                )
+            })
         };
         let who = format!(
             "{} <{}> {} +0000",
@@ -464,6 +467,9 @@ impl Stage {
             1,
         );
         let commit = git.with_input(&["hash-object", "-t", "commit", "-w", "--stdin"], &object)?;
+        if let Err(why) = verify(&git, &self.base, &commit) {
+            bail!("the fleet's machines would refuse this commit, so nothing changed: {why:#}");
+        }
         git.out(&["update-ref", STAGED, &commit])?;
         let bundle = tempfile::Builder::new().suffix(".bundle").tempfile()?;
         let path = bundle.path().to_string_lossy().into_owned();
@@ -505,6 +511,17 @@ fn publish(admin: &User, base: &str, commit: &str, bundle: &Path) -> Result<()> 
 
 fn in_checkout(admin: &User, args: &[&str]) -> Result<String> {
     cmd::stdout(As::User(admin), "git", &[&["-C", DIR][..], args].concat())
+}
+
+pub fn author(admin: &User, name: &str) -> Result<Option<String>> {
+    let args = ["-C", DIR, "config", name];
+    let value = cmd::bytes_allowing_exit(As::User(admin), "git", &args, 1)?;
+    let value = String::from_utf8(value)?.trim().to_owned();
+    Ok((!value.is_empty()).then_some(value))
+}
+
+pub fn set_author(admin: &User, name: &str, value: &str) -> Result<()> {
+    in_checkout(admin, &["config", name, value]).map(drop)
 }
 
 pub fn origin(admin: &User) -> Result<String> {
