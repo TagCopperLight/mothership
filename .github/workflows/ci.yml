@@ -17,10 +17,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
+      - uses: crazy-max/ghaction-github-runtime@v4
       - run: ./ci.sh
+        env:
+          E2E_LAYER_CACHE: gha
       - uses: actions/upload-artifact@v7
         with:
           name: mothership-x86_64
-          path: target/musl/release/mothership
+          path: target/x86_64-unknown-linux-musl/release/mothership
           if-no-files-found: error

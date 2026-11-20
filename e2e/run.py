@@ -4,9 +4,11 @@
 
 
 import difflib
+import os
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from functools import cache
 from pathlib import Path
 
@@ -14,6 +16,7 @@ import binary
 
 HERE = Path(__file__).resolve().parent
 EXIT = re.compile(r"\[exit (\d+)\]")
+LAYER_CACHE = os.environ.get("E2E_LAYER_CACHE")
 
 
 def main() -> int:
@@ -21,10 +24,18 @@ def main() -> int:
     scenarios = sorted(HERE.glob("scenarios/*/*.md"))
     if wanted:
         scenarios = [s for s in scenarios if s.stem in wanted]
-    binary.build()
-    for name in sorted({system(s) for s in scenarios}):
-        build(name)
-    failed = [f"{system(s)}/{s.stem}" for s in scenarios if not run(s)]
+    with ThreadPoolExecutor() as pool:
+        builds = [pool.submit(binary.build)]
+        builds += [pool.submit(build, name) for name in sorted({system(s) for s in scenarios})]
+        for done in builds:
+            done.result()
+    failed = []
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+        for path, report in zip(scenarios, pool.map(run, scenarios)):
+            name = f"{system(path)}/{path.stem}"
+            print(f"{name}: {'ok' if report is None else 'FAIL'}{report or ''}", flush=True)
+            if report is not None:
+                failed.append(name)
     print(f"\n{len(scenarios) - len(failed)} of {len(scenarios)} scenarios pass")
     for name in failed:
         print(f"  failed: {name}")
@@ -40,7 +51,9 @@ def image(system: str) -> str:
 
 
 def build(system: str) -> None:
-    subprocess.run(["docker", "build", "--quiet", "--network", "host", "-t", image(system),
+    cache = [f"--cache-from=type={LAYER_CACHE},scope={system}",
+             f"--cache-to=type={LAYER_CACHE},scope={system},mode=max"] if LAYER_CACHE else []
+    subprocess.run(["docker", "build", "--quiet", "--network", "host", *cache, "-t", image(system),
                     "-f", str(HERE / f"{system}.Dockerfile"), str(HERE)],
                    check=True, stdout=subprocess.DEVNULL)
 
@@ -63,9 +76,8 @@ def parse(path: Path) -> list[tuple[str, list[str]]]:
     return steps
 
 
-def run(path: Path) -> bool:
+def run(path: Path) -> str | None:
     name = system(path)
-    print(f"{name}/{path.stem}: ", end="", flush=True)
     container = subprocess.run(
         ["docker", "run", "-d", "--rm", "--network", "none", "--cap-add", "SYS_ADMIN",
          "--security-opt", "apparmor=unconfined",
@@ -85,17 +97,13 @@ def run(path: Path) -> bool:
             if expected and (m := EXIT.fullmatch(expected[-1].strip())):
                 want_code, expected = int(m.group(1)), expected[:-1]
             if out.returncode != want_code or not matches(expected, actual):
-                print("FAIL")
-                print(f"\n  $ {command}")
+                report = ["", "", f"  $ {command}"]
                 if out.returncode != want_code:
-                    print(f"  exit code {out.returncode}, expected {want_code}")
+                    report.append(f"  exit code {out.returncode}, expected {want_code}")
                 diff = difflib.unified_diff(expected, actual, "expected", "actual", lineterm="")
-                for line in diff:
-                    print(f"  {line}")
-                print()
-                return False
-        print("ok")
-        return True
+                report += [f"  {line}" for line in diff]
+                return "\n".join(report) + "\n"
+        return None
     finally:
         subprocess.run(["docker", "rm", "-f", container], capture_output=True)
 
