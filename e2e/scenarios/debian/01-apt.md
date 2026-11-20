@@ -83,7 +83,9 @@ $ printf 'a\na\nr\ny\n' | sudo mothership review
 2 added, 1 reverted
 Review on machine: 2 added:
   M types/server/system.toml
-Commit and push [y/N]? y
+Then on this machine:
+  /etc/gamma.conf: restore the package's version
+Commit, push and revert [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 2 added (re)
 $ cat /etc/gamma.conf
 volume = 5

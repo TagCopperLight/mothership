@@ -175,14 +175,18 @@ $ printf 'a\nr\nr\nr\ny\n' | sudo mothership review
   r  revert      leave
   i ignore · l later · p pass · q quit
   › r
-Removing user me from group audio
 1 added, 3 reverted
 1 put off before and not due yet
 Review on machine: 1 added:
   A types/workstation/etc/profile.d/proxy.sh
   M types/workstation/system.toml
-Commit and push [y/N]? y
+Then on this machine:
+  /etc/fleet.conf: write the fleet's version
+  ~/.gitconfig: write the fleet's version
+  group audio: leave
+Commit, push and revert [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 added (re)
+Removing user me from group audio
 ```
 
 The machine is back to the fleet, and the files review added are mine. The script
@@ -251,4 +255,21 @@ $ ls /var/lib/mothership/fleet/types/workstation/users/me/home/dot_config | od -
 $ sudo mothership scan | grep -c -e caf -e 'not scanned'
 0
 [exit 1]
+```
+
+Review changes nothing until its last question. Saying no there keeps the fleet and the machine
+as they were.
+
+```console
+$ echo "mine" | sudo tee /etc/fleet.conf > /dev/null && printf 'x = 2\n' > ~/.config/other.conf
+$ printf 'a\nr\nn\n' | sudo mothership review | tail -6
+Review on machine: 1 added:
+  A types/workstation/users/me/home/dot_config/other.conf
+Then on this machine:
+  /etc/fleet.conf: write the fleet's version
+Commit, push and revert [y/N]? n
+Nothing changed.
+$ cat /etc/fleet.conf && git -C /var/lib/mothership/fleet log -1 --format=%s
+mine
+Review on machine: 1 added
 ```

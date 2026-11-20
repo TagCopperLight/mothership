@@ -61,16 +61,17 @@ $ ls /tmp | grep ran-by
 ran-by-me
 ```
 
-Once this machine signs only for another type, a review here would change files it can't sign.
-It stops before signing, and pushes nothing.
+Once this machine signs only for another type, review refuses each answer that would change a
+file it can't sign, and leaves revert, later and pass.
 
 ```console
 $ cd /var/lib/mothership/fleet && git config --unset core.fsmonitor &&
 > sed -i '/^ssh-ed25519/s/$/ types\/server/' signers.txt &&
 > echo y | sudo mothership commit "Sign only for servers" >/dev/null && echo y | sudo mothership apply &> /dev/null
 $ echo "new" | sudo install -m 644 /dev/stdin /etc/scoped.conf
-$ printf 'a\ny\n' | sudo mothership review 2>&1 | tail -1
-Error: the fleet's machines would refuse this commit, so nothing changed: machine can't sign a change to types/workstation/etc/scoped.conf
+$ printf 'a\np\n' | sudo mothership review | grep -A1 "can't sign"
+  this machine can't sign that, so answer it from one that can: machine can't sign a change to types/workstation/etc/scoped.conf
+  › p
 $ git -C /var/lib/mothership/fleet log -1 --format=%s
 Sign only for servers
 ```

@@ -363,6 +363,8 @@ fn extract(git: &Git, commit: &str, done: &Path) -> Result<()> {
 pub struct Stage {
     pub dir: PathBuf,
     base: String,
+    index: tempfile::TempDir,
+    kept: String,
 }
 
 pub fn stage() -> Result<Stage> {
@@ -376,7 +378,14 @@ pub fn stage() -> Result<Stage> {
     }
     extract(&git, &base, &dir)?;
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
-    Ok(Stage { dir, base })
+    let stage = Stage {
+        dir,
+        kept: git.out(&["rev-parse", &format!("{base}^{{tree}}")])?,
+        base,
+        index: tempfile::TempDir::new()?,
+    };
+    stage.staged(&["read-tree", &stage.base])?;
+    Ok(stage)
 }
 
 pub enum Outcome {
@@ -431,26 +440,65 @@ impl Stage {
         cmd::output_with_input(apply, "git", &["apply"], &patch).map(drop)
     }
 
+    fn staged(&self, args: &[&str]) -> Result<String> {
+        let mut command = Git::at(GIT_DIR).command(args);
+        command
+            .current_dir(&self.dir)
+            .env("GIT_INDEX_FILE", self.index.path().join("index"))
+            .env("GIT_WORK_TREE", &self.dir);
+        let out = cmd::output(command, "git", args)?;
+        Ok(String::from_utf8(out)?.trim_end().to_owned())
+    }
+
+    fn tree(&self) -> Result<String> {
+        self.staged(&["add", "--all", "--force"])?;
+        self.staged(&["write-tree"])
+    }
+
+    pub fn machine_signer(&self) -> Result<Option<Signer>> {
+        let Some(key) = sign::machine_key()? else {
+            return Ok(None);
+        };
+        let signers = Git::at(GIT_DIR).signers(&self.base)?;
+        Ok(signers.into_iter().find(|s| &s.key == key.public_key()))
+    }
+
+    pub fn keep_if_signable(&mut self, signer: Option<&Signer>) -> Result<Option<String>> {
+        let tree = self.tree()?;
+        if tree == self.kept {
+            return Ok(None);
+        }
+        let changed = self.staged(&["diff-tree", "-r", "--name-only", &self.base, &tree])?;
+        let changed: Vec<PathBuf> = changed.lines().map(PathBuf::from).collect();
+        let why = match signer {
+            None => Some("this machine signs nothing for the fleet".to_owned()),
+            Some(signer) => {
+                let signers = Git::at(GIT_DIR).signers(&self.base)?;
+                sign::allowed(signer, &changed, &signers, &signers)
+                    .err()
+                    .map(|e| format!("{e:#}"))
+            }
+        };
+        let Some(why) = why else {
+            self.kept = tree;
+            return Ok(None);
+        };
+        let undone = self.staged(&["diff-tree", "-r", "--name-only", &self.kept, &tree])?;
+        let paths: Vec<&str> = undone.lines().collect();
+        let source = format!("--source={}", self.kept);
+        self.staged(&[&["restore", &source, "--worktree", "--"][..], &paths].concat())?;
+        self.tree()?;
+        Ok(Some(why))
+    }
+
     pub fn prepare(
-        self,
+        &self,
         admin: &User,
         message: &str,
         key: &PrivateKey,
     ) -> Result<Option<Prepared>> {
         let git = Git::at(GIT_DIR);
-        let index = tempfile::TempDir::new()?;
-        let staged = |args: &[&str]| -> Result<String> {
-            let mut command = git.command(args);
-            command
-                .env("GIT_INDEX_FILE", index.path().join("index"))
-                .env("GIT_WORK_TREE", &self.dir);
-            let out = cmd::output(command, "git", args)?;
-            Ok(String::from_utf8(out)?.trim_end().to_owned())
-        };
-        staged(&["read-tree", &self.base])?;
-        staged(&["add", "--all", "--force"])?;
-        let tree = staged(&["write-tree"])?;
-        fs::remove_dir_all(&self.dir).with_context(|| format!("removing {STAGING}"))?;
+        let tree = self.tree()?;
         if Some(&tree) == git.rev(&format!("{}^{{tree}}", self.base))?.as_ref() {
             return Ok(None);
         }
@@ -485,7 +533,7 @@ impl Stage {
             bail!("the fleet's machines would refuse this commit, so nothing changed: {why:#}");
         }
         Ok(Some(Prepared {
-            base: self.base,
+            base: self.base.clone(),
             commit,
             message: message.to_owned(),
         }))
@@ -499,7 +547,9 @@ impl Stage {
         prompt: &mut Prompt,
         advance: Advance,
     ) -> Result<Outcome> {
-        let Some(prepared) = self.prepare(admin, message, key)? else {
+        let prepared = self.prepare(admin, message, key)?;
+        self.finish()?;
+        let Some(prepared) = prepared else {
             return Ok(Outcome::Unchanged);
         };
         prepared.show()?;
@@ -508,6 +558,10 @@ impl Stage {
             return Ok(Outcome::Declined);
         }
         prepared.publish(admin, advance).map(Outcome::Pushed)
+    }
+
+    pub fn finish(self) -> Result<()> {
+        fs::remove_dir_all(&self.dir).with_context(|| format!("removing {STAGING}"))
     }
 }
 

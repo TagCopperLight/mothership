@@ -2,7 +2,7 @@ use crate::{
     edit::{self, Add},
     fleet::{
         Fleet,
-        checked::{self, Advance},
+        checked::{self, Advance, Stage},
     },
     host,
     item::{Adding, Item, Secret, Section},
@@ -11,28 +11,66 @@ use crate::{
     record::Record,
     revert::{self, Etc, Machine, Revert},
     scan::{self, Columns},
-    sign,
+    sign::{self, Signer},
     style::{self, Paint, Style},
     walk,
 };
-use anyhow::{Error, Result};
+use anyhow::Result;
 
 pub fn run() -> Result<()> {
-    let stage = checked::stage()?;
+    let mut stage = checked::stage()?;
     let report = scan::collect(&stage.dir)?;
+    let signer = stage.machine_signer()?;
+    let key = sign::require_machine_key()?;
     let mut prompt = Prompt::new();
-    let result = ask(&report, &mut prompt);
-    let message = match &result {
-        Ok(tally) if !tally.parts().is_empty() => {
-            format!("Review on {}: {}", host::name()?, tally.parts().join(", "))
+    let answers = match ask(&report, &mut stage, signer.as_ref(), &mut prompt) {
+        Err(e) if prompt::stopped(&e) => {
+            println!("Nothing changed.");
+            return stage.finish();
         }
-        _ => format!("Review on {}", host::name()?),
+        answers => answers?,
     };
-    let admin = report.fleet.admin();
-    let committed = sign::require_machine_key()
-        .and_then(|key| stage.commit(admin, &message, &key, &mut prompt, Advance::Merge));
-    result?;
-    committed.map(drop)
+    let fleet = &report.fleet;
+    let message = match answers.tally.parts() {
+        parts if parts.is_empty() => format!("Review on {}", host::name()?),
+        parts => format!("Review on {}: {}", host::name()?, parts.join(", ")),
+    };
+    let prepared = stage.prepare(fleet.admin(), &message, &key)?;
+    if prepared.is_none() && answers.reverts.is_empty() {
+        answers.later.save(fleet, &answers.mine)?;
+        return stage.finish();
+    }
+    if let Some(prepared) = &prepared {
+        prepared.show()?;
+    }
+    if !answers.reverts.is_empty() {
+        println!("Then on this machine:");
+        for (subject, revert) in &answers.reverts {
+            println!("  {}: {}", subject, revert.1.describe());
+        }
+    }
+    let question = match (&prepared, answers.reverts.is_empty()) {
+        (Some(_), true) => "Commit and push",
+        (Some(_), false) => "Commit, push and revert",
+        (None, _) => "Revert them",
+    };
+    if !prompt.confirm(question)? {
+        println!("Nothing changed.");
+        return stage.finish();
+    }
+    if let Some(prepared) = prepared {
+        prepared.publish(fleet.admin(), Advance::Merge)?;
+    }
+    answers.later.save(fleet, &answers.mine)?;
+    revert_all(fleet, &answers.reverts)?;
+    stage.finish()
+}
+
+struct Answers<'a> {
+    tally: Tally,
+    later: Later,
+    mine: Vec<&'a Item>,
+    reverts: Vec<(String, revert::Owned<'a>)>,
 }
 
 #[derive(Default)]
@@ -72,7 +110,7 @@ impl Tally {
         let count = match answer {
             Answer::Add(_) | Answer::Secret(_) => &mut self.added,
             Answer::NotSecret => &mut self.not_secret,
-            Answer::Revert(_) => &mut self.reverted,
+            Answer::Revert => &mut self.reverted,
             Answer::Ignore => &mut self.ignored,
             Answer::Later => &mut self.put_off,
             Answer::Pass => &mut self.passed,
@@ -87,7 +125,7 @@ enum Answer<'a> {
     Add(&'a Add),
     Secret(&'a Add),
     NotSecret,
-    Revert(&'a Revert),
+    Revert,
     Ignore,
     Later,
     Pass,
@@ -103,7 +141,7 @@ impl Answer<'_> {
             Answer::Add(_) => 'a',
             Answer::Secret(_) => 's',
             Answer::NotSecret => 'n',
-            Answer::Revert(_) => 'r',
+            Answer::Revert => 'r',
             Answer::Ignore => 'i',
             Answer::Later => 'l',
             Answer::Pass => 'p',
@@ -116,7 +154,7 @@ impl Answer<'_> {
             Answer::Add(_) => "add",
             Answer::Secret(_) => "secret",
             Answer::NotSecret => "not secret",
-            Answer::Revert(_) => "revert",
+            Answer::Revert => "revert",
             Answer::Ignore => "ignore",
             Answer::Later => "later",
             Answer::Pass => "pass",
@@ -125,11 +163,15 @@ impl Answer<'_> {
     }
 }
 
-fn ask(report: &scan::Report, prompt: &mut Prompt) -> Result<Tally> {
+fn ask<'a>(
+    report: &'a scan::Report,
+    stage: &mut Stage,
+    signer: Option<&Signer>,
+    prompt: &mut Prompt,
+) -> Result<Answers<'a>> {
     let fleet = &report.fleet;
     let style = Style::stdout();
     let mut later = Later::load()?;
-    let mut record = Record::load()?;
     let now = later::now()?;
     let back_later = format!(
         "back in {}",
@@ -147,9 +189,9 @@ fn ask(report: &scan::Report, prompt: &mut Prompt) -> Result<Tally> {
         .collect();
 
     let mut tally = Tally::default();
+    let mut reverts = Vec::new();
     let mut last: Option<String> = None;
     let mut seen = 0;
-    let mut failure: Option<Error> = None;
     'items: for (n, item) in due.iter().enumerate() {
         if style.terminal {
             print!("{}", style::CLEAR);
@@ -197,7 +239,7 @@ fn ask(report: &scan::Report, prompt: &mut Prompt) -> Result<Tally> {
             .map(|answer| format!("{} {}", key(*answer), answer.name()))
             .collect();
         println!("  {}", always.join(" · "));
-        let keys: Vec<(char, Answer)> = choices
+        let mut keys: Vec<(char, Answer)> = choices
             .iter()
             .map(|(answer, _)| *answer)
             .chain(Answer::ALWAYS)
@@ -205,14 +247,8 @@ fn ask(report: &scan::Report, prompt: &mut Prompt) -> Result<Tally> {
             .collect();
 
         loop {
-            let answer = match prompt.ask("  ›", &keys) {
-                Ok(Some(answer)) => answer,
-                Ok(None) => break 'items,
-                Err(e) if prompt::stopped(&e) => break 'items,
-                Err(e) => {
-                    failure = Some(e);
-                    break 'items;
-                }
+            let Some(answer) = prompt.ask("  ›", &keys)? else {
+                break 'items;
             };
             let outcome = match answer {
                 Answer::Quit => break 'items,
@@ -221,9 +257,14 @@ fn ask(report: &scan::Report, prompt: &mut Prompt) -> Result<Tally> {
                     .map(|added| added.then_some("added to the fleet")),
                 Answer::NotSecret => edit::not_secret(fleet, member, &item.subject)
                     .map(|()| Some("marked not secret")),
-                Answer::Revert(revert) => {
-                    revert_one(fleet, &mut record, (item.member, revert), prompt)
-                        .map(|reverted| reverted.then_some("reverted"))
+                Answer::Revert => {
+                    let revert = item.revert.as_ref().expect("revert is offered with one");
+                    confirm_revert(revert, prompt).map(|go| {
+                        go.then(|| {
+                            reverts.push((item.subject.clone(), (item.member, revert)));
+                            "to revert"
+                        })
+                    })
                 }
                 Answer::Ignore => {
                     edit::ignore(fleet, member, &item.ignore_line()).map(|()| Some("ignored"))
@@ -234,12 +275,17 @@ fn ask(report: &scan::Report, prompt: &mut Prompt) -> Result<Tally> {
             let done = match outcome {
                 Ok(Some(done)) => done,
                 Ok(None) => continue,
-                Err(e) if prompt::stopped(&e) => break 'items,
+                Err(e) if prompt::stopped(&e) => return Err(e),
                 Err(e) => {
                     println!("  failed: {}", style::clean(&format!("{e:#}")));
                     continue;
                 }
             };
+            if let Some(why) = stage.keep_if_signable(signer)? {
+                println!("  this machine can't sign that, so answer it from one that can: {why}");
+                keys.retain(|(key, _)| *key != answer.key());
+                continue;
+            }
             match answer {
                 Answer::Later => later.put_off(fleet, item, now),
                 Answer::Pass => {}
@@ -252,10 +298,6 @@ fn ask(report: &scan::Report, prompt: &mut Prompt) -> Result<Tally> {
         seen = n + 1;
     }
 
-    later.save(fleet, &mine)?;
-    if let Some(e) = failure {
-        return Err(e);
-    }
     if style.terminal {
         print!("{}", style::CLEAR);
     }
@@ -289,7 +331,12 @@ fn ask(report: &scan::Report, prompt: &mut Prompt) -> Result<Tally> {
             tally.not_secret
         );
     }
-    Ok(tally)
+    Ok(Answers {
+        tally,
+        later,
+        mine,
+        reverts,
+    })
 }
 
 fn choices<'a>(
@@ -309,7 +356,7 @@ fn choices<'a>(
         choices.push((Answer::NotSecret, what.into()));
     }
     if let Some(revert) = &item.revert {
-        choices.push((Answer::Revert(revert), revert.describe()));
+        choices.push((Answer::Revert, revert.describe()));
     }
     choices
 }
@@ -336,23 +383,24 @@ fn progress(done: usize, total: usize, style: Style) -> String {
     )
 }
 
-fn revert_one(
-    fleet: &Fleet,
-    record: &mut Record,
-    (member, revert): revert::Owned,
-    prompt: &mut Prompt,
-) -> Result<bool> {
+fn confirm_revert(revert: &Revert, prompt: &mut Prompt) -> Result<bool> {
     if let Revert::Machine(Machine::Etc(Etc::Delete(path))) = revert
         && path.is_dir()
     {
         let count = walk::files(path)?.len();
         let files = style::count(count, "file");
-        if !prompt.confirm(&format!("  That deletes {files}. Go on"))? {
-            return Ok(false);
+        return prompt.confirm(&format!("  That deletes {files}. Go on"));
+    }
+    Ok(true)
+}
+
+fn revert_all(fleet: &Fleet, reverts: &[(String, revert::Owned)]) -> Result<()> {
+    let mut record = Record::load()?;
+    for (subject, (member, revert)) in reverts {
+        match revert::run(fleet, &[(*member, revert)]) {
+            Ok(()) => record.reverted(revert)?,
+            Err(e) => println!("Couldn't revert {subject}: {e:#}"),
         }
     }
-    revert::run(fleet, &[(member, revert)])?;
-    record.reverted(revert)?;
-    record.save()?;
-    Ok(true)
+    record.save()
 }

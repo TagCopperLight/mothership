@@ -189,6 +189,9 @@ $ printf 'r\ny\n' | sudo mothership review
   i ignore · l later · p pass · q quit
   › r
 1 reverted
+Then on this machine:
+  ~/.ssh/id_test: write the fleet's version
+Revert them [y/N]? y
 $ stat -c '%a' ~/.ssh/id_test && cat ~/.ssh/id_test
 600
 SSH-SECRET
@@ -210,6 +213,9 @@ $ printf 'r\ny\n' | sudo mothership review
   i ignore · l later · p pass · q quit
   › r
 1 reverted
+Then on this machine:
+  /etc/wifi.conf: write the fleet's version
+Revert them [y/N]? y
 $ sudo cat /etc/wifi.conf
 psk=WIFI-SECRET
 ```
