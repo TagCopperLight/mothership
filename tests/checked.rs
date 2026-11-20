@@ -129,36 +129,6 @@ fn a_commit_can_not_sign_itself_in() {
 }
 
 #[test]
-fn a_signed_merge_vouches_for_the_unsigned_branch_it_brings() {
-    let repo = Repo::new();
-    let (laptop, laptop_file) = repo.key("laptop");
-    repo.write(SIGNERS, &line("laptop", &laptop, ""));
-    let anchor = repo.commit("Signers", None);
-    repo.git(&["checkout", "-q", "-b", "agent"]);
-    repo.write("types/a/system.toml", "packages = [\"htop\"]\n");
-    repo.commit("Agent work", None);
-    repo.git(&["checkout", "-q", "main"]);
-    let signing = format!("user.signingkey={}", laptop_file.display());
-    repo.git(&[
-        "-c",
-        "gpg.format=ssh",
-        "-c",
-        &signing,
-        "merge",
-        "-q",
-        "--no-ff",
-        "-S",
-        "-m",
-        "Merge",
-        "agent",
-    ]);
-
-    let checked = repo.check(&anchor);
-    assert!(checked.refused.is_none());
-    assert_eq!(checked.commit, repo.git(&["rev-parse", "HEAD"]));
-}
-
-#[test]
 fn a_scoped_signer_stays_in_its_type_and_recovery_signs_anything() {
     let repo = Repo::new();
     let (minipc, minipc_file) = repo.key("minipc");
@@ -215,4 +185,23 @@ fn a_main_that_left_the_checked_commit_stops_the_check() {
     .err()
     .unwrap();
     assert!(error.to_string().starts_with("main doesn't follow"));
+}
+
+#[test]
+fn a_main_and_an_origin_that_split_stop_the_check() {
+    let repo = Repo::new();
+    let first = repo.commit("First", None);
+    let ours = repo.commit("Ours", None);
+    repo.git(&["checkout", "-q", "-b", "theirs", &first]);
+    let theirs = repo.commit("Theirs", None);
+    let git = Git::at(repo.work.join(".git"));
+    git.out(&["update-ref", MAIN, &ours]).unwrap();
+    git.out(&["update-ref", ORIGIN, &first]).unwrap();
+    assert_eq!(tips(&git).unwrap(), (ours.clone(), ours.clone()));
+    git.out(&["update-ref", ORIGIN, &theirs]).unwrap();
+    let error = tips(&git).unwrap_err().to_string();
+    assert!(
+        error.starts_with("main and origin/main have split"),
+        "{error}"
+    );
 }

@@ -22,3 +22,17 @@ The fleet runs mothership 0.2.0.
 Update [y/N]? n
 Apply stops: the fleet's changes may need that version.
 ```
+
+A version change nobody signed never reaches the machine: apply refuses the commit and stays on
+the pinned version, without asking to update.
+
+```console
+$ cd /var/lib/mothership/fleet && git revert --no-commit HEAD &&
+> echo y | sudo mothership commit "Back to 0.1.0" >/dev/null &&
+> sed -i 's/^x86_64 = .*/x86_64 = "1111"/; s/0.1.0/0.3.0/' mothership.toml &&
+> git commit -qam "Move to 0.3.0" && echo n | sudo mothership apply | head -1
+This machine refuses [0-9a-f]{12} "Move to 0.3.0" of \d{4}-\d\d-\d\d, which claims to be by Me, and what follows it: nobody signed it (re)
+$ echo n | sudo mothership apply | grep -c Update
+0
+[exit 1]
+```
