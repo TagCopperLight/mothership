@@ -23,6 +23,7 @@ use std::{
 pub mod checked;
 mod config;
 pub mod homes;
+mod logins;
 mod manifest;
 
 pub use manifest::{MANIFEST, Manifest, Pin};
@@ -94,6 +95,7 @@ pub struct Profile {
     pub name: String,
     pub dir: PathBuf,
     pub config: UserConfig,
+    pub logins: Option<Vec<String>>,
     pub ignore: Ignore,
     pub not_secret: Paths,
 }
@@ -361,7 +363,7 @@ impl Repo {
         }
         let ignore = Ignore::load(&type_dir.join(IGNORE), Level::Machine)?;
         let not_secret = Paths::load(&type_dir.join(NOT_SECRET))?;
-        let profiles = profiles(&type_dir.join(USERS))?;
+        let profiles = profiles(&dir, &type_dir.join(USERS))?;
         Ok(Repo {
             dir,
             type_name: device_type.to_owned(),
@@ -516,7 +518,7 @@ impl Profile {
     }
 }
 
-fn profiles(dir: &Path) -> Result<Vec<Profile>> {
+fn profiles(fleet_dir: &Path, dir: &Path) -> Result<Vec<Profile>> {
     let mut profiles = Vec::new();
     for dir in walk::children(dir)? {
         let name = dir
@@ -524,8 +526,11 @@ fn profiles(dir: &Path) -> Result<Vec<Profile>> {
             .and_then(|n| n.to_str())
             .with_context(|| format!("{} is not a user name", dir.display()))?
             .to_owned();
+        let path = dir.join(USER_TOML);
+        let config: UserConfig = read_toml(&path)?;
         profiles.push(Profile {
-            config: read_toml(&dir.join(USER_TOML))?,
+            logins: logins::resolve(fleet_dir, &path, &config.ssh_from)?,
+            config,
             ignore: Ignore::load(&dir.join(IGNORE), Level::User)?,
             not_secret: Paths::load(&dir.join(NOT_SECRET))?,
             name,
@@ -575,6 +580,7 @@ fn chezmoi_config(repo: &Repo, profile: &Profile, user: &User) -> chezmoi::Chezm
         recipients: published(profile.recipients()),
         profile: repo.type_name.clone(),
         user: profile.name.clone(),
+        logins: profile.logins.clone(),
     }
 }
 

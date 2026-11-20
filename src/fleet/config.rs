@@ -29,6 +29,7 @@ pub struct UserConfig {
     pub linger: bool,
     pub installers: Vec<Installer>,
     pub tools: Tools,
+    pub ssh_from: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]

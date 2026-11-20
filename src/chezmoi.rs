@@ -56,6 +56,7 @@ pub struct ChezmoiConfig {
     pub recipients: PathBuf,
     pub profile: String,
     pub user: String,
+    pub logins: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -191,6 +192,10 @@ pub fn configured(user: &User, config: &ChezmoiConfig) -> Result<bool> {
 }
 
 fn config_text(config: &ChezmoiConfig) -> Result<String> {
+    let mut data = serde_json::json!({ "profile": config.profile, "user": config.user });
+    if let Some(keys) = &config.logins {
+        data["authorized_keys"] = serde_json::json!(keys);
+    }
     Ok(toml::to_string(&serde_json::json!({
         "sourceDir": config.source,
         "encryption": "age",
@@ -199,7 +204,7 @@ fn config_text(config: &ChezmoiConfig) -> Result<String> {
             "identity": config.identity,
             "recipientsFile": config.recipients,
         },
-        "data": { "profile": config.profile, "user": config.user },
+        "data": data,
     }))?)
 }
 

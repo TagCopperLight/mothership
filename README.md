@@ -53,6 +53,7 @@ From the Arch ISO, install also partitions and encrypts the disk:
 
 ```text
 mothership.toml           the recovery key, and the mothership release every machine runs
+signers.txt               the keys whose commits machines apply, each with an optional folder it may change
 shared/                   files and secrets several homes get, linked from each home
 types/workstation/
 ├── system.toml           packages, services, hardware and options
@@ -62,12 +63,13 @@ types/workstation/
 └── users/tag/
     ├── home/             tag's home on a workstation, as chezmoi source files
     │   └── .secrets/     secrets templates read, never written to the home
-    ├── user.toml         groups, shell, linger, user services and tools
+    ├── user.toml         groups, shell, linger, user services, tools and ssh_from
     ├── recipients.txt    keys that open the secrets of tag's home
+    ├── ssh-keys.txt      tag's SSH public key on each workstation
     └── ignore.txt
 ```
 
-A home links each shared file it wants, one link per file, and only the homes linking a file get it: scan lists who gets each one. A template reads a secret with `{{ include ".secrets/api-key.age" | decrypt }}`, and can read `.profile` (the type) and `.user`.
+A home links each shared file it wants, one link per file, and only the homes linking a file get it: scan lists who gets each one. A template reads a secret with `{{ include ".secrets/api-key.age" | decrypt }}`, and can read `.profile` (the type) and `.user`. With `ssh_from = ["workstation", "server/dev"]` in `user.toml`, `.authorized_keys` lists the SSH keys of every workstation user and of dev on every server, for an `authorized_keys.tmpl` to write.
 
 ```toml
 packages = ["base", "linux", "git"]
