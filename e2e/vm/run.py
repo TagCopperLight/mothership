@@ -234,10 +234,10 @@ def install(args: list[str], port: int, log) -> None:
                       if line.startswith("AGE-SECRET-KEY-"))
         vm.sendline(secret)
         wait(vm, "Trust the fleet as it is")
-        vm.sendline("y")
+        vm.send("y")
         for _ in range(2):
             wait(vm, "Go on")
-            vm.sendline("y")
+            vm.send("y")
         wait(vm, "vmtest signs:")
         vm.send("e")
         for question, answer in [("Your name", "Tester"), ("Your email", "tester@example.com")]:
@@ -262,7 +262,8 @@ def first_start(args: list[str], log) -> None:
         wait(vm, "Type the passphrase once more:", timeout=1200)
         wait(vm, "[Pp]assphrase", timeout=120)
         vm.sendline(PASSPHRASE)
-        wait(vm, "Nothing differs from the vm type")
+        if vm.expect(["Nothing differs from the vm type", r"to review"], timeout=600) == 1:
+            sys.exit("the first start's scan found differences: see run.log")
         vm.expect("vmtest login:", timeout=300)
         login(vm)
         shell(vm, "cat ~/.secret && sudo -S cat /etc/secret.conf <<< " + PASSWORD)

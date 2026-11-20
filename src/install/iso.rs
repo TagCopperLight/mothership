@@ -66,13 +66,10 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
         disk::prepare(&target, prompt)?;
     }
 
-    let packages = [
-        "base",
-        "base-devel",
-        "git",
-        "chezmoi",
-        Distro::Arch.ssh_package(),
-    ];
+    let mut packages = vec!["base", "base-devel", "git", "chezmoi"];
+    if net::remote(&url)?.is_some() {
+        packages.push(Distro::Arch.ssh_package());
+    }
     let args = [&["-K", disk::ROOT], &packages[..]].concat();
     net::retry("Installing the base system", &mirror, || {
         cmd::root("pacstrap", &args)
