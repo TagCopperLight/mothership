@@ -78,7 +78,7 @@ fn change(prompt: &mut Prompt) -> Result<()> {
     let fleet = Fleet::load_at(&stage.dir)?;
     let mut keys = Keys::default();
     keys.push(old.clone());
-    trust::reseal_everything(&fleet, &keys, &old_public)?;
+    trust::reseal_everything(&fleet, &keys, &old_public, prompt)?;
     let key = sign::recovery_key(&old);
     let message = "Change the recovery key";
     if let Outcome::Pushed(_) = stage.commit(&admin, message, &key, prompt, Advance::Merge)? {

@@ -316,6 +316,54 @@ pub fn newest(admin: &User, count: usize) -> Result<Vec<String>> {
     Ok(lines)
 }
 
+pub fn linked_when_written(dir: &Path, file: &Path) -> Result<Option<Vec<PathBuf>>> {
+    if dir != Path::new(STAGING) {
+        return Ok(None);
+    }
+    let git = Git::at(GIT_DIR);
+    let base = git
+        .rev(CHECKED)?
+        .context("this machine has checked no commit")?;
+    let rel = file.strip_prefix(dir)?;
+    let rel_text = rel
+        .to_str()
+        .context("a shared file whose name isn't UTF-8")?;
+    let written = git.out(&["log", "-1", "--format=%H", &base, "--", rel_text])?;
+    if written.is_empty() {
+        return Ok(None);
+    }
+    let listing = git.out(&["ls-tree", "-r", "-z", &written, "--", super::TYPES])?;
+    let mut homes = Vec::new();
+    for entry in listing.split('\0').filter(|entry| !entry.is_empty()) {
+        let Some((meta, path)) = entry.split_once('\t') else {
+            bail!("git ls-tree printed {entry}");
+        };
+        let [mode, _, blob] = meta.split(' ').collect::<Vec<_>>()[..] else {
+            bail!("git ls-tree printed {entry}");
+        };
+        let path = Path::new(path);
+        let home: PathBuf = path.iter().take(4).collect();
+        let in_home = home.iter().nth(2) == Some(OsStr::new(super::USERS))
+            && path.iter().nth(4) == Some(OsStr::new(super::homes::HOME));
+        if mode != "120000" || !in_home {
+            continue;
+        }
+        let target = git.out(&["cat-file", "blob", blob])?;
+        let mut resolved = PathBuf::new();
+        for part in path.parent().unwrap_or(path).join(target).components() {
+            match part {
+                std::path::Component::ParentDir => drop(resolved.pop()),
+                std::path::Component::Normal(name) => resolved.push(name),
+                _ => {}
+            }
+        }
+        if resolved == rel {
+            homes.push(home);
+        }
+    }
+    Ok(Some(homes))
+}
+
 pub fn exported() -> Result<Option<String>> {
     Ok(file::if_found(fs::read_link(CURRENT))
         .with_context(|| format!("reading {CURRENT}"))?

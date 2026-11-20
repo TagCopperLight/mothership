@@ -72,6 +72,9 @@ pub fn update(
     if link && !confirm_shared(fleet, member, &source, prompt)? {
         return Ok(false);
     }
+    if link && !clear {
+        trust::Readers::new(prompt).approve(fleet, &source)?;
+    }
     let snapshot = taken(member, path, seen)?;
     if link {
         update_shared(fleet, &root, &snapshot, &source, path)?;

@@ -229,6 +229,22 @@ $ test -e ~/.token || test -e ~/.secrets || test -e /home/dev/.secrets || echo "
 nothing else
 ```
 
+A link alone opens nothing: here the server's dev links the token, in a commit that leaves the
+secret as it is. The next time trust encrypts the token again, it asks about each home it was
+never encrypted for, and no stops it.
+
+```console
+$ cd /var/lib/mothership/fleet && mkdir -p types/server/users/dev/home/.secrets &&
+> ln -s ../../../../../../shared/.secrets/token.age types/server/users/dev/home/.secrets/token.age &&
+> echo y | sudo mothership commit "Link the token from the server" >/dev/null
+$ echo n | sudo mothership trust devbox workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)" 2>&1
+Re-encrypting for workstation/dev:
+  .secrets/token.age  server/dev, workstation/dev, workstation/me
+server/dev links shared/.secrets/token.age, which was never encrypted for it. Let server/dev open it [y/N]? n
+Error: shared/.secrets/token.age stays closed to server/dev: remove its link from server/dev first
+[exit 1]
+```
+
 Scan shows accounts the type doesn't list. Adding one lists the user with an empty home, which
 the next scan treats like any other user. Ignoring one writes a `user` line in the type's
 `ignore.txt`.

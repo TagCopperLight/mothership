@@ -1,7 +1,7 @@
 use crate::{
     chezmoi, file,
     fleet::{
-        self, Fleet, Repo,
+        self, Fleet, Repo, checked,
         homes::{self, Home},
     },
     github, host,
@@ -159,6 +159,7 @@ pub fn trust_host(
     entries: &[String],
     prompt: &mut Prompt,
 ) -> Result<Vec<github::Key>> {
+    let mut readers = Readers::new(prompt);
     let mut uploads = Vec::new();
     for entry in entries {
         let (name, key) = entry
@@ -166,7 +167,7 @@ pub fn trust_host(
             .with_context(|| format!("{entry} isn't <name>=<key>"))?;
         let text = format!("{type_name}/{name}");
         if name == SIGNING {
-            let public = add_signer(fleet, host, type_name, key, prompt)?;
+            let public = add_signer(fleet, host, type_name, key, readers.prompt)?;
             uploads.push(github::Key {
                 title: host.to_owned(),
                 public,
@@ -180,7 +181,7 @@ pub fn trust_host(
                 kind: github::Use::Login,
             });
         } else if !holds(&target(fleet, &text)?.list, key)? {
-            trust_with(fleet, keys, &text, host, key)?;
+            trust_with(fleet, keys, &text, host, key, &mut readers)?;
         }
     }
     Ok(uploads)
@@ -284,11 +285,12 @@ fn every_list(fleet: &Fleet) -> Result<Vec<Target>> {
     Ok(all)
 }
 
-pub fn retire_host(fleet: &Fleet, host: &str) -> Result<()> {
+pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()> {
+    let mut readers = Readers::new(prompt);
     let mut found = false;
     for target in every_list(fleet)? {
         if read(&target.list)?.iter().any(|r| r.name == host) {
-            retire(fleet, &target.text, host)?;
+            retire(fleet, &target.text, host, &mut readers)?;
             found = true;
         }
         if let Scope::User(home) = &target.scope
@@ -308,7 +310,13 @@ pub fn retire_host(fleet: &Fleet, host: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn reseal_everything(fleet: &Fleet, keys: &Keys, dropped: &str) -> Result<()> {
+pub fn reseal_everything(
+    fleet: &Fleet,
+    keys: &Keys,
+    dropped: &str,
+    prompt: &mut Prompt,
+) -> Result<()> {
+    let mut readers = Readers::new(prompt);
     for target in every_list(fleet)? {
         let before = read(&target.list)?;
         let mut list = before.clone();
@@ -316,7 +324,7 @@ pub fn reseal_everything(fleet: &Fleet, keys: &Keys, dropped: &str) -> Result<()
         if list == before && secrets_of(fleet, &target)?.is_empty() {
             continue;
         }
-        rewrite(fleet, keys, &target, &list)?;
+        rewrite(fleet, keys, &target, &list, &mut readers)?;
     }
     Ok(())
 }
@@ -378,7 +386,14 @@ pub fn guards_secrets(fleet: &Fleet, text: &str) -> Result<bool> {
     Ok(!secrets_of(fleet, &target(fleet, text)?)?.is_empty())
 }
 
-pub fn trust_with(fleet: &Fleet, keys: &Keys, text: &str, name: &str, key: &str) -> Result<()> {
+pub fn trust_with(
+    fleet: &Fleet,
+    keys: &Keys,
+    text: &str,
+    name: &str,
+    key: &str,
+    readers: &mut Readers,
+) -> Result<()> {
     let target = target(fleet, text)?;
     key.parse::<x25519::Recipient>()
         .map_err(|e| anyhow!("{key}: {e}"))?;
@@ -396,7 +411,7 @@ pub fn trust_with(fleet: &Fleet, keys: &Keys, text: &str, name: &str, key: &str)
         name: name.to_owned(),
         key: key.to_owned(),
     });
-    let rewritten = rewrite(fleet, keys, &target, &list)?;
+    let rewritten = rewrite(fleet, keys, &target, &list, readers)?;
     println!(
         "{name} opens the {} secrets of {text} now.",
         rewritten.len()
@@ -404,7 +419,7 @@ pub fn trust_with(fleet: &Fleet, keys: &Keys, text: &str, name: &str, key: &str)
     Ok(())
 }
 
-pub fn retire(fleet: &Fleet, text: &str, name: &str) -> Result<()> {
+pub fn retire(fleet: &Fleet, text: &str, name: &str, readers: &mut Readers) -> Result<()> {
     let target = target(fleet, text)?;
     let mut list = read(&target.list)?;
     let retired = list
@@ -414,7 +429,7 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str) -> Result<()> {
         .key
         .clone();
     list.retain(|r| r.name != name);
-    let rewritten = rewrite(fleet, fleet.keys(), &target, &list)?;
+    let rewritten = rewrite(fleet, fleet.keys(), &target, &list, readers)?;
     println!("{name} is gone from {text}.");
     if rewritten.is_empty() {
         return Ok(());
@@ -447,6 +462,46 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str) -> Result<()> {
         style::print_pairs(&pairs);
     }
     Ok(())
+}
+
+pub struct Readers<'p> {
+    pub prompt: &'p mut Prompt,
+    approved: Vec<(PathBuf, Home)>,
+}
+
+impl<'p> Readers<'p> {
+    pub fn new(prompt: &'p mut Prompt) -> Self {
+        Readers {
+            prompt,
+            approved: Vec::new(),
+        }
+    }
+
+    pub fn approve(&mut self, fleet: &Fleet, source: &Path) -> Result<()> {
+        if !fs::symlink_metadata(source)?.is_symlink() {
+            return Ok(());
+        }
+        let shared = homes::target(&fleet.dir, source)?;
+        let Some(before) = checked::linked_when_written(&fleet.dir, &shared)? else {
+            return Ok(());
+        };
+        let shown = shared.strip_prefix(&fleet.dir).unwrap_or(&shared).display();
+        for home in homes::owners(&fleet.dir, source)? {
+            let known = before.contains(&home.dir(Path::new("")))
+                || self.approved.contains(&(shared.clone(), home.clone()));
+            if known {
+                continue;
+            }
+            let question = format!(
+                "{home} links {shown}, which was never encrypted for it. Let {home} open it"
+            );
+            if !self.prompt.confirm(&question)? {
+                bail!("{shown} stays closed to {home}: remove its link from {home} first");
+            }
+            self.approved.push((shared.clone(), home));
+        }
+        Ok(())
+    }
 }
 
 pub fn home_list(repo: &Repo, source: &Path) -> Result<String> {
@@ -487,6 +542,7 @@ fn rewrite(
     keys: &Keys,
     target: &Target,
     list: &[Recipient],
+    readers: &mut Readers,
 ) -> Result<Vec<Rewritten>> {
     let all = secrets_of(fleet, target)?;
     if !all.is_empty() {
@@ -499,6 +555,9 @@ fn rewrite(
     }
     let mut sealed = Vec::new();
     for secret in all {
+        if let Source::Home(path) = &secret.source {
+            readers.approve(fleet, path)?;
+        }
         let recipients = fleet.sealed_for(match &secret.source {
             Source::Home(path) => home_recipients(&fleet.dir, path, Some((&target.list, list)))?,
             Source::Etc(_) => list.to_vec(),
