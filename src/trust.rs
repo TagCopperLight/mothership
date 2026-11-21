@@ -4,7 +4,7 @@ use crate::{
         self, Fleet, Repo, checked,
         homes::{self, Home},
     },
-    github, host,
+    github, host, probe,
     prompt::Prompt,
     secrets::{
         AGE, Keys, RECIPIENTS, ROOT_KEY, Recipient, Storage, encrypt_for, format, holds, key_path,
@@ -38,6 +38,12 @@ pub struct MachineKey {
 }
 
 pub const SIGNING: &str = "signing";
+const PROBE: &str = "probe";
+const PROBE_SSH: &str = "probe-ssh";
+
+fn probe_signer(host: &str) -> String {
+    format!("{host}/{PROBE}")
+}
 
 fn owners(fleet: &Fleet) -> Vec<(String, Option<&User>, PathBuf)> {
     let mut owners = vec![("root".to_owned(), None, fleet.type_dir.clone())];
@@ -50,6 +56,14 @@ fn owners(fleet: &Fleet) -> Vec<(String, Option<&User>, PathBuf)> {
 pub fn create_keys(fleet: &Fleet) -> Result<()> {
     if sign::machine_key()?.is_none() {
         sign::create_machine_key()?;
+    }
+    if probe::unit::runs_here(fleet)? {
+        for name in [probe::unit::SIGNING, probe::unit::SSH] {
+            let path = probe::unit::key_path(name);
+            if sign::read_key(&path)?.is_none() {
+                sign::create_key(&path)?;
+            }
+        }
     }
     for (_, user, _) in owners(fleet) {
         match user {
@@ -110,6 +124,27 @@ pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
             target: sign::SIGNERS.to_owned(),
         });
     }
+    if probe::unit::runs_here(fleet)?
+        && let Some(signing) = sign::read_key(&probe::unit::key_path(probe::unit::SIGNING))?
+        && let Some(ssh) = sign::read_key(&probe::unit::key_path(probe::unit::SSH))?
+    {
+        let text = file::read_if_any(&fleet.dir.join(sign::SIGNERS))?.unwrap_or_default();
+        let trusted = sign::parse_signers(&text)?
+            .iter()
+            .any(|signer| &signer.key == signing.public_key());
+        for (name, sort, key, target) in [
+            (PROBE, Sort::Signing, &signing, sign::SIGNERS),
+            (PROBE_SSH, Sort::Ssh, &ssh, "GitHub"),
+        ] {
+            keys.push(MachineKey {
+                name: name.to_owned(),
+                sort,
+                public: sign::public(key)?,
+                target: target.to_owned(),
+                trusted,
+            });
+        }
+    }
     Ok(keys)
 }
 
@@ -166,7 +201,15 @@ pub fn trust_host(
             .split_once('=')
             .with_context(|| format!("{entry} isn't <name>=<key>"))?;
         let text = format!("{type_name}/{name}");
-        if name == SIGNING {
+        if name == PROBE {
+            add_probe(fleet, host, key)?;
+        } else if name == PROBE_SSH {
+            uploads.push(github::Key {
+                title: github::title(host, PROBE),
+                public: ssh::normalize(key)?,
+                kind: github::Use::Login,
+            });
+        } else if name == SIGNING {
             let public = add_signer(fleet, host, type_name, key, readers.prompt)?;
             uploads.push(github::Key {
                 title: host.to_owned(),
@@ -261,6 +304,23 @@ fn add_signer(
     Ok(public)
 }
 
+fn add_probe(fleet: &Fleet, host: &str, key: &str) -> Result<()> {
+    let path = fleet.dir.join(sign::SIGNERS);
+    let mut list = read(&path)?;
+    let public = ssh::normalize(key)?;
+    let name = probe_signer(host);
+    if listed_as(&list, &path, &name, &public)? {
+        return Ok(());
+    }
+    list.push(Recipient {
+        name: name.clone(),
+        key: format!("{public} {}", sign::VERSIONS),
+    });
+    file::write(&path, format(&list).as_bytes(), 0o644)?;
+    println!("{name} changes the versions of the fleet's images now.");
+    Ok(())
+}
+
 fn reach(fleet: &Fleet, folders: &[&str]) -> Result<()> {
     if let sign::Reach::Folders(folders) = sign::Reach::parse(folders)? {
         for folder in folders {
@@ -300,9 +360,11 @@ pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()>
             found = true;
         }
     }
-    if drop_named(&fleet.dir.join(sign::SIGNERS), host)? {
-        println!("{host} signs nothing now.");
-        found = true;
+    for name in [host.to_owned(), probe_signer(host)] {
+        if drop_named(&fleet.dir.join(sign::SIGNERS), &name)? {
+            println!("{name} signs nothing now.");
+            found = true;
+        }
     }
     if !found {
         bail!("the fleet holds no key named {host}");

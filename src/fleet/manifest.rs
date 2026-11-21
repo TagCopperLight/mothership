@@ -11,6 +11,13 @@ pub struct Manifest {
     #[serde(default)]
     sha256: BTreeMap<String, String>,
     recovery: Option<Recovery>,
+    probe: Option<Probe>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Probe {
+    host: String,
 }
 
 #[derive(Deserialize)]
@@ -45,6 +52,10 @@ impl Manifest {
             .as_ref()
             .map(|recovery| Signer::recovery(&recovery.signing))
             .transpose()
+    }
+
+    pub fn probe_host(&self) -> Option<&str> {
+        self.probe.as_ref().map(|probe| probe.host.as_str())
     }
 
     pub fn recovery(&self) -> Option<Recipient> {

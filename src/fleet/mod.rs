@@ -56,6 +56,7 @@ pub struct Repo {
     pub profiles: Vec<Profile>,
     pub recovery: Recipient,
     pub services: Vec<container::Service>,
+    pub probe_host: Option<String>,
 }
 
 pub struct Fleet {
@@ -286,9 +287,11 @@ impl Repo {
         hardware: &BTreeSet<Hardware>,
     ) -> Result<Self> {
         homes::check(&dir)?;
-        let recovery = Manifest::read(&dir)?.recovery().with_context(|| {
+        let manifest = Manifest::read(&dir)?;
+        let recovery = manifest.recovery().with_context(|| {
             format!("the fleet's {MANIFEST} names no recovery key: run `mothership recovery`")
         })?;
+        let probe_host = manifest.probe_host().map(str::to_owned);
         let type_dir = type_dir(&dir, device_type);
         let system_path = type_dir.join(SYSTEM_TOML);
         let mut system: System = read_toml(&system_path)?;
@@ -381,6 +384,7 @@ impl Repo {
             profiles,
             recovery,
             services,
+            probe_host,
         })
     }
 

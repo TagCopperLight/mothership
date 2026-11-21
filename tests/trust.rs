@@ -384,3 +384,43 @@ fn a_new_recovery_key_opens_every_secret_and_the_old_one_none() {
     assert_eq!(names(&type_dir.join(RECIPIENTS)), ["laptop"]);
     assert!(!dir.path().join("types/workstation/users").exists());
 }
+
+#[test]
+fn the_probe_signs_only_versions_and_its_ssh_key_goes_to_github() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let fleet = fleet_with(dir.path(), "", &[]);
+    let random = || {
+        let key = ssh_key::PrivateKey::random(
+            &mut ssh_key::rand_core::OsRng,
+            ssh_key::Algorithm::Ed25519,
+        )
+        .unwrap();
+        sign::public(&key).unwrap()
+    };
+    let (signing, login) = (random(), random());
+    let uploads = trust_host(
+        &fleet,
+        &Keys::default(),
+        "minipc",
+        "workstation",
+        &[format!("{PROBE}={signing}"), format!("{PROBE_SSH}={login}")],
+        &mut Prompt::answering(""),
+    )
+    .unwrap();
+    assert_eq!(
+        uploads,
+        [github::Key {
+            title: "minipc/probe".into(),
+            public: login,
+            kind: github::Use::Login,
+        }]
+    );
+    let signers = dir.path().join(sign::SIGNERS);
+    let list = read(&signers).unwrap();
+    assert_eq!(list[0].name, "minipc/probe");
+    assert_eq!(list[0].key, format!("{signing} versions"));
+    let parsed = sign::parse_signers(&fs::read_to_string(&signers).unwrap()).unwrap();
+    assert_eq!(parsed[0].reach, sign::Reach::Versions);
+    retire_host(&fleet, "minipc", &mut Prompt::answering("")).unwrap();
+    assert!(read(&signers).unwrap().is_empty());
+}

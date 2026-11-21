@@ -19,6 +19,7 @@ mod package;
 mod parallel;
 mod pref;
 mod preview;
+mod probe;
 mod prompt;
 mod record;
 mod recovery;
@@ -98,7 +99,11 @@ fn main() -> ExitCode {
         }
         _ => {}
     }
-    match run(&args) {
+    let result = match &args[..] {
+        [probe] if probe == "probe" => probe::run(),
+        _ => run(&args),
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             let text = format!("{e:#}");

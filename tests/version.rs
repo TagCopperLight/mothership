@@ -18,7 +18,7 @@ fn versions_of_another_shape_dont_compare() {
     );
     assert_eq!(short.partial_cmp(&long), None);
     let alpine = Version::parse("16.4-alpine").unwrap();
-    assert!(!short.follows(&alpine));
+    assert!(!short.same_shape(&alpine));
 }
 
 #[test]

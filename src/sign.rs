@@ -13,10 +13,7 @@ const NAMESPACE: &str = "git";
 const RECOVERY_SEED: &[u8] = b"mothership signing key\0";
 
 pub fn machine_key() -> Result<Option<PrivateKey>> {
-    let path = Path::new(KEY);
-    file::read_root_only(path)?
-        .map(|bytes| PrivateKey::from_openssh(bytes).map_err(|e| anyhow!("{KEY}: {e}")))
-        .transpose()
+    read_key(Path::new(KEY))
 }
 
 pub fn require_machine_key() -> Result<PrivateKey> {
@@ -24,8 +21,23 @@ pub fn require_machine_key() -> Result<PrivateKey> {
 }
 
 pub fn create_machine_key() -> Result<()> {
+    create_key(Path::new(KEY))
+}
+
+pub fn create_key(path: &Path) -> Result<()> {
     let key = PrivateKey::random(&mut OsRng, ssh_key::Algorithm::Ed25519)?;
-    file::create_private(Path::new(KEY), key.to_openssh(LineEnding::LF)?.as_bytes())
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    file::create_private(path, key.to_openssh(LineEnding::LF)?.as_bytes())
+}
+
+pub fn read_key(path: &Path) -> Result<Option<PrivateKey>> {
+    file::read_root_only(path)?
+        .map(|bytes| {
+            PrivateKey::from_openssh(bytes).map_err(|e| anyhow!("{}: {e}", path.display()))
+        })
+        .transpose()
 }
 
 pub fn recovery_key(age: &x25519::Identity) -> PrivateKey {

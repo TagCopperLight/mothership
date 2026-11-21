@@ -216,7 +216,7 @@ fn pinned(version: &str, digest: &str) -> String {
 #[test]
 fn a_versions_signer_changes_only_versions_and_digests_within_their_major() {
     let repo = Repo::new();
-    let (laptop, laptop_file) = repo.key("laptop");
+    let (laptop, _) = repo.key("laptop");
     let (probe, probe_file) = repo.key("probe");
     repo.write(
         SIGNERS,

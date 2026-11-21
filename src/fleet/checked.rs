@@ -28,11 +28,20 @@ const STAGING: &str = "/var/lib/mothership/staging";
 
 pub struct Git {
     dir: PathBuf,
+    env: Vec<(String, String)>,
 }
 
 impl Git {
     pub fn at(dir: impl Into<PathBuf>) -> Git {
-        Git { dir: dir.into() }
+        Git {
+            dir: dir.into(),
+            env: Vec::new(),
+        }
+    }
+
+    pub fn with_env(mut self, key: &str, value: String) -> Git {
+        self.env.push((key.to_owned(), value));
+        self
     }
 
     pub fn command<S: AsRef<OsStr>>(&self, args: &[S]) -> Command {
@@ -44,7 +53,8 @@ impl Git {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GIT_DIR")
             .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE");
+            .env_remove("GIT_INDEX_FILE")
+            .envs(self.env.iter().map(|(k, v)| (k, v)));
         git
     }
 
@@ -53,7 +63,7 @@ impl Git {
         Ok(String::from_utf8(bytes)?.trim_end().to_owned())
     }
 
-    fn with_input(&self, args: &[&str], input: &str) -> Result<String> {
+    pub fn with_input(&self, args: &[&str], input: &str) -> Result<String> {
         let out = cmd::output_with_input(self.command(args), "git", args, input.as_bytes())?;
         Ok(String::from_utf8(out)?.trim_end().to_owned())
     }
@@ -253,6 +263,35 @@ fn note_unconfirmed(git: &Git, steps: &[Step]) -> Result<()> {
         }
     }
     unconfirmed.save()
+}
+
+pub fn signed_commit(
+    git: &Git,
+    tree: &str,
+    parent: &str,
+    who: &str,
+    message: &str,
+    key: &PrivateKey,
+) -> Result<String> {
+    let who = format!(
+        "{who} {} +0000",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs()
+    );
+    let payload =
+        format!("tree {tree}\nparent {parent}\nauthor {who}\ncommitter {who}\n\n{message}\n");
+    let signature = sign::sign(key, payload.as_bytes())?;
+    let object = payload.replacen(
+        "\n\n",
+        &format!("\ngpgsig {}\n\n", signature.trim_end().replace('\n', "\n ")),
+        1,
+    );
+    let commit = git.with_input(&["hash-object", "-t", "commit", "-w", "--stdin"], &object)?;
+    if let Err(why) = verify(git, parent, &commit) {
+        bail!("the fleet's machines would refuse this commit, so nothing changed: {why:#}");
+    }
+    Ok(commit)
 }
 
 pub struct Sync {
@@ -634,28 +673,8 @@ impl Stage {
                 )
             })
         };
-        let who = format!(
-            "{} <{}> {} +0000",
-            config("user.name")?,
-            config("user.email")?,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs()
-        );
-        let payload = format!(
-            "tree {tree}\nparent {}\nauthor {who}\ncommitter {who}\n\n{message}\n",
-            self.base
-        );
-        let signature = sign::sign(key, payload.as_bytes())?;
-        let object = payload.replacen(
-            "\n\n",
-            &format!("\ngpgsig {}\n\n", signature.trim_end().replace('\n', "\n ")),
-            1,
-        );
-        let commit = git.with_input(&["hash-object", "-t", "commit", "-w", "--stdin"], &object)?;
-        if let Err(why) = verify(&git, &self.base, &commit) {
-            bail!("the fleet's machines would refuse this commit, so nothing changed: {why:#}");
-        }
+        let who = format!("{} <{}>", config("user.name")?, config("user.email")?);
+        let commit = signed_commit(&git, &tree, &self.base, &who, message, key)?;
         Ok(Some(Prepared {
             base: self.base.clone(),
             commit,

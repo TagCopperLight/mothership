@@ -3,9 +3,10 @@ use crate::http::Response;
 use std::sync::{Arc, Mutex};
 
 type Answer = dyn Fn(&str, &str, &[String]) -> Response + Send + Sync;
+pub type Sent = Arc<Mutex<Vec<(String, String, Vec<String>)>>>;
 
 pub struct Fake {
-    pub sent: Arc<Mutex<Vec<(String, String, Vec<String>)>>>,
+    pub sent: Sent,
     pub answer: Box<Answer>,
 }
 

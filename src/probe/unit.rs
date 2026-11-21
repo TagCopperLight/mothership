@@ -1,0 +1,149 @@
+use super::state::{ROOT_VIEW, State};
+use crate::{
+    cmd,
+    container::Action,
+    file,
+    fleet::{Fleet, checked},
+    host,
+    item::{Change, Item, Section},
+    kind::Kind,
+    update,
+};
+use anyhow::Result;
+use std::path::{Path, PathBuf};
+
+pub const DIR: &str = "/etc/mothership/probe";
+pub const SIGNING: &str = "signing";
+pub const SSH: &str = "ssh";
+pub const GITHUB_TOKEN: &str = "github-token";
+pub const LOGINS: &str = "docker-config.json";
+pub const SERVICE: &str = "/etc/systemd/system/mothership-probe.service";
+pub const TIMER: &str = "/etc/systemd/system/mothership-probe.timer";
+pub const TIMER_NAME: &str = "mothership-probe.timer";
+pub const FLEET_VAR: &str = "MOTHERSHIP_FLEET";
+pub const HOST_VAR: &str = "MOTHERSHIP_HOST";
+const TIMER_TEXT: &str = "[Unit]\nDescription=Run mothership's probe every hour\n\n[Timer]\n\
+    OnCalendar=hourly\nRandomizedDelaySec=10min\nPersistent=true\n\n[Install]\n\
+    WantedBy=timers.target\n";
+
+pub fn runs_here(fleet: &Fleet) -> Result<bool> {
+    Ok(fleet.probe_host.as_deref() == Some(host::name()?.as_str()))
+}
+
+pub fn key_path(name: &str) -> PathBuf {
+    Path::new(DIR).join(name)
+}
+
+pub fn known() -> Vec<PathBuf> {
+    vec![
+        key_path(SIGNING),
+        key_path(SSH),
+        PathBuf::from(SERVICE),
+        PathBuf::from(TIMER),
+    ]
+}
+
+fn service(fleet: &Fleet) -> Result<String> {
+    let mut credentials = String::new();
+    for name in [SIGNING, SSH, GITHUB_TOKEN, LOGINS] {
+        let path = key_path(name);
+        if path.exists() {
+            credentials.push_str(&format!("LoadCredential={name}:{}\n", path.display()));
+        }
+    }
+    let origin = checked::origin(fleet.admin())?;
+    Ok(format!(
+        "[Unit]\nDescription=mothership's probe, which keeps the fleet's images up to date\n\
+         After=network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\n\
+         ExecStart={} probe\nDynamicUser=yes\nStateDirectory=mothership-probe\n\
+         Environment={FLEET_VAR}={origin}\nEnvironment={HOST_VAR}={}\n{credentials}\
+         ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\n\
+         InaccessiblePaths=-/var/lib/services -/srv\nNoNewPrivileges=yes\n\
+         ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectControlGroups=yes\n\
+         RestrictSUIDSGID=yes\nLockPersonality=yes\nRestrictNamespaces=yes\n\
+         CapabilityBoundingSet=\nSystemCallArchitectures=native\n",
+        update::BINARY,
+        host::name()?
+    ))
+}
+
+fn written(path: &str) -> Result<Option<String>> {
+    file::read_if_any(Path::new(path))
+}
+
+fn fleet_item(mut item: Item) -> Item {
+    item.section = Section::Fleet;
+    item
+}
+
+pub fn items(fleet: &Fleet) -> Result<Vec<Item>> {
+    let mut items = Vec::new();
+    let here = runs_here(fleet)?;
+    let present = written(SERVICE)?.is_some() || written(TIMER)?.is_some();
+    if here {
+        let missing: Vec<&str> = [SIGNING, SSH]
+            .into_iter()
+            .filter(|name| !key_path(name).exists())
+            .collect();
+        if !missing.is_empty() {
+            items.push(
+                Item::new(Kind::Container, Change::Unreadable, "probe", "no keys")
+                    .noting(format!("{DIR} lacks {}", missing.join(" and ")))
+                    .because("`sudo mothership key` creates them"),
+            );
+        } else {
+            let current = written(SERVICE)?.as_deref() == Some(service(fleet)?.as_str())
+                && written(TIMER)?.as_deref() == Some(TIMER_TEXT)
+                && Path::new("/etc/systemd/system/timers.target.wants")
+                    .join(TIMER_NAME)
+                    .exists();
+            if !current {
+                let change = match present {
+                    true => Change::Edited,
+                    false => Change::Removed,
+                };
+                items.push(fleet_item(
+                    Item::new(Kind::Container, change, "probe", "the probe's unit")
+                        .noting("mothership.toml names this machine")
+                        .reverting(Action::Probe),
+                ));
+            }
+        }
+        let state = State::load(Path::new(ROOT_VIEW))?;
+        for notice in state.notices {
+            items.push(
+                Item::new(Kind::Container, Change::Unreadable, "probe", "notice")
+                    .noting(notice)
+                    .because("move the service to its new major in the fleet"),
+            );
+        }
+        if let Some(problem) = state.problem {
+            items.push(
+                Item::new(Kind::Container, Change::Unreadable, "probe", "failed")
+                    .noting(problem)
+                    .because("`journalctl -u mothership-probe` shows its runs"),
+            );
+        }
+    } else if present {
+        items.push(fleet_item(
+            Item::new(Kind::Container, Change::Added, "probe", "the probe's unit")
+                .noting("mothership.toml names another machine")
+                .reverting(Action::Unprobe),
+        ));
+    }
+    Ok(items)
+}
+
+pub fn install(fleet: &Fleet) -> Result<()> {
+    file::write(Path::new(SERVICE), service(fleet)?.as_bytes(), 0o644)?;
+    file::write(Path::new(TIMER), TIMER_TEXT.as_bytes(), 0o644)?;
+    cmd::root("systemctl", &["daemon-reload"])?;
+    cmd::root("systemctl", &["enable", "--now", "--", TIMER_NAME])
+}
+
+pub fn remove() -> Result<()> {
+    cmd::root("systemctl", &["disable", "--now", "--", TIMER_NAME])?;
+    file::remove_if_found(Path::new(SERVICE))?;
+    file::remove_if_found(Path::new(TIMER))?;
+    cmd::root("systemctl", &["daemon-reload"])
+}

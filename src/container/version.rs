@@ -44,10 +44,6 @@ impl Version {
             && self.numbers.len() == other.numbers.len()
             && self.suffix == other.suffix
     }
-
-    pub fn follows(&self, newer: &Version) -> bool {
-        self.same_shape(newer) && self.major() == newer.major()
-    }
 }
 
 impl PartialOrd for Version {

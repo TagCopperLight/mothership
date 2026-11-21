@@ -6,7 +6,7 @@ use super::{
     logins, registry,
     state::State,
 };
-use crate::{file, fleet::Fleet, http::Curl};
+use crate::{file, fleet::Fleet, http::Curl, probe};
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
@@ -16,6 +16,8 @@ pub enum Action {
     Remove(String),
     RemoveContainer(String),
     Overwrite { service: String, file: PathBuf },
+    Probe,
+    Unprobe,
 }
 
 impl Action {
@@ -26,6 +28,8 @@ impl Action {
             Action::Remove(_) => "stop it and remove its containers, keeping its data",
             Action::RemoveContainer(_) => "remove it",
             Action::Overwrite { .. } => "write the fleet's version",
+            Action::Probe => "install and start it",
+            Action::Unprobe => "stop and remove it",
         }
     }
 }
@@ -33,10 +37,18 @@ impl Action {
 const DOCKER_CONFIG: &str = ".docker/config.json";
 
 pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
-    if actions.iter().any(|a| matches!(a, Action::Setup)) {
-        account::setup()?;
+    for action in actions {
+        match action {
+            Action::Setup => account::setup()?,
+            Action::Probe => probe::unit::install(fleet)?,
+            Action::Unprobe => probe::unit::remove()?,
+            _ => {}
+        }
     }
-    if actions.iter().all(|a| matches!(a, Action::Setup)) {
+    if actions
+        .iter()
+        .all(|a| matches!(a, Action::Setup | Action::Probe | Action::Unprobe))
+    {
         return Ok(());
     }
     let logins = logins(fleet)?;
@@ -53,7 +65,7 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     let mut deploys: Vec<&str> = Vec::new();
     for action in actions {
         match action {
-            Action::Setup => {}
+            Action::Setup | Action::Probe | Action::Unprobe => {}
             Action::RemoveContainer(id) => docker.remove_container(id)?,
             Action::Remove(name) => {
                 let entry = state

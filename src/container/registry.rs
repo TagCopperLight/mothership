@@ -230,4 +230,4 @@ fn next_page(link: &str) -> Option<&str> {
 
 #[cfg(test)]
 #[path = "../../tests/registry.rs"]
-mod tests;
+pub mod tests;

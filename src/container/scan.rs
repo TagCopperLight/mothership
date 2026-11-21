@@ -9,17 +9,18 @@ use crate::{
     item::{Change, Item, Section},
     kind::Kind,
     preview::Preview,
+    probe,
 };
 use anyhow::Result;
 use std::collections::BTreeSet;
 
 pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
+    let mut items = probe::unit::items(fleet)?;
     let state = State::load()?;
     if fleet.services.is_empty() && state.services.is_empty() && state.dropped.is_empty() {
-        return Ok(Vec::new());
+        return Ok(items);
     }
     let places = Places::here()?;
-    let mut items = Vec::new();
     let missing = account::missing()?;
     if !fleet.services.is_empty() && !missing.is_empty() {
         items.push(fleet_item(
