@@ -12,7 +12,7 @@ const B: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 struct Fake {
     calls: RefCell<Vec<String>>,
     health: RefCell<VecDeque<Health>>,
-    running: RefCell<bool>,
+    snapshot_fails: bool,
     registry: Option<String>,
 }
 
@@ -41,7 +41,6 @@ impl Engine for Fake {
         let config: serde_json::Value = serde_json::from_str(&text)?;
         let image = config["services"]["app"]["image"].as_str().unwrap();
         self.log(format!("up {}", image.split('@').next().unwrap()));
-        *self.running.borrow_mut() = true;
         Ok(())
     }
     fn stop(&self, _: &str) -> Result<()> {
@@ -59,12 +58,12 @@ impl Engine for Fake {
             .pop_front()
             .unwrap_or(Health::Healthy))
     }
-    fn runs(&self, _: &str) -> Result<bool> {
-        Ok(*self.running.borrow())
-    }
     fn snapshot(&self, _: &str, _: &Path) -> Result<()> {
         self.log("snapshot");
-        Ok(())
+        match self.snapshot_fails {
+            true => anyhow::bail!("the disk is full"),
+            false => Ok(()),
+        }
     }
     fn restore(&self, _: &str, _: &Path) -> Result<()> {
         self.log("restore");
@@ -131,6 +130,7 @@ impl World {
             key: "server/app".into(),
             fleet: fingerprint(service, &rendered, None),
             rendered: &rendered,
+            overwrite: Vec::new(),
         };
         deploy(engine, &self.places, &wanted, before, &mut self.unconfirmed).unwrap()
     }
@@ -154,7 +154,7 @@ fn a_new_service_gets_its_files_and_its_data_folder_then_starts() {
         fs::metadata(world.places.data("app")).unwrap().mode() & 0o777,
         0o700
     );
-    assert_eq!(entry.healthy, Some(service.pins()));
+    assert_eq!(entry.running, service.pins());
     assert_eq!(entry.files.len(), 2);
 }
 
@@ -211,7 +211,6 @@ fn a_service_without_a_health_check_keeps_its_new_versions() {
     let engine = Fake::default();
     engine.health.borrow_mut().push_back(Health::Unchecked);
     let (first, _) = world.deploy(&engine, &world.pin("1.0.0", A), None);
-    assert_eq!(first.healthy, None);
     engine.calls();
     engine.health.borrow_mut().push_back(Health::Unchecked);
     let newer = world.pin("1.0.1", B);
@@ -269,4 +268,40 @@ fn a_pin_the_probe_set_waits_for_the_registry_to_agree() {
             .unconfirmed
             .waits("server/app", "app", &lying.images["app"].pin())
     );
+}
+
+#[test]
+fn a_snapshot_that_fails_puts_the_old_version_back_without_touching_the_data() {
+    let mut world = World::new();
+    let engine = Fake {
+        snapshot_fails: true,
+        ..Fake::default()
+    };
+    let (first, _) = world.deploy(&engine, &world.pin("1.0.0", A), None);
+    engine.calls();
+    let (second, outcome) = world.deploy(&engine, &world.pin("1.0.1", B), Some(&first));
+    assert_eq!(outcome, Outcome::RolledBack("the disk is full".into()));
+    assert_eq!(engine.calls(), ["config", "pull", "stop", "snapshot", "stop", "up app:1.0.0"]);
+    assert_eq!(second.running, first.running);
+    assert_eq!(second.files, first.files);
+}
+
+#[test]
+fn overwriting_an_edited_file_writes_the_fleets_version() {
+    let mut world = World::new();
+    let engine = Fake::default();
+    let service = world.pin("1.0.0", A);
+    let (first, _) = world.deploy(&engine, &service, None);
+    let conf = world.places.project("app").join("app.conf");
+    fs::write(&conf, "mine\n").unwrap();
+    let rendered = service.render(&Keys::default()).unwrap();
+    let wanted = Wanted {
+        service: &service,
+        key: "server/app".into(),
+        fleet: fingerprint(&service, &rendered, None),
+        rendered: &rendered,
+        overwrite: vec![PathBuf::from("app.conf")],
+    };
+    deploy(&engine, &world.places, &wanted, Some(&first), &mut world.unconfirmed).unwrap();
+    assert_eq!(fs::read_to_string(&conf).unwrap(), "version 1.0.0\n");
 }

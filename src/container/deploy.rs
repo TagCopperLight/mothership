@@ -36,6 +36,10 @@ impl Places {
         self.projects.join(name)
     }
 
+    pub fn previous(&self, name: &str) -> PathBuf {
+        self.projects.join(format!(".{name}.previous"))
+    }
+
     pub fn data(&self, name: &str) -> PathBuf {
         self.data.join(name)
     }
@@ -88,30 +92,30 @@ pub fn edited(places: &Places, name: &str, entry: &Deployed) -> Result<Vec<PathB
 
 fn write_files(
     places: &Places,
-    service: &Service,
-    rendered: &Rendered,
+    wanted: &Wanted,
     before: &Deployed,
 ) -> Result<BTreeMap<PathBuf, String>> {
+    let (service, rendered) = (wanted.service, wanted.rendered);
     let dir = places.project(&service.name);
     private_dir(&dir, places.owner.1)?;
     let edited = edited(places, &service.name, before)?;
-    let mut wanted: BTreeMap<PathBuf, &[u8]> = rendered
+    let mut files: BTreeMap<PathBuf, &[u8]> = rendered
         .files
         .iter()
         .map(|(rel, bytes)| (rel.clone(), &bytes[..]))
         .collect();
-    if wanted.contains_key(Path::new(OVERRIDE)) {
+    if files.contains_key(Path::new(OVERRIDE)) {
         bail!(
             "{}/{OVERRIDE} is mothership's own file",
             service.dir.display()
         );
     }
     for (name, bytes) in &rendered.secrets {
-        wanted.insert(Path::new(SECRETS).join(name), bytes);
+        files.insert(Path::new(SECRETS).join(name), bytes);
     }
     let mut written = BTreeMap::new();
-    for (rel, bytes) in &wanted {
-        if edited.contains(rel) {
+    for (rel, bytes) in &files {
+        if edited.contains(rel) && !wanted.overwrite.contains(rel) {
             written.insert(rel.clone(), before.files[rel].clone());
             continue;
         }
@@ -120,7 +124,7 @@ fn write_files(
         written.insert(rel.clone(), hash::md5(bytes));
     }
     for rel in before.files.keys() {
-        if !wanted.contains_key(rel) && !edited.contains(rel) {
+        if !files.contains_key(rel) && !edited.contains(rel) {
             file::remove_if_found(&dir.join(rel))?;
         }
     }
@@ -186,6 +190,7 @@ pub struct Wanted<'a> {
     pub key: String,
     pub rendered: &'a Rendered,
     pub fleet: String,
+    pub overwrite: Vec<PathBuf>,
 }
 
 pub fn deploy(
@@ -223,74 +228,142 @@ pub fn deploy(
         unconfirmed.confirm(&wanted.key, image_name);
     }
 
-    entry.files = write_files(places, service, wanted.rendered, &entry)?;
     let dir = places.project(name);
+    let previous = places.previous(name);
+    let update = !entry.running.is_empty();
+    if update {
+        keep_copy(&dir, &previous)?;
+    }
     let project = Project {
         name,
         dir: dir.clone(),
         env: env(wanted.rendered),
     };
-    let images = write_override(&dir, service, &pins)?;
-    let data = data_dir(places, name)?;
-    compose::check(&engine.config(&project)?, &dir, &data, &images)
-        .with_context(|| format!("checking {}/{COMPOSE}", service.dir.display()))?;
-    engine.pull(&project)?;
-    let update = !entry.running.is_empty() && entry.running != pins && engine.runs(name)?;
-    if update {
-        engine.stop(name)?;
-        engine.snapshot(name, &data)?;
-    }
-    engine.up(&project)?;
-    let health = engine.health(name)?;
-    entry.fleet = wanted.fleet.clone();
-    let outcome = match health {
-        Health::Unhealthy(why) if update => {
-            let back = entry
-                .healthy
-                .clone()
-                .unwrap_or_else(|| entry.running.clone());
-            engine.stop(name)?;
-            engine.restore(name, &data)?;
-            write_override(&dir, service, &back)?;
-            engine.up(&project)?;
-            for (image, pin) in &pins {
-                if back.get(image) != Some(pin) {
-                    entry.failed.insert((image.clone(), pin.clone()));
-                }
-            }
-            entry.running = back;
-            Outcome::RolledBack(why)
+    let (files, data) = match prepare(engine, places, wanted, &entry, &project) {
+        Ok(prepared) => prepared,
+        Err(e) if update => {
+            put_back(&dir, &previous)?;
+            return Err(e);
         }
-        Health::Unhealthy(why) => {
-            entry.running = pins;
-            Outcome::Unhealthy(why)
-        }
-        Health::Healthy | Health::Unchecked => {
-            if health == Health::Healthy {
-                entry.healthy = Some(pins.clone());
-            }
-            let first = entry.running.is_empty();
-            entry.running = pins;
-            match first {
-                true => Outcome::Started,
-                false => Outcome::Updated,
-            }
-        }
+        Err(e) => return Err(e),
     };
-    entry.problem = match &outcome {
-        Outcome::RolledBack(why) => Some(format!(
-            "{} failed its health check ({why}), so it runs {} again",
-            describe(&entry.failed_in(&wanted.service.pins())),
-            describe(&entry.running.iter().collect::<Vec<_>>())
-        )),
-        Outcome::Unhealthy(why) => Some(format!("it isn't healthy: {why}")),
-        _ => None,
+    let mut snapshotted = false;
+    let started = (|| {
+        if update {
+            engine.stop(name)?;
+            engine.snapshot(name, &data)?;
+            snapshotted = true;
+        }
+        engine.up(&project)?;
+        engine.health(name)
+    })();
+    let failure = match started {
+        Ok(Health::Healthy | Health::Unchecked) => None,
+        Ok(Health::Unhealthy(why)) => Some(why),
+        Err(e) => Some(format!("{e:#}")),
+    };
+    entry.fleet = wanted.fleet.clone();
+    let outcome = match failure {
+        Some(why) if update => {
+            let after = roll_back(engine, &project, &data, &previous, snapshotted)
+                .with_context(|| format!("{name} failed ({why}), and putting it back failed too"))?;
+            let failed: Vec<(&String, &super::Pin)> = pins
+                .iter()
+                .filter(|(image, pin)| entry.running.get(*image) != Some(pin))
+                .collect();
+            let what = match failed.is_empty() {
+                true => "its new files".to_owned(),
+                false => describe(&failed),
+            };
+            let mut problem = format!(
+                "{what} failed ({why}), so it runs {} again",
+                describe(&entry.running.iter().collect::<Vec<_>>())
+            );
+            if let Health::Unhealthy(again) = after {
+                problem.push_str(&format!(", which isn't healthy either: {again}"));
+            }
+            entry
+                .failed
+                .extend(failed.into_iter().map(|(i, p)| (i.clone(), p.clone())));
+            entry.problem = Some(Problem {
+                fleet: wanted.fleet.clone(),
+                why: problem,
+            });
+            return Ok((entry, Outcome::RolledBack(why)));
+        }
+        Some(why) => Outcome::Unhealthy(why),
+        None if update => Outcome::Updated,
+        None => Outcome::Started,
+    };
+    if update {
+        fs::remove_dir_all(&previous)
+            .with_context(|| format!("removing {}", previous.display()))?;
     }
-    .map(|why| Problem {
-        fleet: wanted.fleet.clone(),
-        why,
-    });
+    entry.files = files;
+    entry.running = pins;
+    entry.problem = match &outcome {
+        Outcome::Unhealthy(why) => Some(Problem {
+            fleet: wanted.fleet.clone(),
+            why: format!("it isn't healthy: {why}"),
+        }),
+        _ => None,
+    };
     Ok((entry, outcome))
+}
+
+fn prepare(
+    engine: &dyn Engine,
+    places: &Places,
+    wanted: &Wanted,
+    entry: &Deployed,
+    project: &Project,
+) -> Result<(BTreeMap<PathBuf, String>, PathBuf)> {
+    let service = wanted.service;
+    let files = write_files(places, wanted, entry)?;
+    let images = write_override(&project.dir, service, &service.pins())?;
+    let data = data_dir(places, &service.name)?;
+    compose::check(&engine.config(project)?, &project.dir, &data, &images)
+        .with_context(|| format!("checking {}/{COMPOSE}", service.dir.display()))?;
+    engine.pull(project)?;
+    Ok((files, data))
+}
+
+fn keep_copy(dir: &Path, copy: &Path) -> Result<()> {
+    if copy.exists() {
+        fs::remove_dir_all(copy).with_context(|| format!("removing {}", copy.display()))?;
+    }
+    let status = std::process::Command::new("cp")
+        .arg("-a")
+        .arg("--")
+        .arg(dir)
+        .arg(copy)
+        .status()
+        .context("running cp")?;
+    if !status.success() {
+        bail!("couldn't copy {} to {}", dir.display(), copy.display());
+    }
+    Ok(())
+}
+
+fn put_back(dir: &Path, copy: &Path) -> Result<()> {
+    fs::remove_dir_all(dir).with_context(|| format!("removing {}", dir.display()))?;
+    fs::rename(copy, dir).with_context(|| format!("putting back {}", dir.display()))
+}
+
+fn roll_back(
+    engine: &dyn Engine,
+    project: &Project,
+    data: &Path,
+    previous: &Path,
+    snapshotted: bool,
+) -> Result<Health> {
+    engine.stop(project.name)?;
+    if snapshotted {
+        engine.restore(project.name, data)?;
+    }
+    put_back(&project.dir, previous)?;
+    engine.up(project)?;
+    engine.health(project.name)
 }
 
 pub fn describe(pins: &[(&String, &super::Pin)]) -> String {
@@ -308,6 +381,10 @@ pub fn remove(engine: &dyn Engine, places: &Places, name: &str, entry: &Deployed
         file::remove_if_found(&dir.join(rel))?;
     }
     file::remove_if_found(&dir.join(OVERRIDE))?;
+    let previous = places.previous(name);
+    if previous.exists() {
+        fs::remove_dir_all(&previous)?;
+    }
     let mut dirs: Vec<PathBuf> = entry
         .files
         .keys()

@@ -63,6 +63,7 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     let mut state = State::load()?;
     let mut unconfirmed = Unconfirmed::load()?;
     let mut deploys: Vec<&str> = Vec::new();
+    let mut overwrite: Vec<(&str, PathBuf)> = Vec::new();
     for action in actions {
         match action {
             Action::Setup | Action::Probe | Action::Unprobe => {}
@@ -79,7 +80,7 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
                 println!("Removed {name}, keeping {}", places.data(name).display());
             }
             Action::Overwrite { service, file } => {
-                file::remove_if_found(&places.project(service).join(file))?;
+                overwrite.push((service, file.clone()));
                 deploys.push(service);
             }
             Action::Deploy(name) => deploys.push(name),
@@ -100,11 +101,16 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
             key: format!("{}/{}", fleet.type_name, service.name),
             fleet: deploy::fingerprint(service, &rendered, logins.as_deref()),
             rendered: &rendered,
+            overwrite: overwrite
+                .iter()
+                .filter(|(owner, _)| *owner == name)
+                .map(|(_, file)| file.clone())
+                .collect(),
         };
         let before = state.services.get(name);
         match deploy::deploy(&docker, &places, &wanted, before, &mut unconfirmed) {
             Ok((entry, outcome)) => {
-                println!("{}", said(name, &outcome));
+                println!("{}", crate::style::clean(&said(name, &outcome)));
                 state.services.insert(name.to_owned(), entry);
                 state.dropped.remove(name);
             }

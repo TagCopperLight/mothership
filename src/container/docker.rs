@@ -40,7 +40,6 @@ pub trait Engine {
     fn stop(&self, name: &str) -> Result<()>;
     fn down(&self, name: &str) -> Result<()>;
     fn health(&self, name: &str) -> Result<Health>;
-    fn runs(&self, name: &str) -> Result<bool>;
     fn snapshot(&self, name: &str, data: &Path) -> Result<()>;
     fn restore(&self, name: &str, data: &Path) -> Result<()>;
     fn confirm(&self, image: &Image, pin: &Pin) -> Result<Option<String>>;
@@ -232,10 +231,6 @@ impl Engine for Docker {
             "--remove-orphans",
         ];
         cmd::status_within(self.command(&args), "docker", &args, RUN_LIMIT)
-    }
-
-    fn runs(&self, name: &str) -> Result<bool> {
-        Ok(self.of(name)?.iter().any(|c| c.state.status == "running"))
     }
 
     fn health(&self, name: &str) -> Result<Health> {

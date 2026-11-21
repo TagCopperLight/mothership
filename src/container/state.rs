@@ -23,7 +23,6 @@ pub struct State {
 pub struct Deployed {
     pub fleet: String,
     pub running: Pins,
-    pub healthy: Option<Pins>,
     pub files: BTreeMap<PathBuf, String>,
     pub failed: BTreeSet<(String, Pin)>,
     pub problem: Option<Problem>,
