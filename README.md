@@ -61,6 +61,7 @@ types/workstation/
 ├── etc/                  files copied into /etc
 ├── recipients.txt        keys that open the secrets in /etc
 ├── ignore.txt            differences scan never reports
+├── services/gripsou/     a service: its containers, files and secrets
 └── users/tag/
     ├── home/             tag's home on a workstation, as chezmoi source files
     │   └── .secrets/     secrets templates read, never written to the home
@@ -87,3 +88,17 @@ etc = ["kernel/cmdline"]
 mothership detects the hardware, and stops when the type has no block for a piece the machine has. A machine turns options on in `/etc/mothership/machine.toml`.
 
 Each line of `ignore.txt` is a kind and a pattern, such as `home ~/.cache` or `package linux-firmware-*`.
+
+## Services
+
+On a server, the account `services` runs each service with its own rootless Docker, and keeps its data in `/srv/<name>/`. A service folder holds a `compose.yaml` without `image:` lines, the files it mounts, `*.tmpl` templates that read `{{ secret "name" }}`, and `secrets/*.age`, encrypted for the type's `recipients.txt`, which containers read in `/run/secrets/`. `service.toml` pins each container's image:
+
+```toml
+[images.app]
+image = "ghcr.io/me/app"
+version = "1.4.2"
+digest = "sha256:…"
+repo = "me/app"
+```
+
+When an update fails its health check, the machine restores the data it copied before and starts the last healthy versions again. `[probe] host = "minipc"` in `mothership.toml` makes that machine follow new patches and minors of every image, waiting 2 days for public ones, and push them as commits that only change versions and digests. `trust` gives the probe's key that right.

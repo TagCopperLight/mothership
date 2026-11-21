@@ -81,7 +81,8 @@ pub fn missing() -> Result<Vec<&'static str>> {
         missing.push("it can't open ports 80 and 443");
     }
     let unit_text = user.read(&user.home.join(UNIT))?;
-    if unit_text.as_deref() != Some(unit(rootless()?).as_bytes()) {
+    let wanted = rootless().ok().map(unit);
+    if wanted.is_none() || unit_text.as_deref() != wanted.as_deref().map(str::as_bytes) {
         missing.push("its Docker isn't set up");
     }
     Ok(missing)

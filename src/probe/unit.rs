@@ -134,7 +134,24 @@ pub fn items(fleet: &Fleet) -> Result<Vec<Item>> {
     Ok(items)
 }
 
+const NSSWITCH: &str = "/etc/nsswitch.conf";
+
+fn resolves_dynamic_users() -> Result<bool> {
+    let text = file::read_if_any(Path::new(NSSWITCH))?.unwrap_or_default();
+    Ok(text.lines().any(|line| {
+        line.split_once(':').is_some_and(|(database, sources)| {
+            database.trim() == "passwd" && sources.split_whitespace().any(|s| s == "systemd")
+        })
+    }))
+}
+
 pub fn install(fleet: &Fleet) -> Result<()> {
+    if !resolves_dynamic_users()? {
+        anyhow::bail!(
+            "the probe's ssh needs its temporary user to have a name, and {NSSWITCH} doesn't ask \
+             systemd for it: the type must list nss-systemd (libnss-systemd on Debian)"
+        );
+    }
     file::write(Path::new(SERVICE), service(fleet)?.as_bytes(), 0o644)?;
     file::write(Path::new(TIMER), TIMER_TEXT.as_bytes(), 0o644)?;
     cmd::root("systemctl", &["daemon-reload"])?;

@@ -102,8 +102,9 @@ fn round(setting: &Setting, state: &mut State) -> Result<()> {
         println!("Every image is up to date.");
         return Ok(());
     }
-    let key = sign::read_key(&setting.credentials.join(unit::SIGNING))?
-        .context("the probe has no signing key")?;
+    let signing = setting.credentials.join(unit::SIGNING);
+    let bytes = credential(unit::SIGNING)?.context("the probe has no signing key")?;
+    let key = sign::parse_key(&bytes, &signing)?;
     let commit = commit(&git, &dir, &tip, &found.updates, &setting.host, &key)?;
     git.out(&[
         "push",

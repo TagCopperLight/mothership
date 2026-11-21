@@ -8,7 +8,7 @@ import tokenize
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FIXTURES = ("e2e/fleet/", "e2e/vm/fleet/", "e2e/debian-packages/")
+FIXTURES = ("e2e/fleet/", "e2e/vm/fleet/", "e2e/vm/services/", "e2e/debian-packages/")
 SHELL_FILES = {"PKGBUILD"}
 HASH_FILES = {".gitignore"}
 HASH_SUFFIXES = {".yml", ".yaml", ".toml", ".Dockerfile"}

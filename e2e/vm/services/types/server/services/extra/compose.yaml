@@ -1,0 +1,5 @@
+services:
+  extra:
+    restart: unless-stopped
+    volumes:
+      - /srv/extra:/data

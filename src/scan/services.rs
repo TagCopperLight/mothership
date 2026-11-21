@@ -39,10 +39,6 @@ enum Scope {
 
 pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
     let dirs = systemd::paths(&systemd::SYSTEM_DIRS);
-    let mut declared = fleet.system.services.clone();
-    if crate::probe::unit::runs_here(fleet)? {
-        declared.push(crate::probe::unit::TIMER_NAME.to_owned());
-    }
     check(
         Unit {
             kind: Kind::Service,
@@ -53,9 +49,15 @@ pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
             defaults: &Defaults::load(ships.db.distro, Scope::System)?,
             member: None,
         },
-        &declared,
+        &fleet.system.services,
         ships,
     )
+    .map(|items| {
+        items
+            .into_iter()
+            .filter(|item| item.subject != crate::probe::unit::TIMER_NAME)
+            .collect()
+    })
 }
 
 pub fn scan_user(member: &Member, ships: &Ships) -> Result<Vec<Item>> {

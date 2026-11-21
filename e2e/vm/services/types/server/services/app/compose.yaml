@@ -1,0 +1,11 @@
+services:
+  app:
+    restart: unless-stopped
+    volumes:
+      - /srv/app:/data
+      - ./app.conf:/etc/app.conf:ro
+    secrets:
+      - token
+secrets:
+  token:
+    file: ./secrets/token

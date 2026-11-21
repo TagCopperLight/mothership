@@ -34,10 +34,12 @@ pub fn create_key(path: &Path) -> Result<()> {
 
 pub fn read_key(path: &Path) -> Result<Option<PrivateKey>> {
     file::read_root_only(path)?
-        .map(|bytes| {
-            PrivateKey::from_openssh(bytes).map_err(|e| anyhow!("{}: {e}", path.display()))
-        })
+        .map(|bytes| parse_key(&bytes, path))
         .transpose()
+}
+
+pub fn parse_key(bytes: &[u8], path: &Path) -> Result<PrivateKey> {
+    PrivateKey::from_openssh(bytes).map_err(|e| anyhow!("{}: {e}", path.display()))
 }
 
 pub fn recovery_key(age: &x25519::Identity) -> PrivateKey {

@@ -1,0 +1,25 @@
+packages = [
+  "chezmoi",
+  "curl",
+  "dbus-user-session",
+  "docker-compose",
+  "docker.io",
+  "git",
+  "libnss-systemd",
+  "rootlesskit",
+  "slirp4netns",
+  "sudo",
+  "systemd-container",
+  "uidmap",
+]
+
+[etc_modes]
+"sudoers.d/me" = "440"
+
+[hardware.cpu-intel]
+[hardware.cpu-amd]
+[hardware.gpu-intel]
+[hardware.gpu-amd]
+[hardware.gpu-nvidia]
+[hardware.battery]
+[hardware.gxfp5130]
