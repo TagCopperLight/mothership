@@ -207,7 +207,7 @@ pub fn trust_host(
             uploads.push(github::Key {
                 title: github::title(host, PROBE),
                 public: ssh::normalize(key)?,
-                kind: github::Use::Login,
+                kind: github::Use::Deploy,
             });
         } else if name == SIGNING {
             let public = add_signer(fleet, host, type_name, key, readers.prompt)?;

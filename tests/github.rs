@@ -18,10 +18,16 @@ fn key(title: &str, public: &str, kind: Use) -> Key {
 
 #[test]
 fn only_a_fleet_on_github_over_ssh_reaches_github() {
-    assert!(hosts("git@github.com:me/fleet.git"));
-    assert!(hosts("ssh://git@github.com/me/fleet"));
-    assert!(!hosts("/srv/fleet.git"));
-    assert!(!hosts("git@github.com.evil:me/fleet"));
+    assert_eq!(
+        repo("git@github.com:me/fleet.git").as_deref(),
+        Some("me/fleet")
+    );
+    assert_eq!(
+        repo("ssh://git@github.com/me/fleet").as_deref(),
+        Some("me/fleet")
+    );
+    assert_eq!(repo("/srv/fleet.git"), None);
+    assert_eq!(repo("git@github.com.evil:me/fleet"), None);
 }
 
 #[test]

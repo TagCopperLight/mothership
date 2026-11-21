@@ -12,13 +12,17 @@ const KEYS_PAGE: &str = "https://github.com/settings/keys";
 pub enum Use {
     Login,
     Signing,
+    Deploy,
 }
 
+const ALL: [Use; 3] = [Use::Login, Use::Signing, Use::Deploy];
+
 impl Use {
-    fn endpoint(self) -> &'static str {
+    fn endpoint(self, repo: &str) -> String {
         match self {
-            Use::Login => "user/keys",
-            Use::Signing => "user/ssh_signing_keys",
+            Use::Login => "user/keys".to_owned(),
+            Use::Signing => "user/ssh_signing_keys".to_owned(),
+            Use::Deploy => format!("repos/{repo}/keys"),
         }
     }
 
@@ -26,6 +30,7 @@ impl Use {
         match self {
             Use::Login => "authentication",
             Use::Signing => "signing",
+            Use::Deploy => "fleet deploy",
         }
     }
 }
@@ -48,16 +53,20 @@ pub fn title(host: &str, user: &str) -> String {
     format!("{host}/{user}")
 }
 
-fn hosts(url: &str) -> bool {
-    url.starts_with("git@github.com:") || url.starts_with("ssh://git@github.com/")
+pub fn repo(url: &str) -> Option<String> {
+    let path = url
+        .strip_prefix("git@github.com:")
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))?;
+    let path = path.trim_end_matches('/');
+    Some(path.strip_suffix(".git").unwrap_or(path).to_owned())
 }
 
-fn on_github(admin: &User) -> Result<bool> {
-    Ok(hosts(&checked::origin(admin)?))
+fn fleet_repo(admin: &User) -> Result<Option<String>> {
+    Ok(repo(&checked::origin(admin)?))
 }
 
-fn listed(admin: &User, kind: Use) -> Result<Vec<Listed>> {
-    let page = format!("{}?per_page=100", kind.endpoint());
+fn listed(admin: &User, kind: Use, repo: &str) -> Result<Vec<Listed>> {
+    let page = format!("{}?per_page=100", kind.endpoint(repo));
     let text = cmd::stdout(As::User(admin), "gh", &["api", &page])?;
     serde_json::from_str(&text).context("reading GitHub's list of keys")
 }
@@ -74,7 +83,7 @@ fn retired(host: &str, kind: Use, known: &[Listed]) -> Vec<(u64, String)> {
     known
         .iter()
         .filter(|listed| match kind {
-            Use::Login => listed.title.starts_with(&prefix),
+            Use::Login | Use::Deploy => listed.title.starts_with(&prefix),
             Use::Signing => listed.title == host,
         })
         .map(|listed| (listed.id, listed.title.clone()))
@@ -90,16 +99,19 @@ fn gh(admin: &User, args: &[&str]) -> Result<()> {
 }
 
 pub fn add(admin: &User, keys: &[Key]) -> Result<()> {
-    if keys.is_empty() || !on_github(admin)? {
+    if keys.is_empty() {
         return Ok(());
     }
+    let Some(repo) = fleet_repo(admin)? else {
+        return Ok(());
+    };
     let mut failed: Vec<(&Key, String)> = Vec::new();
-    for kind in [Use::Login, Use::Signing] {
+    for kind in ALL {
         let wanted: Vec<&Key> = keys.iter().filter(|key| key.kind == kind).collect();
         if wanted.is_empty() {
             continue;
         }
-        let known = match listed(admin, kind) {
+        let known = match listed(admin, kind, &repo) {
             Ok(known) => known,
             Err(e) => {
                 failed.extend(wanted.iter().map(|key| (*key, format!("{e:#}"))));
@@ -109,7 +121,13 @@ pub fn add(admin: &User, keys: &[Key]) -> Result<()> {
         for key in missing(&wanted, &known) {
             let title = format!("title={}", key.title);
             let public = format!("key={}", key.public);
-            match gh(admin, &["-f", &title, "-f", &public, kind.endpoint()]) {
+            let mut args = vec!["-f", &title, "-f", &public];
+            if kind == Use::Deploy {
+                args.extend(["-F", "read_only=false"]);
+            }
+            let endpoint = kind.endpoint(&repo);
+            args.push(&endpoint);
+            match gh(admin, &args) {
                 Ok(()) => println!("GitHub has {} now.", key.title),
                 Err(e) => failed.push((key, format!("{e:#}"))),
             }
@@ -129,15 +147,19 @@ pub fn add(admin: &User, keys: &[Key]) -> Result<()> {
 }
 
 pub fn remove(admin: &User, host: &str) -> Result<()> {
-    if !on_github(admin)? {
+    let Some(repo) = fleet_repo(admin)? else {
         return Ok(());
-    }
-    for kind in [Use::Login, Use::Signing] {
-        let dropped = listed(admin, kind).and_then(|known| {
+    };
+    for kind in ALL {
+        let dropped = listed(admin, kind, &repo).and_then(|known| {
             for (id, title) in retired(host, kind, &known) {
                 gh(
                     admin,
-                    &["--method", "DELETE", &format!("{}/{id}", kind.endpoint())],
+                    &[
+                        "--method",
+                        "DELETE",
+                        &format!("{}/{id}", kind.endpoint(&repo)),
+                    ],
                 )?;
                 println!("GitHub drops {title} now.");
             }
@@ -145,7 +167,7 @@ pub fn remove(admin: &User, host: &str) -> Result<()> {
         });
         if let Err(e) = dropped {
             let named = match kind {
-                Use::Login => format!("named {}", title(host, "…")),
+                Use::Login | Use::Deploy => format!("named {}", title(host, "…")),
                 Use::Signing => format!("named {host}"),
             };
             println!(

@@ -412,7 +412,7 @@ fn the_probe_signs_only_versions_and_its_ssh_key_goes_to_github() {
         [github::Key {
             title: "minipc/probe".into(),
             public: login,
-            kind: github::Use::Login,
+            kind: github::Use::Deploy,
         }]
     );
     let signers = dir.path().join(sign::SIGNERS);
