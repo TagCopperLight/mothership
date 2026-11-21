@@ -1,6 +1,7 @@
 mod apply;
 mod chezmoi;
 mod cmd;
+mod container;
 mod edit;
 mod file;
 mod fleet;

@@ -1,9 +1,10 @@
 use super::{DIR, MANIFEST, Manifest};
 use crate::{
     cmd::{self, As},
+    container::{self, confirm::Unconfirmed},
     file,
     prompt::Prompt,
-    sign::{self, Commit, SIGNERS, Signer},
+    sign::{self, Commit, Reach, SIGNERS, Signer},
     user::User,
 };
 use anyhow::{Context, Result, bail};
@@ -79,7 +80,7 @@ impl Git {
         self.succeeds(&["merge-base", "--is-ancestor", older, newer])
     }
 
-    fn blob(&self, commit: &str, path: &str) -> Result<Option<String>> {
+    pub fn blob(&self, commit: &str, path: &str) -> Result<Option<String>> {
         let name = format!("{commit}:{path}");
         if !self.succeeds(&["cat-file", "-e", &name])? {
             return Ok(None);
@@ -121,6 +122,13 @@ pub struct Refused {
 pub struct Checked {
     pub commit: String,
     pub refused: Option<Refused>,
+    pub steps: Vec<Step>,
+}
+
+pub struct Step {
+    pub parent: String,
+    pub commit: String,
+    pub reach: Reach,
 }
 
 pub fn check(git: &Git, from: &str, to: &str) -> Result<Checked> {
@@ -138,32 +146,43 @@ pub fn check(git: &Git, from: &str, to: &str) -> Result<Checked> {
         &format!("{from}..{to}"),
     ])?;
     let mut good = from.to_owned();
+    let mut steps = Vec::new();
     for commit in list.lines() {
-        if let Err(why) = verify(git, &good, commit) {
-            let line = git.out(&["log", "-1", "--format=%an%x00%as%x00%s", commit])?;
-            let [author, date, subject] = line.splitn(3, '\0').collect::<Vec<_>>()[..] else {
-                bail!("git log printed {line}");
-            };
-            return Ok(Checked {
-                commit: good,
-                refused: Some(Refused {
-                    commit: commit.to_owned(),
-                    author: author.to_owned(),
-                    date: date.to_owned(),
-                    subject: subject.to_owned(),
-                    why: format!("{why:#}"),
-                }),
-            });
-        }
+        let signer = match verify(git, &good, commit) {
+            Ok(signer) => signer,
+            Err(why) => {
+                let line = git.out(&["log", "-1", "--format=%an%x00%as%x00%s", commit])?;
+                let [author, date, subject] = line.splitn(3, '\0').collect::<Vec<_>>()[..] else {
+                    bail!("git log printed {line}");
+                };
+                return Ok(Checked {
+                    commit: good,
+                    refused: Some(Refused {
+                        commit: commit.to_owned(),
+                        author: author.to_owned(),
+                        date: date.to_owned(),
+                        subject: subject.to_owned(),
+                        why: format!("{why:#}"),
+                    }),
+                    steps,
+                });
+            }
+        };
+        steps.push(Step {
+            parent: good,
+            commit: commit.to_owned(),
+            reach: signer.map_or(Reach::Everything, |signer| signer.reach),
+        });
         good = commit.to_owned();
     }
     Ok(Checked {
         commit: good,
         refused: None,
+        steps,
     })
 }
 
-fn verify(git: &Git, parent: &str, commit: &str) -> Result<String> {
+pub fn verify(git: &Git, parent: &str, commit: &str) -> Result<Option<Signer>> {
     let first = git.out(&["rev-parse", &format!("{commit}^1")])?;
     if first != parent {
         bail!("it doesn't follow {} on main's line", short(parent));
@@ -174,7 +193,7 @@ fn verify(git: &Git, parent: &str, commit: &str) -> Result<String> {
     let mut trusted = before.clone();
     trusted.extend(git.recovery(parent)?);
     if trusted.is_empty() {
-        return Ok("nobody, as the fleet named no signer".to_owned());
+        return Ok(None);
     }
     let args = ["cat-file", "commit", commit];
     let signed = Commit::parse(&cmd::output(git.command(&args), "git", &args)?)?;
@@ -194,7 +213,46 @@ fn verify(git: &Git, parent: &str, commit: &str) -> Result<String> {
     ])?;
     let changed: Vec<PathBuf> = changed.lines().map(PathBuf::from).collect();
     sign::allowed(signer, &changed, &before, &after)?;
-    Ok(signer.name.clone())
+    if signer.reach == Reach::Versions {
+        for path in &changed {
+            let text = path.to_string_lossy();
+            let (Some(old), Some(new)) = (git.blob(parent, &text)?, git.blob(commit, &text)?)
+            else {
+                bail!("{} can't add or remove {text}", signer.name);
+            };
+            container::versions_only(&old, &new)
+                .with_context(|| format!("{} can't sign this change to {text}", signer.name))?;
+        }
+    }
+    Ok(Some(signer.clone()))
+}
+
+fn note_unconfirmed(git: &Git, steps: &[Step]) -> Result<()> {
+    if steps.is_empty() {
+        return Ok(());
+    }
+    let mut unconfirmed = Unconfirmed::load()?;
+    for step in steps {
+        let changed = git.out(&[
+            "diff-tree",
+            "-r",
+            "--name-only",
+            "--no-commit-id",
+            &step.parent,
+            &step.commit,
+        ])?;
+        for path in changed.lines() {
+            let Some(service) = container::service_of(Path::new(path)) else {
+                continue;
+            };
+            let pins = container::changed_pins(
+                git.blob(&step.parent, path)?.as_deref(),
+                git.blob(&step.commit, path)?.as_deref(),
+            );
+            unconfirmed.note(&service, pins, step.reach == Reach::Versions);
+        }
+    }
+    unconfirmed.save()
 }
 
 pub struct Sync {
@@ -241,6 +299,7 @@ pub fn sync_from(admin: &User, remote: Remote, anchor: Anchor) -> Result<Sync> {
         (Anchor::Tip, _) => tip.clone(),
     };
     let checked = check(&git, &anchor, &tip)?;
+    note_unconfirmed(&git, &checked.steps)?;
     git.out(&["update-ref", CHECKED, &checked.commit])?;
     export(&git, &checked.commit)?;
     if checked.commit != main
@@ -314,7 +373,8 @@ pub fn newest(admin: &User, count: usize) -> Result<Vec<String>> {
         let parent = git.rev(&format!("{commit}^1"))?;
         let by = match parent {
             Some(parent) => match verify(&git, &parent, commit) {
-                Ok(signer) => format!("signed by {signer}"),
+                Ok(Some(signer)) => format!("signed by {}", signer.name),
+                Ok(None) => "signed by nobody, as the fleet named no signer".to_owned(),
                 Err(why) => format!("{why:#}"),
             },
             None => "the fleet's first commit".to_owned(),

@@ -1,6 +1,7 @@
 use crate::{
     chezmoi,
     cmd::{self, As},
+    container,
     hardware::{self, Hardware},
     ignore::{Ignore, Paths},
     kind::Level,
@@ -54,6 +55,7 @@ pub struct Repo {
     pub not_secret: Paths,
     pub profiles: Vec<Profile>,
     pub recovery: Recipient,
+    pub services: Vec<container::Service>,
 }
 
 pub struct Fleet {
@@ -364,6 +366,7 @@ impl Repo {
         let ignore = Ignore::load(&type_dir.join(IGNORE), Level::Machine)?;
         let not_secret = Paths::load(&type_dir.join(NOT_SECRET))?;
         let profiles = profiles(&dir, &type_dir.join(USERS))?;
+        let services = container::load(&type_dir)?;
         Ok(Repo {
             dir,
             type_name: device_type.to_owned(),
@@ -377,6 +380,7 @@ impl Repo {
             not_secret,
             profiles,
             recovery,
+            services,
         })
     }
 

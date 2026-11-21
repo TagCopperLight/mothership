@@ -1,4 +1,4 @@
-use crate::{file, secrets};
+use crate::{container, file, secrets};
 use age::{secrecy::ExposeSecret, x25519};
 use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest, Sha256};
@@ -50,12 +50,17 @@ pub fn sign(key: &PrivateKey, payload: &[u8]) -> Result<String> {
 pub enum Reach {
     Everything,
     Folders(Vec<PathBuf>),
+    Versions,
 }
+
+pub const VERSIONS: &str = "versions";
 
 impl Reach {
     pub fn parse(words: &[&str]) -> Result<Reach> {
-        if words.is_empty() {
-            return Ok(Reach::Everything);
+        match words {
+            [] => return Ok(Reach::Everything),
+            [VERSIONS] => return Ok(Reach::Versions),
+            _ => {}
         }
         let folders = words
             .iter()
@@ -77,16 +82,17 @@ impl Reach {
         match self {
             Reach::Everything => true,
             Reach::Folders(folders) => folders.iter().any(|folder| path.starts_with(folder)),
+            Reach::Versions => container::is_service_toml(path),
         }
     }
 
     fn holds(&self, other: &Reach) -> bool {
         match (self, other) {
             (Reach::Everything, _) => true,
-            (Reach::Folders(_), Reach::Everything) => false,
             (Reach::Folders(_), Reach::Folders(theirs)) => {
                 theirs.iter().all(|folder| self.covers(folder))
             }
+            (Reach::Folders(_) | Reach::Versions, _) => false,
         }
     }
 }

@@ -205,3 +205,97 @@ fn a_main_and_an_origin_that_split_stop_the_check() {
         "{error}"
     );
 }
+
+const OLD: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const NEW: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+
+fn pinned(version: &str, digest: &str) -> String {
+    format!("[images.db]\nimage = \"postgres\"\nversion = \"{version}\"\ndigest = \"{digest}\"\n")
+}
+
+#[test]
+fn a_versions_signer_changes_only_versions_and_digests_within_their_major() {
+    let repo = Repo::new();
+    let (laptop, laptop_file) = repo.key("laptop");
+    let (probe, probe_file) = repo.key("probe");
+    repo.write(
+        SIGNERS,
+        &(line("laptop", &laptop, "") + "\n" + &line("probe", &probe, "versions")),
+    );
+    let service = "types/server/services/db/service.toml";
+    repo.write(service, &pinned("16.4.3", OLD));
+    repo.write("types/server/services/db/compose.yaml", "services: {}\n");
+    let anchor = repo.commit("Signers", None);
+    repo.write(service, &pinned("16.5.0", NEW));
+    let update = repo.commit("Update", Some(&probe_file));
+    repo.write(service, &pinned("16.5.0", OLD));
+    let digest = repo.commit("Same version, new digest", Some(&probe_file));
+    let checked = repo.check(&anchor);
+    assert!(checked.refused.is_none());
+    assert_eq!(checked.commit, digest);
+    assert!(matches!(checked.steps[0].reach, Reach::Versions));
+    assert_eq!(checked.steps[0].commit, update);
+
+    let refused = |text: &str, path: &str| {
+        repo.git(&["reset", "-q", "--hard", &digest]);
+        repo.write(path, text);
+        repo.commit("Probe", Some(&probe_file));
+        repo.check(&digest).refused.unwrap().why
+    };
+    assert_eq!(
+        refused(&pinned("17.0.0", NEW), service),
+        format!(
+            "probe can't sign this change to {service}: images.db: 17.0.0 leaves major version 16"
+        )
+    );
+    assert_eq!(
+        refused(&pinned("16.4.0", NEW), service),
+        format!(
+            "probe can't sign this change to {service}: images.db: 16.4.0 is older than 16.5.0"
+        )
+    );
+    assert_eq!(
+        refused(
+            &pinned("16.5.0", OLD).replace("postgres", "evil/postgres"),
+            service
+        ),
+        format!(
+            "probe can't sign this change to {service}: it changes images.db beyond its version and digest"
+        )
+    );
+    assert_eq!(
+        refused(
+            "services: {evil: {}}\n",
+            "types/server/services/db/compose.yaml"
+        ),
+        "probe can't sign a change to types/server/services/db/compose.yaml"
+    );
+    assert_eq!(
+        refused(
+            &pinned("1.0.0", NEW),
+            "types/server/services/new/service.toml"
+        ),
+        "probe can't add or remove types/server/services/new/service.toml"
+    );
+    repo.git(&["reset", "-q", "--hard", &digest]);
+    repo.write(SIGNERS, &line("laptop", &laptop, ""));
+    repo.commit("Drop itself", Some(&probe_file));
+    assert_eq!(
+        repo.check(&digest).refused.unwrap().why,
+        "probe can't change probe's line in signers.txt"
+    );
+}
+
+#[test]
+fn pins_a_versions_signer_sets_wait_until_a_full_signer_changes_them() {
+    let mut unconfirmed = Unconfirmed::default();
+    let pin = |version: &str| container::Pin {
+        version: version.into(),
+        digest: NEW.into(),
+    };
+    unconfirmed.note("server/db", vec![("db".into(), pin("16.5.0"))], true);
+    assert!(unconfirmed.waits("server/db", "db", &pin("16.5.0")));
+    assert!(!unconfirmed.waits("server/db", "db", &pin("16.4.0")));
+    unconfirmed.note("server/db", vec![("db".into(), pin("16.6.0"))], false);
+    assert_eq!(unconfirmed, Unconfirmed::default());
+}
