@@ -1,5 +1,5 @@
 use crate::{
-    chezmoi, file,
+    chezmoi, container, file,
     fleet::{
         self, Fleet, Repo, checked,
         homes::{self, Home},
@@ -616,6 +616,13 @@ fn secrets_of(fleet: &Fleet, target: &Target) -> Result<Vec<Secret>> {
                         readers: vec![target.text.clone()],
                     });
                 }
+            }
+            for path in container::sealed(&type_dir)? {
+                all.push(Secret {
+                    shown: path.strip_prefix(&fleet.dir)?.display().to_string(),
+                    source: Source::Etc(path),
+                    readers: vec![target.text.clone()],
+                });
             }
         }
         Scope::User(home) => {

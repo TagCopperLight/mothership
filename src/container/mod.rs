@@ -1,13 +1,17 @@
 pub mod account;
+mod apply;
 mod compose;
 pub mod confirm;
 pub mod deploy;
 pub mod docker;
 pub mod registry;
+pub mod scan;
 pub mod state;
 pub mod version;
 
-use crate::{host, secrets::Keys, walk};
+pub use apply::{Action, problems, run};
+
+use crate::{fleet::Fleet, host, secrets::Keys, walk};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -104,6 +108,29 @@ pub fn parse(text: &str) -> Result<BTreeMap<String, Image>> {
     Ok(parsed.images)
 }
 
+pub const LOGINS: &str = "docker-config.json.age";
+
+pub fn sealed(type_dir: &Path) -> Result<Vec<PathBuf>> {
+    let dir = type_dir.join(SERVICES);
+    Ok(walk::files(&dir)?
+        .into_iter()
+        .filter(|rel| rel.extension().is_some_and(|e| e == "age"))
+        .map(|rel| dir.join(rel))
+        .collect())
+}
+
+pub fn logins_path(fleet: &Fleet) -> PathBuf {
+    fleet.type_dir.join(SERVICES).join(LOGINS)
+}
+
+pub fn logins(fleet: &Fleet) -> Result<Option<Vec<u8>>> {
+    let path = logins_path(fleet);
+    match path.exists() {
+        true => fleet.root_keys().decrypt(&path).map(Some),
+        false => Ok(None),
+    }
+}
+
 pub fn is_service_toml(path: &Path) -> bool {
     service_of(path).is_some()
 }
@@ -181,10 +208,6 @@ pub struct Rendered {
 }
 
 impl Service {
-    pub fn data(&self) -> PathBuf {
-        Path::new(DATA).join(&self.name)
-    }
-
     pub fn pins(&self) -> BTreeMap<String, Pin> {
         self.images
             .iter()

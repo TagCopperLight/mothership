@@ -2,6 +2,7 @@ use super::services;
 use crate::item::{Change, Item, Secret};
 use crate::kind::Kind;
 use crate::{
+    container,
     edit::Add,
     file,
     fleet::{self, Fleet},
@@ -103,6 +104,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     known.insert(PathBuf::from(fleet::MACHINE));
     known.insert(PathBuf::from(secrets::ROOT_KEY));
     known.insert(PathBuf::from(sign::KEY));
+    known.insert(PathBuf::from(container::account::SYSCTL));
     known.extend(services::global_defaults(db.distro)?);
     let known_dirs = owned_dirs
         .into_iter()

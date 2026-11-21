@@ -1,5 +1,5 @@
 use crate::{
-    file,
+    container, file,
     fleet::{Fleet, Unsaved},
     item::{Change, Secret, Section},
     package::Db,
@@ -31,7 +31,16 @@ pub fn run() -> Result<()> {
     let fleet = Fleet::load()?;
     scan::print_unsaved(&fleet, Unsaved::Uncommitted, Style::stdout())?;
     usage::keep_completion()?;
-    trust::create_keys(&fleet)
+    trust::create_keys(&fleet)?;
+    services_settled()
+}
+
+fn services_settled() -> Result<()> {
+    let problems = container::problems()?;
+    if !problems.is_empty() {
+        anyhow::bail!("these services need attention:\n{}", problems.join("\n"));
+    }
+    Ok(())
 }
 
 pub fn unasked(service_manager: ServiceManager) -> Result<()> {

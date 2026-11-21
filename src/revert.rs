@@ -1,7 +1,7 @@
 use crate::{
     chezmoi,
     cmd::{self, As},
-    file,
+    container, file,
     fleet::{Fleet, Manager, Member, Mode, Tool},
     package::{Archive, Distro},
     tools,
@@ -25,6 +25,7 @@ pub enum Machine {
     Etc(Etc),
     Unit(Unit),
     CreateUser { name: String, shell: Option<String> },
+    Container(container::Action),
 }
 
 pub enum Etc {
@@ -64,6 +65,12 @@ impl From<User> for Revert {
     }
 }
 
+impl From<container::Action> for Revert {
+    fn from(action: container::Action) -> Self {
+        Revert::Machine(Machine::Container(action))
+    }
+}
+
 impl From<Etc> for Revert {
     fn from(change: Etc) -> Self {
         Revert::Machine(Machine::Etc(change))
@@ -83,6 +90,7 @@ impl Revert {
                 unit.describe().into()
             }
             Revert::Machine(Machine::CreateUser { .. }) => "create it".into(),
+            Revert::Machine(Machine::Container(action)) => action.describe().into(),
             Revert::User(User::InitChezmoi) => "write its config".into(),
             Revert::User(User::Linger(true)) => "turn it on".into(),
             Revert::User(User::Linger(false)) => "turn it off".into(),
@@ -152,8 +160,14 @@ pub fn run(fleet: &Fleet, reverts: &[Owned]) -> Result<()> {
 }
 
 fn run_machine(fleet: &Fleet, changes: &[&Machine]) -> Result<()> {
-    let (mut install, mut uninstall, mut etc, mut units, mut users) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut install, mut uninstall, mut etc, mut units, mut users, mut containers) = (
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
     for change in changes.iter().copied() {
         match change {
             Machine::Install(name) => install.push(name.as_str()),
@@ -161,6 +175,7 @@ fn run_machine(fleet: &Fleet, changes: &[&Machine]) -> Result<()> {
             Machine::Etc(change) => etc.push(change),
             Machine::Unit(unit) => units.push(unit),
             Machine::CreateUser { name, shell } => users.push((name, shell)),
+            Machine::Container(action) => containers.push(action),
         }
     }
     let distro = Distro::here()?;
@@ -187,6 +202,9 @@ fn run_machine(fleet: &Fleet, changes: &[&Machine]) -> Result<()> {
     }
     for (name, shell) in users {
         create_user(name, shell.as_deref())?;
+    }
+    if !containers.is_empty() {
+        container::run(fleet, &containers)?;
     }
     Ok(())
 }

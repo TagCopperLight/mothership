@@ -9,6 +9,8 @@ pub enum Kind {
     Home,
     Etc,
     Service,
+    Container,
+    Data,
     UserService,
     Account,
     User,
@@ -31,6 +33,8 @@ impl Kind {
             Kind::Package
             | Kind::Etc
             | Kind::Service
+            | Kind::Container
+            | Kind::Data
             | Kind::User
             | Kind::Shared
             | Kind::Key

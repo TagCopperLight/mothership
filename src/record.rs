@@ -74,6 +74,7 @@ impl Record {
             Machine::Install(name) => !self.packages.contains(name),
             Machine::Uninstall(name) => self.packages.contains(name),
             Machine::CreateUser { .. } => true,
+            Machine::Container(_) => false,
             Machine::Unit(Unit::Enable(unit)) => !self.services.contains(unit),
             Machine::Unit(Unit::Disable(unit)) => self.services.contains(unit),
             Machine::Etc(Etc::Write(path)) => match hash(path)? {

@@ -129,7 +129,7 @@ impl World {
         let wanted = Wanted {
             service,
             key: "server/app".into(),
-            fleet: fingerprint(service, &rendered),
+            fleet: fingerprint(service, &rendered, None),
             rendered: &rendered,
         };
         deploy(engine, &self.places, &wanted, before, &mut self.unconfirmed).unwrap()

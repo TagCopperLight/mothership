@@ -5,7 +5,6 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use std::{
-    fs,
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},

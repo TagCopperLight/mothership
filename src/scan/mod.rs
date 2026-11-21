@@ -15,7 +15,7 @@ pub mod tools;
 pub use print::{Columns, heading, line, print_groups, print_section};
 
 use crate::{
-    chezmoi, file,
+    chezmoi, container, file,
     fleet::{
         self, Fleet, Member, Unsaved,
         checked::{self, Refused},
@@ -95,6 +95,7 @@ pub fn checks(fleet: &Fleet, db: &Db, record: &Record, which: Checks) -> Result<
             s.spawn(move || packages::scan(fleet, db)),
             s.spawn(move || etc::scan(fleet, db)),
             s.spawn(move || services::scan(fleet, ships)),
+            s.spawn(move || containers(fleet)),
         ];
         for i in 0..fleet.members.len() {
             handles.push(s.spawn(move || member(fleet, ships, i, which)));
@@ -115,6 +116,12 @@ pub fn checks(fleet: &Fleet, db: &Db, record: &Record, which: Checks) -> Result<
         }
     }
     Ok(items)
+}
+
+fn containers(fleet: &Fleet) -> Result<Vec<Item>> {
+    let registry = container::registry::Client::new(Box::new(crate::http::Curl), None)?;
+    let docker = container::docker::Docker::find(registry)?;
+    container::scan::scan(fleet, docker.as_ref())
 }
 
 fn member(fleet: &Fleet, ships: &Ships, i: usize, which: Checks) -> Result<Vec<Item>> {

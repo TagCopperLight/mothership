@@ -15,6 +15,7 @@ pub type Pins = BTreeMap<String, Pin>;
 #[serde(default, deny_unknown_fields)]
 pub struct State {
     pub services: BTreeMap<String, Deployed>,
+    pub dropped: BTreeSet<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -25,12 +26,12 @@ pub struct Deployed {
     pub healthy: Option<Pins>,
     pub files: BTreeMap<PathBuf, String>,
     pub failed: BTreeSet<(String, Pin)>,
-    pub refused: Option<Refusal>,
+    pub problem: Option<Problem>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct Refusal {
+pub struct Problem {
     pub fleet: String,
     pub why: String,
 }
@@ -52,10 +53,10 @@ impl Deployed {
             .collect()
     }
 
-    pub fn refused_for(&self, fleet: &str) -> Option<&str> {
-        self.refused
+    pub fn problem_for(&self, fleet: &str) -> Option<&str> {
+        self.problem
             .as_ref()
-            .filter(|refusal| refusal.fleet == fleet)
-            .map(|refusal| refusal.why.as_str())
+            .filter(|problem| problem.fleet == fleet)
+            .map(|problem| problem.why.as_str())
     }
 }

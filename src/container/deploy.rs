@@ -2,7 +2,7 @@ use super::{
     COMPOSE, Rendered, SECRETS, Service, compose,
     confirm::Unconfirmed,
     docker::{Engine, Health, Project},
-    state::{Deployed, Pins, Refusal},
+    state::{Deployed, Pins, Problem},
 };
 use crate::{file, hash};
 use anyhow::{Context, Result, bail};
@@ -23,6 +23,15 @@ pub struct Places {
 }
 
 impl Places {
+    pub fn here() -> Result<Places> {
+        let owner = super::account::user()?.map_or((0, 0), |user| (user.uid, user.gid));
+        Ok(Places {
+            projects: PathBuf::from(PROJECTS),
+            data: PathBuf::from(super::DATA),
+            owner,
+        })
+    }
+
     pub fn project(&self, name: &str) -> PathBuf {
         self.projects.join(name)
     }
@@ -42,8 +51,9 @@ pub enum Outcome {
     Refused(String),
 }
 
-pub fn fingerprint(service: &Service, rendered: &Rendered) -> String {
+pub fn fingerprint(service: &Service, rendered: &Rendered, logins: Option<&[u8]>) -> String {
     let mut fields = hash::Fields::new();
+    fields.add(logins.unwrap_or_default());
     for (image, pin) in service.pins() {
         for part in [image, pin.version, pin.digest] {
             fields.add(part.as_bytes());
@@ -192,6 +202,10 @@ pub fn deploy(
     let blocked = describe(&entry.failed_in(&pins));
     if !blocked.is_empty() {
         entry.fleet = wanted.fleet.clone();
+        entry.problem = Some(Problem {
+            fleet: wanted.fleet.clone(),
+            why: format!("{blocked} failed its health check here before"),
+        });
         return Ok((entry, Outcome::Blocked(blocked)));
     }
     for (image_name, image) in &service.images {
@@ -200,7 +214,7 @@ pub fn deploy(
         }
         if let Some(why) = engine.confirm(image, &image.pin())? {
             entry.fleet = wanted.fleet.clone();
-            entry.refused = Some(Refusal {
+            entry.problem = Some(Problem {
                 fleet: wanted.fleet.clone(),
                 why: why.clone(),
             });
@@ -229,7 +243,6 @@ pub fn deploy(
     engine.up(&project)?;
     let health = engine.health(name)?;
     entry.fleet = wanted.fleet.clone();
-    entry.refused = None;
     let outcome = match health {
         Health::Unhealthy(why) if update => {
             let back = entry
@@ -264,6 +277,19 @@ pub fn deploy(
             }
         }
     };
+    entry.problem = match &outcome {
+        Outcome::RolledBack(why) => Some(format!(
+            "{} failed its health check ({why}), so it runs {} again",
+            describe(&entry.failed_in(&wanted.service.pins())),
+            describe(&entry.running.iter().collect::<Vec<_>>())
+        )),
+        Outcome::Unhealthy(why) => Some(format!("it isn't healthy: {why}")),
+        _ => None,
+    }
+    .map(|why| Problem {
+        fleet: wanted.fleet.clone(),
+        why,
+    });
     Ok((entry, outcome))
 }
 
