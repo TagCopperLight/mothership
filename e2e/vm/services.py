@@ -411,7 +411,7 @@ sudo sh /tmp/anchor.sh
     expect(apply(), "app failed its health check", "these services need attention", code=1)
     assert data("app", "version") == "1.0.1", "the last healthy version runs again"
     assert data("app", "precious") == "kept", "the snapshot is back"
-    expect(vm.run("sudo mothership scan"), "not applied", "images.app 1.0.2 failed its health check")
+    expect(vm.run("sudo mothership scan"), "not applied", "images.app 1.0.2 failed (app-app-1 reports unhealthy)")
     expect(apply(), "these services need attention", code=1)
 
     keys = vm.run("sudo mothership key").stdout

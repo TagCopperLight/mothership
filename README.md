@@ -101,4 +101,4 @@ digest = "sha256:…"
 repo = "me/app"
 ```
 
-When an update fails its health check, the machine restores the data it copied before and starts the last healthy versions again. `[probe] host = "minipc"` in `mothership.toml` makes that machine follow new patches and minors of every image, waiting 2 days for public ones, and push them as commits that only change versions and digests. `trust` gives the probe's key that right.
+When an update fails its health check, the machine restores the data it copied before the update and starts the versions and files that ran then. `[probe] host = "minipc"` in `mothership.toml` makes that machine follow new patches and minors of every image, waiting 2 days for public ones, and push them as commits that only change versions and digests. `trust` gives the probe's key that right.
