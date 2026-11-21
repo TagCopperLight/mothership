@@ -1,4 +1,10 @@
+pub mod account;
+mod compose;
 pub mod confirm;
+pub mod deploy;
+pub mod docker;
+pub mod registry;
+pub mod state;
 pub mod version;
 
 use crate::{host, secrets::Keys, walk};

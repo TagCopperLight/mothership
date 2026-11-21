@@ -9,6 +9,7 @@ mod github;
 mod hardware;
 mod hash;
 mod host;
+mod http;
 mod ignore;
 mod install;
 mod item;

@@ -85,6 +85,24 @@ pub fn output<S: AsRef<OsStr>>(command: Command, program: &str, args: &[S]) -> R
     capture(command, program, args, None, None, None)
 }
 
+pub fn output_within<S: AsRef<OsStr>>(
+    command: Command,
+    program: &str,
+    args: &[S],
+    limit: Duration,
+) -> Result<Vec<u8>> {
+    capture(command, program, args, Some(limit), None, None)
+}
+
+pub fn status_within<S: AsRef<OsStr>>(
+    command: Command,
+    program: &str,
+    args: &[S],
+    limit: Duration,
+) -> Result<()> {
+    show(command, program, args, Some(limit))
+}
+
 pub fn output_with_input<S: AsRef<OsStr>>(
     command: Command,
     program: &str,
