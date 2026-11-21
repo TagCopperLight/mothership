@@ -312,7 +312,7 @@ pub fn prepare(disk: &Disk, prompt: &mut Prompt) -> Result<()> {
     let open = [&["open"], &key[..], &[&root, MAPPER]].concat();
     cmd::with_input(As::Root, "cryptsetup", &open, passphrase.as_bytes())?;
     let mapped = format!("/dev/mapper/{MAPPER}");
-    cmd::root("mkfs.ext4", &["-q", &mapped])?;
+    cmd::root("mkfs.ext4", &["-q", "-F", &mapped])?;
     cmd::root("mount", &[&mapped, ROOT])?;
     for (device, at) in mounts {
         let dir = file::under(Path::new(ROOT), at);
