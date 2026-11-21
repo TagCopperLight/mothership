@@ -91,30 +91,48 @@ pub fn bases(dockerfile: &str) -> Vec<(String, String)> {
     bases
 }
 
-pub fn ask(
-    github: &GitHub,
-    registry: &Client,
-    watched: &[Watched],
-    state: &mut State,
-) -> Result<Vec<String>> {
-    let mut asked = Vec::new();
+pub struct Asked {
+    pub asked: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+pub fn ask(github: &GitHub, registry: &Client, watched: &[Watched], state: &mut State) -> Asked {
+    let mut done = Asked {
+        asked: Vec::new(),
+        failures: Vec::new(),
+    };
     for item in watched {
         let Some(repo) = &item.image.repo else {
             continue;
         };
-        let dockerfile = github.dockerfile(repo, &item.image.version)?;
-        let mut now = std::collections::BTreeMap::new();
-        for (image, tag) in bases(&dockerfile) {
-            now.insert(format!("{image}:{tag}"), registry.digest(&image, &tag)?);
-        }
-        let key = format!("{repo}@{}", item.image.version);
-        let before = state.bases.insert(key, now.clone());
-        if before.is_some_and(|before| before != now) {
-            github.dispatch(repo, &item.image.version)?;
-            asked.push(format!("{repo} {}", item.image.version));
+        match ask_one(github, registry, repo, &item.image.version, state) {
+            Ok(true) => done.asked.push(format!("{repo} {}", item.image.version)),
+            Ok(false) => {}
+            Err(e) => done.failures.push(format!("{repo}: {e:#}")),
         }
     }
-    Ok(asked)
+    done
+}
+
+fn ask_one(
+    github: &GitHub,
+    registry: &Client,
+    repo: &str,
+    version: &str,
+    state: &mut State,
+) -> Result<bool> {
+    let dockerfile = github.dockerfile(repo, version)?;
+    let mut now = std::collections::BTreeMap::new();
+    for (image, tag) in bases(&dockerfile) {
+        now.insert(format!("{image}:{tag}"), registry.digest(&image, &tag)?);
+    }
+    let key = format!("{repo}@{version}");
+    let changed = state.bases.get(&key).is_some_and(|before| *before != now);
+    if changed {
+        github.dispatch(repo, version)?;
+    }
+    state.bases.insert(key, now);
+    Ok(changed)
 }
 
 #[cfg(test)]

@@ -76,17 +76,17 @@ fn a_base_with_a_new_digest_asks_the_project_to_rebuild_its_version() {
     let mut state = State::default();
     assert!(
         ask(&github, &registry, &watched, &mut state)
-            .unwrap()
+            .asked
             .is_empty()
     );
     assert!(
         ask(&github, &registry, &watched, &mut state)
-            .unwrap()
+            .asked
             .is_empty()
     );
     *base.lock().unwrap() = format!("sha256:{}", "b".repeat(64));
     assert_eq!(
-        ask(&github, &registry, &watched, &mut state).unwrap(),
+        ask(&github, &registry, &watched, &mut state).asked,
         ["me/app 1.2.0"]
     );
     let sent = sent.lock().unwrap();

@@ -25,6 +25,7 @@ const MAIN: &str = "refs/incoming/heads/main";
 const ORIGIN: &str = "refs/incoming/origin/main";
 const STAGED: &str = "refs/mothership/staged";
 const STAGING: &str = "/var/lib/mothership/staging";
+const PLAIN: &str = "100644";
 
 pub struct Git {
     dir: PathBuf,
@@ -230,11 +231,65 @@ pub fn verify(git: &Git, parent: &str, commit: &str) -> Result<Option<Signer>> {
             else {
                 bail!("{} can't add or remove {text}", signer.name);
             };
+            for side in [parent, commit] {
+                if git.out(&["ls-tree", "--format=%(objectmode)", side, "--", &text])? != PLAIN {
+                    bail!(
+                        "{} can change only a plain file's text, not {text}'s kind",
+                        signer.name
+                    );
+                }
+            }
             container::versions_only(&old, &new)
                 .with_context(|| format!("{} can't sign this change to {text}", signer.name))?;
         }
     }
     Ok(Some(signer.clone()))
+}
+
+fn note_inherited(git: &Git, anchor: &str) -> Result<()> {
+    let mut unconfirmed = Unconfirmed::load()?;
+    inherited(git, anchor, &mut unconfirmed)?;
+    unconfirmed.save()
+}
+
+fn inherited(git: &Git, anchor: &str, unconfirmed: &mut Unconfirmed) -> Result<()> {
+    for path in git
+        .out(&["ls-tree", "-r", "--name-only", anchor, "--", super::TYPES])?
+        .lines()
+    {
+        let Some(service) = container::service_of(Path::new(path)) else {
+            continue;
+        };
+        let mut open = container::changed_pins(None, git.blob(anchor, path)?.as_deref());
+        let history = git.out(&["rev-list", "--first-parent", anchor, "--", path])?;
+        for commit in history.lines() {
+            if open.is_empty() {
+                break;
+            }
+            let parent = git.rev(&format!("{commit}^1"))?;
+            let old = match &parent {
+                Some(parent) => git.blob(parent, path)?,
+                None => None,
+            };
+            let set = container::changed_pins(old.as_deref(), git.blob(commit, path)?.as_deref());
+            let by_versions = match &parent {
+                Some(parent) => !matches!(
+                    verify(git, parent, commit),
+                    Ok(Some(Signer {
+                        reach: Reach::Everything | Reach::Folders(_),
+                        ..
+                    })) | Ok(None)
+                ),
+                None => false,
+            };
+            let (now, later): (Vec<_>, Vec<_>) =
+                open.into_iter().partition(|pin| set.contains(pin));
+            unconfirmed.note(&service, now, by_versions);
+            open = later;
+        }
+        unconfirmed.note(&service, open, true);
+    }
+    Ok(())
 }
 
 fn note_unconfirmed(git: &Git, steps: &[Step]) -> Result<()> {
@@ -321,7 +376,9 @@ pub fn sync(admin: &User, remote: Remote) -> Result<Sync> {
 pub fn sync_from(admin: &User, remote: Remote, anchor: Anchor) -> Result<Sync> {
     let git = Git::at(GIT_DIR);
     let (main, tip) = fetch(&git, admin, remote)?;
-    let anchor = match (anchor, git.rev(CHECKED)?) {
+    let before = git.rev(CHECKED)?;
+    let fresh = before.is_none() || matches!(anchor, Anchor::Tip);
+    let anchor = match (anchor, before) {
         (Anchor::Kept, Some(checked)) => checked,
         (Anchor::Kept, None) => {
             bail!("this machine trusts no commit of the fleet yet: run `sudo mothership install`")
@@ -337,6 +394,9 @@ pub fn sync_from(admin: &User, remote: Remote, anchor: Anchor) -> Result<Sync> {
         }
         (Anchor::Tip, _) => tip.clone(),
     };
+    if fresh {
+        note_inherited(&git, &anchor)?;
+    }
     let checked = check(&git, &anchor, &tip)?;
     note_unconfirmed(&git, &checked.steps)?;
     git.out(&["update-ref", CHECKED, &checked.commit])?;

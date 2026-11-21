@@ -1,4 +1,4 @@
-use super::state::{ROOT_VIEW, State};
+use super::state::State;
 use crate::{
     cmd,
     container::Action,
@@ -109,7 +109,7 @@ pub fn items(fleet: &Fleet) -> Result<Vec<Item>> {
                 ));
             }
         }
-        let state = State::load(Path::new(ROOT_VIEW))?;
+        let state = State::load_as_root()?;
         for notice in state.notices {
             items.push(
                 Item::new(Kind::Container, Change::Unreadable, "probe", "notice")

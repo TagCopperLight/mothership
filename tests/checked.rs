@@ -278,6 +278,15 @@ fn a_versions_signer_changes_only_versions_and_digests_within_their_major() {
         "probe can't add or remove types/server/services/new/service.toml"
     );
     repo.git(&["reset", "-q", "--hard", &digest]);
+    let path = repo.work.join(service);
+    fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(pinned("16.5.0", NEW), &path).unwrap();
+    repo.commit("Link", Some(&probe_file));
+    assert_eq!(
+        repo.check(&digest).refused.unwrap().why,
+        format!("probe can change only a plain file's text, not {service}'s kind")
+    );
+    repo.git(&["reset", "-q", "--hard", &digest]);
     repo.write(SIGNERS, &line("laptop", &laptop, ""));
     repo.commit("Drop itself", Some(&probe_file));
     assert_eq!(
@@ -297,5 +306,37 @@ fn pins_a_versions_signer_sets_wait_until_a_full_signer_changes_them() {
     assert!(unconfirmed.waits("server/db", "db", &pin("16.5.0")));
     assert!(!unconfirmed.waits("server/db", "db", &pin("16.4.0")));
     unconfirmed.note("server/db", vec![("db".into(), pin("16.6.0"))], false);
+    assert_eq!(unconfirmed, Unconfirmed::default());
+}
+
+#[test]
+fn a_new_machine_still_checks_the_pins_the_probe_set_before_its_anchor() {
+    let repo = Repo::new();
+    let (laptop, laptop_file) = repo.key("laptop");
+    let (probe, probe_file) = repo.key("probe");
+    repo.write(
+        SIGNERS,
+        &(line("laptop", &laptop, "") + "\n" + &line("probe", &probe, "versions")),
+    );
+    let service = "types/server/services/db/service.toml";
+    repo.write(service, &pinned("16.4.3", OLD));
+    repo.commit("Fleet", None);
+    repo.write(service, &pinned("16.5.0", NEW));
+    repo.commit("Probe", Some(&probe_file));
+    repo.write("types/server/system.toml", "packages = []\n");
+    let tip = repo.commit("Unrelated", Some(&laptop_file));
+    let git = Git::at(repo.work.join(".git"));
+    let pin = |version: &str, digest: &str| container::Pin {
+        version: version.into(),
+        digest: digest.into(),
+    };
+    let mut unconfirmed = Unconfirmed::default();
+    inherited(&git, &tip, &mut unconfirmed).unwrap();
+    assert!(unconfirmed.waits("server/db", "db", &pin("16.5.0", NEW)));
+
+    repo.write(service, &pinned("16.6.0", NEW));
+    let full = repo.commit("By hand", Some(&laptop_file));
+    let mut unconfirmed = Unconfirmed::default();
+    inherited(&git, &full, &mut unconfirmed).unwrap();
     assert_eq!(unconfirmed, Unconfirmed::default());
 }

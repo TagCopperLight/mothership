@@ -84,23 +84,33 @@ fn round(setting: &Setting, state: &mut State) -> Result<()> {
     let watched = watched(&git, &tip)?;
     let credential = |name: &str| file::read(&setting.credentials.join(name));
     let registry = Client::new(Box::new(Curl), credential(unit::LOGINS)?.as_deref())?;
-    let found = plan::plan(&watched, &registry, state, now()?)?;
+    let found = plan::plan(&watched, &registry, state, now()?);
     for notice in &found.notices {
         println!("{notice}");
     }
     state.notices = found.notices;
+    let mut failures = found.failures;
     if let Some(token) = credential(unit::GITHUB_TOKEN)? {
         let github = rebuild::GitHub {
             http: &Curl,
             token: String::from_utf8(token)?.trim().to_owned(),
         };
-        for asked in rebuild::ask(&github, &registry, &watched, state)? {
+        let done = rebuild::ask(&github, &registry, &watched, state);
+        for asked in done.asked {
             println!("Asked {asked} to rebuild, since a base image changed");
         }
+        failures.extend(done.failures);
     }
+    let failed = || match failures.is_empty() {
+        true => Ok(()),
+        false => Err(anyhow::anyhow!(
+            "the probe couldn't follow {}",
+            failures.join("\n")
+        )),
+    };
     if found.updates.is_empty() {
         println!("Every image is up to date.");
-        return Ok(());
+        return failed();
     }
     let signing = setting.credentials.join(unit::SIGNING);
     let bytes = credential(unit::SIGNING)?.context("the probe has no signing key")?;
@@ -113,7 +123,7 @@ fn round(setting: &Setting, state: &mut State) -> Result<()> {
         &format!("{commit}:refs/heads/main"),
     ])?;
     println!("Pushed {}", checked::short(&commit));
-    Ok(())
+    failed()
 }
 
 fn root_checked() -> Result<String> {

@@ -265,8 +265,10 @@ pub fn deploy(
     entry.fleet = wanted.fleet.clone();
     let outcome = match failure {
         Some(why) if update => {
-            let after = roll_back(engine, &project, &data, &previous, snapshotted)
-                .with_context(|| format!("{name} failed ({why}), and putting it back failed too"))?;
+            let after =
+                roll_back(engine, &project, &data, &previous, snapshotted).with_context(|| {
+                    format!("{name} failed ({why}), and putting it back failed too")
+                })?;
             let failed: Vec<(&String, &super::Pin)> = pins
                 .iter()
                 .filter(|(image, pin)| entry.running.get(*image) != Some(pin))

@@ -281,7 +281,10 @@ fn a_snapshot_that_fails_puts_the_old_version_back_without_touching_the_data() {
     engine.calls();
     let (second, outcome) = world.deploy(&engine, &world.pin("1.0.1", B), Some(&first));
     assert_eq!(outcome, Outcome::RolledBack("the disk is full".into()));
-    assert_eq!(engine.calls(), ["config", "pull", "stop", "snapshot", "stop", "up app:1.0.0"]);
+    assert_eq!(
+        engine.calls(),
+        ["config", "pull", "stop", "snapshot", "stop", "up app:1.0.0"]
+    );
     assert_eq!(second.running, first.running);
     assert_eq!(second.files, first.files);
 }
@@ -302,6 +305,13 @@ fn overwriting_an_edited_file_writes_the_fleets_version() {
         rendered: &rendered,
         overwrite: vec![PathBuf::from("app.conf")],
     };
-    deploy(&engine, &world.places, &wanted, Some(&first), &mut world.unconfirmed).unwrap();
+    deploy(
+        &engine,
+        &world.places,
+        &wanted,
+        Some(&first),
+        &mut world.unconfirmed,
+    )
+    .unwrap();
     assert_eq!(fs::read_to_string(&conf).unwrap(), "version 1.0.0\n");
 }

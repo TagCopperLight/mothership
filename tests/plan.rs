@@ -62,7 +62,7 @@ fn a_public_release_waits_two_days_and_a_new_major_is_only_noticed() {
         digests,
     );
     let mut state = State::default();
-    let found = plan(&[watched("16.4", None)], &client, &mut state, 1000).unwrap();
+    let found = plan(&[watched("16.4", None)], &client, &mut state, 1000);
     assert!(found.updates.is_empty());
     assert_eq!(
         found.notices,
@@ -74,8 +74,7 @@ fn a_public_release_waits_two_days_and_a_new_major_is_only_noticed() {
         &client,
         &mut state,
         1000 + PUBLIC_WAIT,
-    )
-    .unwrap();
+    );
     assert_eq!(
         found.updates,
         [Update {
@@ -101,7 +100,7 @@ fn my_image_is_taken_at_once_and_a_new_digest_for_the_same_version_too() {
     )])));
     let client = registry(&["1.1.0", "1.2.0"], digests.clone());
     let mut state = State::default();
-    let found = plan(&[watched("1.2.0", Some("me/db"))], &client, &mut state, 0).unwrap();
+    let found = plan(&[watched("1.2.0", Some("me/db"))], &client, &mut state, 0);
     assert_eq!(
         found.updates[0].to,
         Pin {
@@ -110,6 +109,6 @@ fn my_image_is_taken_at_once_and_a_new_digest_for_the_same_version_too() {
         }
     );
     digests.lock().unwrap().insert("1.2.0".into(), digest(1));
-    let found = plan(&[watched("1.2.0", Some("me/db"))], &client, &mut state, 0).unwrap();
+    let found = plan(&[watched("1.2.0", Some("me/db"))], &client, &mut state, 0);
     assert!(found.updates.is_empty());
 }
