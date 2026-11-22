@@ -97,7 +97,7 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
         let rendered = service.render(fleet.root_keys())?;
         let wanted = Wanted {
             service,
-            key: format!("{}/{}", fleet.type_name, service.name),
+            key: super::key(&fleet.type_name, service),
             fleet: deploy::fingerprint(service, &rendered, logins.as_deref()),
             rendered: &rendered,
             overwrite: overwrite

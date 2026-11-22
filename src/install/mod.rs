@@ -9,7 +9,7 @@ mod trust;
 
 use crate::{
     apply::{self, ServiceManager},
-    cmd, file,
+    cmd, container, file,
     fleet::{self, Fleet, Machine, Repo},
     github, host,
     package::{self, Distro, aur},
@@ -79,6 +79,9 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
         }
         _ => {}
     }
+    net::retry("Checking the probe's pins", &Needs::mirror(distro)?, || {
+        container::ask_republished(&fleet, &mut |question| prompt.confirm(question))
+    })?;
     net::retry("Applying the fleet", &Needs::mirror(distro)?, || {
         apply::unasked(match chroot {
             true => ServiceManager::Missing,

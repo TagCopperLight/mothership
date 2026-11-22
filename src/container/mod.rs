@@ -136,6 +136,27 @@ pub fn sealed(type_dir: &Path) -> Result<Vec<PathBuf>> {
         .collect())
 }
 
+pub fn key(type_name: &str, service: &Service) -> String {
+    format!("{type_name}/{}", service.name)
+}
+
+pub fn ask_republished(fleet: &Fleet, ask: &mut dyn FnMut(&str) -> Result<bool>) -> Result<()> {
+    if fleet.services.is_empty() {
+        return Ok(());
+    }
+    let logins = logins(fleet)?;
+    let client = registry::Client::new(Box::new(crate::http::Curl), logins.as_deref())?;
+    let mut unconfirmed = confirm::Unconfirmed::load()?;
+    confirm::ask_republished(
+        &fleet.type_name,
+        &fleet.services,
+        &client,
+        &mut unconfirmed,
+        ask,
+    )?;
+    unconfirmed.save()
+}
+
 pub fn logins_path(fleet: &Fleet) -> PathBuf {
     fleet.type_dir.join(SERVICES).join(LOGINS)
 }
@@ -327,4 +348,4 @@ fn fill(text: &str, secrets: &BTreeMap<String, Vec<u8>>) -> Result<String> {
 
 #[cfg(test)]
 #[path = "../../tests/container.rs"]
-mod tests;
+pub mod tests;

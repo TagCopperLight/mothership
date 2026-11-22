@@ -109,6 +109,16 @@ impl Client {
         Ok(digest.to_owned())
     }
 
+    pub fn contradicts(&self, image: &super::Image, pin: &super::Pin) -> Result<Option<String>> {
+        let digest = self.digest(&image.image, &pin.version)?;
+        Ok((digest != pin.digest).then(|| {
+            format!(
+                "the registry gives {digest} for {}:{}, not the {} the fleet pins",
+                image.image, pin.version, pin.digest
+            )
+        }))
+    }
+
     pub fn tags(&self, image: &str) -> Result<Vec<String>> {
         let name = name(image);
         let mut url = format!(

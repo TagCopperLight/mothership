@@ -1,4 +1,4 @@
-use super::Pin;
+use super::{Pin, Service, registry::Client};
 use crate::file;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -40,3 +40,36 @@ impl Unconfirmed {
 fn key(service: &str, image: &str) -> String {
     format!("{service}/{image}")
 }
+
+pub fn ask_republished(
+    type_name: &str,
+    services: &[Service],
+    registry: &Client,
+    unconfirmed: &mut Unconfirmed,
+    ask: &mut dyn FnMut(&str) -> Result<bool>,
+) -> Result<()> {
+    for service in services {
+        let key = super::key(type_name, service);
+        for (name, image) in &service.images {
+            let pin = image.pin();
+            if !unconfirmed.waits(&key, name, &pin) {
+                continue;
+            }
+            let run = match registry.contradicts(image, &pin)? {
+                None => true,
+                Some(why) => {
+                    println!("The probe pinned {} for {key}, and {why}.", pin.version);
+                    ask("Run the pinned digest anyway")?
+                }
+            };
+            if run {
+                unconfirmed.confirm(&key, name);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "../../tests/confirm.rs"]
+mod tests;

@@ -274,13 +274,7 @@ impl Engine for Docker {
     }
 
     fn confirm(&self, image: &Image, pin: &Pin) -> Result<Option<String>> {
-        let digest = self.registry.digest(&image.image, &pin.version)?;
-        Ok((digest != pin.digest).then(|| {
-            format!(
-                "the registry gives {digest} for {}:{}, not the {} the fleet pins",
-                image.image, pin.version, pin.digest
-            )
-        }))
+        self.registry.contradicts(image, pin)
     }
 }
 
