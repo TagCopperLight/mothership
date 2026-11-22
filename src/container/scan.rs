@@ -20,21 +20,40 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
+pub fn scan(
+    fleet: &Fleet,
+    docker: Option<&Docker>,
+    packaged: &dyn Fn(&Path) -> bool,
+) -> Result<Vec<Item>> {
     let mut items = probe::unit::items(fleet)?;
     items.extend(workflow(&fleet.dir)?);
     let state = State::load()?;
-    let account = account::user()?;
-    if fleet.services.is_empty() && account.is_none() {
-        return Ok(items);
-    }
     let places = Places::here()?;
-    let missing = account::missing(&fleet.services)?;
-    if !fleet.services.is_empty() && !missing.is_empty() {
+    let missing = match fleet.services.is_empty() {
+        true => Vec::new(),
+        false => account::missing(&fleet.services)?,
+    };
+    if !missing.is_empty() {
         items.push(fleet_item(
             Item::new(Kind::Container, Change::Removed, account::USER, "account")
                 .noting(missing.join(", "))
                 .reverting(Action::Setup),
+        ));
+    }
+    if fleet.services.is_empty() && account::leftovers()? {
+        items.push(fleet_item(
+            Item::new(
+                Kind::Container,
+                Change::Added,
+                account::USER,
+                "no service left",
+            )
+            .noting(format!(
+                "the type runs no service: apply stops them all and removes the account, its \
+                     Docker and its snapshots, keeping {}",
+                places.data.display()
+            ))
+            .reverting(Action::Teardown),
         ));
     }
     for service in &fleet.services {
@@ -59,13 +78,18 @@ pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
         ));
         items.extend(edited(&places, name, entry)?);
     }
+    let watched = !fleet.services.is_empty() || State::recorded();
     let owned: BTreeSet<&str> = fleet
         .services
         .iter()
         .map(|s| s.name.as_str())
         .chain(state.services.keys().map(String::as_str))
         .collect();
-    for left in unowned(&places, &owned)? {
+    let left = match watched {
+        true => unowned(&places, &owned)?,
+        false => Vec::new(),
+    };
+    for left in left.into_iter().filter(|p| !packaged(p)) {
         items.push(
             Item::new(
                 Kind::Data,
@@ -79,7 +103,7 @@ pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
     }
     match docker {
         Some(docker) if docker.answers() => items.extend(containers(fleet, &state, docker)?),
-        Some(_) if missing.is_empty() => items.push(
+        Some(_) if missing.is_empty() && !fleet.services.is_empty() => items.push(
             Item::new(
                 Kind::Container,
                 Change::Unreadable,

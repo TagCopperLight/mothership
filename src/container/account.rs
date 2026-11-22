@@ -305,6 +305,59 @@ fn drop_sysctl() -> Result<()> {
     Ok(())
 }
 
+pub fn leftovers() -> Result<bool> {
+    Ok(user()?.is_some()
+        || Path::new(LINGER).join(USER).exists()
+        || WRITTEN.iter().any(|path| Path::new(path).exists())
+        || !enabled_instances()?.is_empty())
+}
+
+pub fn teardown() -> Result<()> {
+    for link in enabled_instances()? {
+        let name = link.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        cmd::root("systemctl", &["disable", "--", name])?;
+    }
+    for (path, name) in [(UNIT, UNIT_NAME), (START, START_NAME)] {
+        if Path::new(path).exists() {
+            cmd::root("systemctl", &["disable", "--now", "--", name])?;
+        }
+    }
+    drop_firewall()?;
+    for path in [UNIT, START, START_AT] {
+        file::remove_if_found(Path::new(path))?;
+    }
+    cmd::root("systemctl", &["daemon-reload"])?;
+    drop_sysctl()?;
+    if Path::new(LINGER).join(USER).exists() {
+        cmd::root("loginctl", &["disable-linger", USER])?;
+    }
+    let Some(user) = user()? else {
+        return Ok(());
+    };
+    cmd::root(
+        "systemctl",
+        &["stop", &format!("user@{}.service", user.uid)],
+    )?;
+    let mut args = Vec::new();
+    for (path, flag) in SUBIDS.iter().zip(["--del-subuids", "--del-subgids"]) {
+        for (name, start, count) in subids(path)? {
+            if name == USER {
+                args.extend([flag.to_owned(), format!("{start}-{}", start + count - 1)]);
+            }
+        }
+    }
+    if !args.is_empty() {
+        args.extend(["--".to_owned(), USER.to_owned()]);
+        cmd::root("usermod", &args)?;
+    }
+    cmd::root("userdel", &["--remove", "--", USER])?;
+    let group = cmd::bytes_allowing_exit(As::Root, "getent", &["group", USER], 2)?;
+    if !group.is_empty() {
+        cmd::root("groupdel", &["--", USER])?;
+    }
+    Ok(())
+}
+
 fn drop_firewall() -> Result<()> {
     if Path::new(OLD_FIREWALL).exists() {
         cmd::root("systemctl", &["disable", "--now", "--", OLD_FIREWALL_NAME])?;

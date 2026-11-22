@@ -544,6 +544,23 @@ sudo sysctl --quiet --system
 
     recipes(vm, image, commit, apply)
     restart_manager(vm)
+    last_service(vm, commit, apply)
+
+
+def last_service(vm: VM, commit, apply) -> None:
+    uid = vm.run("id -u services").stdout.strip()
+    commit("Drop every service", "git rm -q -r types/server/services")
+    expect(vm.run("sudo mothership scan"), "the type runs no service")
+    expect(apply(), "Removed app", "Removed tool", "Removed the services account")
+    expect(vm.run("id services", check=False), "no such user", code=1)
+    left = vm.run("ls -d /var/lib/services /var/lib/systemd/linger/services "
+                  "/etc/systemd/system/mothership-services* "
+                  f"/etc/systemd/system/*.wants/mothership-services* /run/user/{uid}; "
+                  "grep -h services /etc/subuid /etc/subgid /etc/group", check=False).stdout
+    assert left == "", f"apply removes everything it set up for services: {left}"
+    assert data_of(vm, "app", "version") == "1.0.3", "the data stays"
+    expect(vm.run("sudo mothership scan"), "/srv/app", "no service of the fleet owns it")
+    expect(apply(), "Nothing to apply.")
 
 
 FIREWALL = "mothership-services-firewall.service"

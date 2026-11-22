@@ -95,7 +95,7 @@ pub fn checks(fleet: &Fleet, db: &Db, record: &Record, which: Checks) -> Result<
             s.spawn(move || packages::scan(fleet, db)),
             s.spawn(move || etc::scan(fleet, db)),
             s.spawn(move || services::scan(fleet, ships)),
-            s.spawn(move || containers(fleet)),
+            s.spawn(move || containers(fleet, ships)),
         ];
         for i in 0..fleet.members.len() {
             handles.push(s.spawn(move || member(fleet, ships, i, which)));
@@ -118,10 +118,10 @@ pub fn checks(fleet: &Fleet, db: &Db, record: &Record, which: Checks) -> Result<
     Ok(items)
 }
 
-fn containers(fleet: &Fleet) -> Result<Vec<Item>> {
+fn containers(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
     let registry = container::registry::Client::new(Box::new(crate::http::Curl), None)?;
     let docker = container::docker::Docker::find(registry)?;
-    container::scan::scan(fleet, docker.as_ref())
+    container::scan::scan(fleet, docker.as_ref(), &|dir| ships.holds_dir(dir))
 }
 
 fn member(fleet: &Fleet, ships: &Ships, i: usize, which: Checks) -> Result<Vec<Item>> {
@@ -201,6 +201,11 @@ impl<'a> Ships<'a> {
             packages,
             files,
         }
+    }
+
+    pub fn holds_dir(&self, dir: &Path) -> bool {
+        let dir = dir.to_string_lossy();
+        self.files.contains(dir.as_ref()) || self.files.contains(format!("{dir}/").as_str())
     }
 
     pub fn path(&self, path: &Path, member: Option<&Member>) -> Result<bool> {

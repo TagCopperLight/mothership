@@ -104,7 +104,7 @@ ports.public = ["443/tcp"]
 ports.tailscale0 = ["53/udp"]
 ```
 
-Each port names the network it faces: `public` (every address), `local` (the machine itself) or a network interface, whose addresses the service binds when the interface comes up.
+Each port names the network it faces: `public` (every address), `local` (the machine itself) or a network interface, whose addresses the service binds when the interface comes up. When a type drops its last service, apply removes the `services` account and everything it set up, and keeps `/srv`.
 
 A small image of your own, such as Caddy with a plugin, can be a recipe: a `Dockerfile` in the service's folder that names its version with `LABEL org.opencontainers.image.version="2.8.4"`, and an image with `recipe = true` and no digest yet. Review then writes the workflow that builds recipes into the fleet, and the probe pins each build made from a commit the machines accepted.
 

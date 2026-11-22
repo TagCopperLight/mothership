@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 pub enum Action {
     Setup,
+    Teardown,
     Deploy(String),
     Remove(String),
     Bind(String),
@@ -25,6 +26,7 @@ impl Action {
     pub fn describe(&self) -> &'static str {
         match self {
             Action::Setup => "set it up",
+            Action::Teardown => "remove it and everything it runs",
             Action::Deploy(_) => "start the fleet's versions",
             Action::Remove(_) => "stop it and remove its containers, keeping its data",
             Action::Bind(_) => "start it on its interfaces' addresses",
@@ -46,6 +48,9 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
             Action::Unprobe => probe::unit::remove()?,
             _ => {}
         }
+    }
+    if actions.iter().any(|a| matches!(a, Action::Teardown)) {
+        return teardown(fleet);
     }
     let set_up = actions.iter().any(|a| matches!(a, Action::Setup));
     if !set_up
@@ -92,7 +97,11 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     let mut overwrite: Vec<(&str, PathBuf)> = Vec::new();
     for action in actions {
         match action {
-            Action::Setup | Action::Probe | Action::Unprobe | Action::Bind(_) => {}
+            Action::Setup
+            | Action::Teardown
+            | Action::Probe
+            | Action::Unprobe
+            | Action::Bind(_) => {}
             Action::RemoveContainer(id) => docker.remove_container(id)?,
             Action::Remove(name) => {
                 let entry = state
@@ -145,6 +154,27 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     if !failed.is_empty() {
         bail!("couldn't apply {}", failed.join("\n"));
     }
+    Ok(())
+}
+
+fn teardown(fleet: &Fleet) -> Result<()> {
+    let client = registry::Client::new(Box::new(Curl), None)?;
+    let mut state = State::load()?;
+    if let Some(docker) = Docker::find(client)? {
+        let places = Places::here()?;
+        for (name, entry) in state.services.clone() {
+            deploy::remove(&docker, &places, &name, &entry)?;
+            state.services.remove(&name);
+            state.save()?;
+            println!("Removed {name}, keeping {}", places.data(&name).display());
+        }
+    }
+    account::teardown()?;
+    println!(
+        "Removed the {} account: {} runs no service",
+        account::USER,
+        fleet.type_name
+    );
     Ok(())
 }
 

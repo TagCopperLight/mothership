@@ -39,6 +39,10 @@ impl State {
         file::read_json(Path::new(PATH))
     }
 
+    pub fn recorded() -> bool {
+        Path::new(PATH).exists()
+    }
+
     pub fn save(&self) -> Result<()> {
         file::write_json(Path::new(PATH), self)
     }
