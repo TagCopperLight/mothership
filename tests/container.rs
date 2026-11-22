@@ -399,7 +399,7 @@ fn services_docker_may_bind_only_the_declared_ports() {
         [
             "SocketBindAllow=tcp:80",
             "SocketBindAllow=udp:443",
-            "SocketBindDeny=any"
+            "SocketBindDeny=1-65535"
         ]
     );
     assert!(unit.contains("User=services\n"));

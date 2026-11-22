@@ -32,6 +32,7 @@ const NOLOGIN: [&str; 2] = ["/usr/sbin/nologin", "/usr/bin/nologin"];
 const SUBIDS: [&str; 2] = ["/etc/subuid", "/etc/subgid"];
 const FIRST_SUBID: u64 = 100_000;
 const SUBID_COUNT: u64 = 65_536;
+const EVERY_PORT: &str = "1-65535";
 const START_LIMIT: Duration = Duration::from_secs(90);
 
 pub fn user() -> Result<Option<User>> {
@@ -168,7 +169,7 @@ pub fn unit(rootless: &str, user: &User, services: &[Service]) -> Result<String>
          Environment=HOME={home}\nEnvironment=XDG_RUNTIME_DIR={run}\n\
          Environment=DBUS_SESSION_BUS_ADDRESS=unix:path={run}/bus\nExecStart={rootless}\n\
          ExecReload=/bin/kill -s HUP $MAINPID\nAmbientCapabilities=CAP_NET_BIND_SERVICE\n\
-         {allowed}SocketBindDeny=any\nTimeoutSec=0\nRestartSec=2\nRestart=always\n\
+         {allowed}SocketBindDeny={EVERY_PORT}\nTimeoutSec=0\nRestartSec=2\nRestart=always\n\
          StartLimitBurst=3\nStartLimitInterval=60s\nLimitNOFILE=infinity\nLimitNPROC=infinity\n\
          LimitCORE=infinity\nTasksMax=infinity\nDelegate=yes\nType=notify\nNotifyAccess=all\n\
          KillMode=mixed\n\n[Install]\nWantedBy=user@{uid}.service\n",

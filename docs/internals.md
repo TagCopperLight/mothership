@@ -44,6 +44,7 @@
 ## Containers
 
 - Rootless Docker's own network under slirp4netns is 10.0.2.0/24, so it can't reach a host at 10.0.2.2: the services VM test gives QEMU another range.
+- Docker's name server for each container binds `127.0.0.11:0` from Docker's own process. systemd 257's `SocketBindDeny=any` refuses that port 0, so containers couldn't resolve each other's names; `SocketBindDeny=1-65535` refuses every real port and lets the kernel pick one.
 - Debian ships `dockerd-rootless.sh` in `/usr/share/docker.io/contrib/`, outside `PATH`.
 - Inside a rootless container, a host file owned by root shows as `nobody`, and the `services` group shows as root's group. A service's folder is `root:services 750`, so its files can stay readable by everyone inside it.
 - Files that containers create in `/srv/<name>/` belong to subordinate ids, which `services` itself can't read. The snapshot runs `cp` inside rootless Docker's user namespace (`nsenter -U -m -t` the daemon's pid).
