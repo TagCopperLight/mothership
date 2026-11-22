@@ -15,20 +15,14 @@ use std::{
 
 pub const USER: &str = "services";
 const HOME: &str = "/var/lib/services";
-pub const SYSCTL: &str = "/etc/sysctl.d/60-mothership-services.conf";
-const PORT_START: &str = "net.ipv4.ip_unprivileged_port_start";
-const OLD_UNIT: &str = ".config/systemd/user/docker.service";
 pub const UNIT_NAME: &str = "mothership-services.service";
 pub const UNIT: &str = "/etc/systemd/system/mothership-services.service";
-const OLD_FIREWALL_NAME: &str = "mothership-services-firewall.service";
-const OLD_FIREWALL: &str = "/etc/systemd/system/mothership-services-firewall.service";
-const OLD_RULES: &str = "/etc/mothership/services.nft";
 const START_NAME: &str = "mothership-services-start.service";
 const START: &str = "/etc/systemd/system/mothership-services-start.service";
 const START_AT: &str = "/etc/systemd/system/mothership-services-start@.service";
 const START_PREFIX: &str = "mothership-services-start@";
 const DEVICE_PREFIX: &str = "sys-subsystem-net-devices-";
-pub const WRITTEN: [&str; 6] = [UNIT, START, START_AT, SYSCTL, OLD_FIREWALL, OLD_RULES];
+pub const WRITTEN: [&str; 3] = [UNIT, START, START_AT];
 const LINGER: &str = "/var/lib/systemd/linger";
 const ROOTLESS: [&str; 2] = [
     "/usr/bin/dockerd-rootless.sh",
@@ -68,7 +62,7 @@ fn rootless() -> Result<&'static str> {
 }
 
 pub fn ours(unit: &str) -> bool {
-    [UNIT_NAME, START_NAME, OLD_FIREWALL_NAME].contains(&unit) || unit.starts_with(START_PREFIX)
+    [UNIT_NAME, START_NAME].contains(&unit) || unit.starts_with(START_PREFIX)
 }
 
 fn stale(user: &User, services: &[Service]) -> Result<Vec<(&'static str, String)>> {
@@ -197,12 +191,6 @@ pub fn missing(services: &[Service]) -> Result<Vec<String>> {
     if !Path::new(LINGER).join(USER).exists() {
         missing.push("its services don't start with the machine".into());
     }
-    if Path::new(SYSCTL).exists() {
-        missing.push("every account may open ports from 80 up".into());
-    }
-    if user.read(&user.home.join(OLD_UNIT))?.is_some() {
-        missing.push("its Docker runs as its own unit".into());
-    }
     let enabled = links(&user)
         .iter()
         .all(|link| std::fs::symlink_metadata(link).is_ok());
@@ -213,12 +201,6 @@ pub fn missing(services: &[Service]) -> Result<Vec<String>> {
     }
     if enabled_instances()? != wanted_instances(services) {
         missing.push("its services don't start when the interfaces they face come up".into());
-    }
-    if [OLD_FIREWALL, OLD_RULES]
-        .iter()
-        .any(|p| Path::new(p).exists())
-    {
-        missing.push("its old firewall is still set up".into());
     }
     Ok(missing)
 }
@@ -251,14 +233,11 @@ pub fn setup(services: &[Service]) -> Result<()> {
         "systemctl",
         &["start", &format!("user@{}.service", user.uid)],
     )?;
-    drop_old_unit(&user)?;
-    drop_sysctl()?;
     let stale = stale(&user, services)?;
     for (path, text) in &stale {
         file::write(Path::new(path), text.as_bytes(), 0o644)?;
     }
     cmd::root("systemctl", &["daemon-reload"])?;
-    drop_firewall()?;
     let wanted = wanted_instances(services);
     disable_instances(enabled_instances()?.difference(&wanted))?;
     let mut units = vec![UNIT_NAME.to_owned(), START_NAME.to_owned()];
@@ -291,17 +270,6 @@ pub fn setup(services: &[Service]) -> Result<()> {
     }
 }
 
-fn drop_sysctl() -> Result<()> {
-    if file::remove_if_found(Path::new(SYSCTL))? {
-        cmd::root(
-            "sysctl",
-            &["--quiet", "--write", &format!("{PORT_START}=1024")],
-        )?;
-        cmd::root("sysctl", &["--quiet", "--system"])?;
-    }
-    Ok(())
-}
-
 pub fn leftovers() -> Result<bool> {
     Ok(user()?.is_some()
         || Path::new(LINGER).join(USER).exists()
@@ -327,12 +295,10 @@ pub fn teardown() -> Result<()> {
             cmd::root("systemctl", &["disable", "--now", "--", name])?;
         }
     }
-    drop_firewall()?;
     for path in [UNIT, START, START_AT] {
         file::remove_if_found(Path::new(path))?;
     }
     cmd::root("systemctl", &["daemon-reload"])?;
-    drop_sysctl()?;
     if Path::new(LINGER).join(USER).exists() {
         cmd::root("loginctl", &["disable-linger", USER])?;
     }
@@ -361,35 +327,6 @@ pub fn teardown() -> Result<()> {
         cmd::root("groupdel", &["--", USER])?;
     }
     Ok(())
-}
-
-fn drop_firewall() -> Result<()> {
-    if Path::new(OLD_FIREWALL).exists() {
-        cmd::root("systemctl", &["disable", "--now", "--", OLD_FIREWALL_NAME])?;
-    }
-    let mut removed = false;
-    for path in [OLD_FIREWALL, OLD_RULES] {
-        removed |= file::remove_if_found(Path::new(path))?;
-    }
-    if removed {
-        cmd::root("systemctl", &["daemon-reload"])?;
-    }
-    Ok(())
-}
-
-fn drop_old_unit(user: &User) -> Result<()> {
-    let path = user.home.join(OLD_UNIT);
-    if user.read(&path)?.is_none() {
-        return Ok(());
-    }
-    let machine = format!("{USER}@");
-    let scope = ["--user", "--machine", &machine];
-    cmd::root(
-        "systemctl",
-        &[&scope[..], &["disable", "--now", "docker.service"]].concat(),
-    )?;
-    user.with_rights(|| file::remove_if_found(&path))?;
-    cmd::root("systemctl", &[&scope[..], &["daemon-reload"]].concat())
 }
 
 fn subids(path: &str) -> Result<Vec<(String, u64, u64)>> {

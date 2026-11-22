@@ -171,13 +171,6 @@ pub fn by_network<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Publ
             write!(f, "ports grouped by the network they face")
         }
 
-        fn visit_seq<A: de::SeqAccess<'de>>(self, _: A) -> Result<Self::Value, A::Error> {
-            Err(de::Error::custom(format!(
-                "name the network each port faces: ports.{PUBLIC}, ports.{LOCAL} or \
-                 ports.<interface>, such as ports.tailscale0 = [\"53/udp\"]"
-            )))
-        }
-
         fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
             let mut published = Vec::new();
             while let Some((network, ports)) = map.next_entry::<String, Vec<Port>>()? {

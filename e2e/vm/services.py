@@ -38,7 +38,7 @@ HOST = "192.168.76.2"
 NET = "192.168.76.0/24"
 TOOLS = ["qemu-system-x86_64", "qemu-img", "docker", "openssl", "ssh", "scp", "rustc"]
 PACKAGES = ["chezmoi", "curl", "dbus-user-session", "docker-compose", "docker.io", "git",
-            "nftables", "rootlesskit", "slirp4netns", "sudo", "systemd-container", "uidmap"]
+            "rootlesskit", "slirp4netns", "sudo", "systemd-container", "uidmap"]
 VERSIONS = ["1.0.0", "1.0.1", "1.0.2", "1.0.3"]
 TOKEN = "s3cret-token"
 FLEET = "/var/lib/mothership/fleet"
@@ -443,8 +443,6 @@ sudo sh /tmp/anchor.sh
 sudo ip link add {STAND_IN} type dummy
 sudo ip address add 10.99.0.1/24 dev {STAND_IN}
 sudo ip link set {STAND_IN} up
-echo 'net.ipv4.ip_unprivileged_port_start = 80' | sudo tee /etc/sysctl.d/60-mothership-services.conf > /dev/null
-sudo sysctl --quiet --system
 """)
     apply = lambda: vm.run("sudo mothership apply", input="y\n" * 6, check=False, timeout=1800)
     data = partial(data_of, vm)
@@ -461,7 +459,6 @@ sudo sysctl --quiet --system
     expect(apply(), "Nothing to apply.")
     scan = vm.run("sudo mothership scan").stdout
     assert "Containers" not in scan, scan
-    old_firewall(vm)
     interface(vm, apply)
 
     def commit(message: str, change: str) -> None:
@@ -564,9 +561,6 @@ def last_service(vm: VM, commit, apply) -> None:
     expect(apply(), "Nothing to apply.")
 
 
-FIREWALL = "mothership-services-firewall.service"
-
-
 def interface(vm: VM, apply) -> None:
     vm.run(f"sudo ip link del {STAND_IN} && sudo systemctl restart mothership-services && sleep 5")
     expect(vm.run("sudo mothership scan"), "stand0 has no address yet")
@@ -589,28 +583,6 @@ def interface(vm: VM, apply) -> None:
     expect(vm.run("sudo mothership scan"), "extra", "start it")
     apply()
     assert running(vm, "extra"), "apply starts a service whose containers all stopped"
-
-
-def old_firewall(vm: VM) -> None:
-    uid = vm.run("id -u services").stdout.strip()
-    rules = (f"table inet mothership\ndelete table inet mothership\ntable inet mothership {{\n"
-             f"\tchain input {{\n\t\ttype filter hook input priority filter; policy accept;\n"
-             f"\t\tct state != {{ established, related }} meta l4proto {{ tcp, udp }} socket cgroupv2 "
-             f"level 3 \"user.slice/user-{uid}.slice/user@{uid}.service\" reject\n\t}}\n}}\n")
-    unit = (f"[Unit]\nAfter=user@{uid}.service\nBindsTo=user@{uid}.service\n\n[Service]\n"
-            f"Type=oneshot\nRemainAfterExit=yes\nExecStart=/usr/sbin/nft -f /etc/mothership/services.nft\n"
-            f"ExecStop=/usr/sbin/nft delete table inet mothership\n\n[Install]\nWantedBy=user@{uid}.service\n")
-    vm.run("sudo tee /etc/mothership/services.nft > /dev/null", input=rules)
-    vm.run(f"sudo tee /etc/systemd/system/{FIREWALL} > /dev/null", input=unit)
-    vm.run(f"sudo systemctl daemon-reload && sudo systemctl enable --now {FIREWALL}")
-    expect(vm.run("sudo nft list table inet mothership"), "socket cgroupv2")
-    expect(vm.run("sudo mothership scan"), "its old firewall is still set up")
-    expect(vm.run("sudo mothership apply", input="y\n" * 6, check=False, timeout=1800), "services")
-    expect(vm.run("sudo nft list table inet mothership", check=False), code=1)
-    left = vm.run(f"ls /etc/mothership/services.nft /etc/systemd/system/{FIREWALL} "
-                  f"/etc/systemd/system/user@{uid}.service.wants/{FIREWALL}", check=False)
-    assert left.stdout == "", f"apply removes build 3's firewall: {left.stdout}"
-    assert reach(vm, "tcp", 80) == "1.0.0", "app keeps running"
 
 
 def restart_manager(vm: VM) -> None:
@@ -656,9 +628,6 @@ def ports(vm: VM, image: str, registry: Registry) -> None:
     for host in [lan, "127.0.0.1"]:
         assert reach(vm, "udp", 53, host) == "", f"a port facing an interface is closed on {host}"
     expect(vm.run("sudo ss -ulnp"), "127.0.0.53%lo:53", "10.99.0.1:53")
-    expect(vm.run("cat /proc/sys/net/ipv4/ip_unprivileged_port_start; "
-                  "ls /etc/sysctl.d/60-mothership-services.conf", check=False),
-           "1024", "No such file", code=2)
     denied = vm.run("python3 -c 'import socket; socket.socket().bind((\"0.0.0.0\", 81))'", check=False)
     expect(denied, "Permission denied", code=1)
     reference = f"{image}:1.0.0@{registry.digest('1.0.0')}"

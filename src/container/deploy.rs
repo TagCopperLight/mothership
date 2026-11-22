@@ -5,7 +5,7 @@ use super::{
     port::{self, Bound},
     state::{Deployed, Pins, Problem},
 };
-use crate::{file, hash};
+use crate::{file, hash, walk};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use std::{
@@ -213,11 +213,12 @@ pub fn binding(places: &Places, name: &str) -> Result<Bindings> {
     let text = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
     let mut config: Value =
         serde_json::from_slice(&text).with_context(|| format!("reading {}", path.display()))?;
-    let declared: BTreeMap<String, Vec<Published>> = match config.get(OWN) {
-        None => BTreeMap::new(),
-        Some(own) => serde_json::from_value(own["ports"].clone())
-            .with_context(|| format!("reading {OWN} in {}", path.display()))?,
-    };
+    let own = config
+        .get(OWN)
+        .with_context(|| format!("{} has no {OWN}", path.display()))?;
+    let declared: BTreeMap<String, Vec<Published>> =
+        serde_json::from_value(own["ports"].clone())
+            .with_context(|| format!("reading {OWN} in {}", path.display()))?;
     let interfaces = declared
         .values()
         .flatten()
@@ -265,9 +266,31 @@ fn data_dir(places: &Places, name: &str) -> Result<PathBuf> {
 }
 
 pub fn env(rendered: &Rendered) -> Vec<(String, String)> {
-    rendered
-        .secrets
-        .iter()
+    variables(
+        rendered
+            .secrets
+            .iter()
+            .map(|(name, bytes)| (name.clone(), &bytes[..])),
+    )
+}
+
+pub fn written_env(places: &Places, name: &str) -> Result<Vec<(String, String)>> {
+    let dir = places.project(name).join(SECRETS);
+    let mut secrets = Vec::new();
+    for rel in walk::files(&dir)? {
+        let path = dir.join(&rel);
+        let bytes = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+        secrets.push((rel.to_string_lossy().into_owned(), bytes));
+    }
+    Ok(variables(
+        secrets
+            .iter()
+            .map(|(name, bytes)| (name.clone(), &bytes[..])),
+    ))
+}
+
+fn variables<'a>(secrets: impl Iterator<Item = (String, &'a [u8])>) -> Vec<(String, String)> {
+    secrets
         .filter_map(|(name, bytes)| {
             let value = std::str::from_utf8(bytes).ok()?.trim_end_matches('\n');
             Some((
@@ -470,7 +493,11 @@ fn roll_back(
     if let Binding::Stale(config) = binding(places, project.name)?.binding {
         write_config(places, project.name, &config)?;
     }
-    engine.up(project)?;
+    engine.up(&Project {
+        name: project.name,
+        dir: project.dir.clone(),
+        env: written_env(places, project.name)?,
+    })?;
     engine.health(project.name)
 }
 

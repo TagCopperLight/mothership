@@ -260,7 +260,7 @@ fn each_port_names_the_network_it_faces() {
             parse(&format!("{}{ports}\n", toml("1"))).unwrap_err()
         )
     };
-    assert!(err("ports = [\"443/tcp\"]").contains("name the network each port faces"));
+    assert!(err("ports = [\"443/tcp\"]").contains("ports grouped by the network they face"));
     assert!(err("ports.\"wg/0\" = [\"443/tcp\"]").contains("isn't a network"));
     assert!(err("ports.averyverylongname = [\"443/tcp\"]").contains("isn't a network"));
     assert!(err("ports.lo = [\"443/tcp\"]").contains("name it local"));

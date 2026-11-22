@@ -16,6 +16,7 @@ fn with_parts(verb: &str, parts: &[PathBuf]) -> String {
 #[derive(Default)]
 struct Fake {
     calls: RefCell<Vec<String>>,
+    envs: RefCell<Vec<Vec<(String, String)>>>,
     health: RefCell<VecDeque<Health>>,
     snapshot_fails: bool,
     registry: Option<String>,
@@ -45,6 +46,7 @@ impl Engine for Fake {
         let text = fs::read_to_string(project.dir.join(OVERRIDE))?;
         let config: serde_json::Value = serde_json::from_str(&text)?;
         let image = config["services"]["app"]["image"].as_str().unwrap();
+        self.envs.borrow_mut().push(project.env.clone());
         self.log(format!("up {}", image.split('@').next().unwrap()));
         Ok(())
     }
@@ -213,6 +215,26 @@ fn an_update_snapshots_the_data_and_a_failed_one_rolls_back_for_good() {
     assert_eq!(outcome, Outcome::Blocked("images.app 1.0.2".into()));
     assert!(engine.calls().is_empty());
     assert_eq!(fourth.running, second.running);
+}
+
+#[test]
+fn a_rollback_hands_the_old_version_its_own_secrets() {
+    let mut world = World::new();
+    let engine = Fake::default();
+    let (first, _) = world.deploy(&engine, &world.pin("1.0.0", A), None);
+    let secrets = world.places.project("app").join(SECRETS);
+    fs::create_dir_all(&secrets).unwrap();
+    fs::write(secrets.join("db-password"), "old\n").unwrap();
+    engine.envs.take();
+
+    engine
+        .health
+        .borrow_mut()
+        .push_back(Health::Unhealthy("app reports unhealthy".into()));
+    let (_, outcome) = world.deploy(&engine, &world.pin("1.0.1", B), Some(&first));
+    assert_eq!(outcome, Outcome::RolledBack("app reports unhealthy".into()));
+    let old = vec![("SECRET_DB_PASSWORD".to_owned(), "old".to_owned())];
+    assert_eq!(engine.envs.take(), [Vec::new(), old]);
 }
 
 #[test]
@@ -393,14 +415,8 @@ fn a_service_facing_an_interface_follows_its_addresses_and_waits_without_one() {
     state.services.insert("app".into(), entry);
     let start = |world: &World, facing: Option<&str>| {
         engine.calls();
-        let failed = crate::container::start::services(
-            &engine,
-            &world.places,
-            &state,
-            facing,
-            &|_| true,
-            &|_| Ok(Vec::new()),
-        );
+        let failed =
+            crate::container::start::services(&engine, &world.places, &state, facing, &|_| true);
         assert!(failed.is_empty(), "{failed:?}");
         engine.calls()
     };

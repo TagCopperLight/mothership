@@ -95,11 +95,8 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
             _ => None,
         })
         .collect();
-    let env = |name: &str| start::fleet_env(fleet, name);
     let wanted = |name: &str| !busy.contains(&name) && (set_up || bind.contains(&name));
-    failed.extend(start::services(
-        &docker, &places, &state, None, &wanted, &env,
-    ));
+    failed.extend(start::services(&docker, &places, &state, None, &wanted));
     let mut deploys: Vec<&str> = Vec::new();
     let mut overwrite: Vec<(&str, PathBuf)> = Vec::new();
     for action in actions {
