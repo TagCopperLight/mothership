@@ -1,0 +1,5 @@
+services:
+  lonely:
+    restart: unless-stopped
+    volumes:
+      - /srv/lonely:/data

@@ -1,7 +1,7 @@
 use std::{
     env, fs,
     io::Write,
-    net::{TcpListener, TcpStream, UdpSocket},
+    net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
     thread,
     time::Duration,
 };
@@ -17,8 +17,12 @@ fn main() {
     }
     if env::args().nth(1).as_deref() == Some("reach") {
         let address = env::args().nth(2).unwrap();
-        TcpStream::connect(address).unwrap();
-        println!("reached");
+        let found = address.to_socket_addrs().map(|mut a| a.next());
+        match found.map(|a| a.map(|a| TcpStream::connect_timeout(&a, Duration::from_secs(3)))) {
+            Ok(Some(Ok(_))) => println!("reached"),
+            Ok(Some(Err(e))) | Err(e) => fail(&format!("{address}: {e}")),
+            Ok(None) => fail(&format!("{address}: no such host")),
+        }
         return;
     }
     let read = |path: &str| fs::read_to_string(path).unwrap_or_default();
@@ -62,4 +66,9 @@ fn main() {
     loop {
         thread::sleep(Duration::from_secs(3600));
     }
+}
+
+fn fail(why: &str) {
+    eprintln!("{why}");
+    std::process::exit(1);
 }

@@ -43,6 +43,7 @@ VERSIONS = ["1.0.0", "1.0.1", "1.0.2", "1.0.3"]
 TOKEN = "s3cret-token"
 FLEET = "/var/lib/mothership/fleet"
 STAND_IN = "stand0"
+LINK = "link.app.app.extra"
 
 
 def main() -> int:
@@ -388,18 +389,23 @@ def fleet(tmp: Path, image: str, registry: Registry, root: x25519.Identity) -> P
         pyrage.encrypt(f"{TOKEN}\n".encode(), [root.to_public(), recovery]))
     (server / "services/app/secrets").mkdir()
     (server / "services/app/secrets/token.age").symlink_to("../../../../../shared/.secrets/token.age")
-    (server / "services/app/service.toml").write_text(pinned(image, registry, "1.0.0", mine=True))
-    (server / "services/extra/service.toml").write_text(
-        pinned(image, registry, "1.0.0", mine=False).replace("[images.app]", "[images.extra]"))
+    (server / "services/app/service.toml").write_text(
+        pinned(image, registry, "1.0.0", mine=True, callers=["extra"]))
+    for other in ["extra", "lonely"]:
+        (server / f"services/{other}/service.toml").write_text(
+            pinned(image, registry, "1.0.0", mine=False).replace("[images.app]", f"[images.{other}]"))
     archive = tmp / "fleet.tar"
     with tarfile.open(archive, "w") as tar:
         tar.add(work, arcname=".")
     return archive
 
 
-def pinned(image: str, registry: Registry, version: str, mine: bool) -> str:
+def pinned(image: str, registry: Registry, version: str, mine: bool,
+           callers: list[str] = []) -> str:
     repo = ('repo = "me/app"\nports.public = ["80/tcp", "443/udp"]\nports.local = ["5432/tcp"]\n'
             f'ports.{STAND_IN} = ["53/udp"]\n' if mine else "")
+    if callers:
+        repo += f"callers = {json.dumps(callers)}\n"
     snapshot = 'snapshot = ["precious"]\n\n' if mine else ""
     return (f'{snapshot}[images.app]\nimage = "{image}"\nversion = "{version}"\n'
             f'digest = "{registry.digest(version)}"\n{repo}')
@@ -455,18 +461,23 @@ sudo ip link set {STAND_IN} up
     expect(vm.run("stat -c '%U %a' /srv/app /var/lib/mothership/services/app"),
            "services 700", "root 750")
     ports(vm, image, registry)
+    links(vm, image)
     expect(apply(), "probe  install and start it")
     expect(apply(), "Nothing to apply.")
+    stray_link(vm, apply)
     scan = vm.run("sudo mothership scan").stdout
     assert "Containers" not in scan, scan
     interface(vm, apply)
+    assert linked(vm), "the link works again once Docker and stand0 come back"
 
     def commit(message: str, change: str) -> None:
         vm.run(f"cd {FLEET} && {change}")
         expect(vm.run(f"sudo mothership commit '{message}'", input="y\n"), "Committed")
 
+    callers = ["extra"]
+
     def pin(version: str) -> str:
-        text = pinned(image, registry, version, mine=True)
+        text = pinned(image, registry, version, mine=True, callers=callers)
         return f"cat > types/server/services/app/service.toml <<'EOF'\n{text}EOF"
 
     expect(vm.run("sudo mothership secret app token", input="n3w-token\ny\n"), "Committed")
@@ -488,6 +499,10 @@ sudo ip link set {STAND_IN} up
     expect(apply(), "extra publishes ports in compose.yaml: declare them in service.toml", code=1)
     commit("Publish nothing from compose", f"git checkout HEAD~1 -- {extra}/compose.yaml")
     expect(apply(), "Nothing to apply.")
+    commit("Use the host network", f"echo '    network_mode: host' >> {extra}/compose.yaml")
+    expect(apply(), "extra sets network_mode: a container stays on its service's networks", code=1)
+    commit("Stay on the service network", f"git checkout HEAD~1 -- {extra}/compose.yaml")
+    expect(apply(), "Nothing to apply.")
     commit("Take port 80", f"echo 'ports.public = [\"80/tcp\"]' >> {extra}/service.toml")
     expect(apply(), "app's images.app and extra's images.extra both publish 80/tcp on public", code=1)
     commit("Give port 80 back", f"git checkout HEAD~1 -- {extra}/service.toml")
@@ -496,11 +511,16 @@ sudo ip link set {STAND_IN} up
            "types/server/services/app/service.toml")
     expect(apply(), "Updated app")
     assert running(vm, "extra"), "apply starts a service without a restart policy after Docker restarts"
+    assert linked(vm), "the link works again after apply restarts Docker"
     commit("Stop publishing 8443/tcp", "git checkout HEAD~1 -- types/server/services/app/service.toml")
     expect(apply(), "Updated app")
 
-    commit("Drop extra", "git rm -q -r types/server/services/extra")
-    expect(apply(), "Removed extra, keeping /srv/extra")
+    commit("Drop extra", "git rm -q -r types/server/services/extra types/server/services/lonely")
+    expect(apply(), "app's images.app lets extra call it, and the type has no service extra", code=1)
+    callers.clear()
+    commit("Drop the link to extra", pin("1.0.1"))
+    expect(apply(), "Removed extra, keeping /srv/extra", "Removed lonely", "Updated app")
+    assert LINK not in vm.run(f"{AS_SERVICES} network ls").stdout, "apply removes a link nobody needs"
     assert data("extra", "version") == "1.0.0", "a dropped service keeps its data"
     containers = vm.run("sudo -u services env DOCKER_HOST=unix:///run/user/$(id -u services)/docker.sock "
                         "docker ps --all --format '{{.Names}}'").stdout
@@ -542,6 +562,45 @@ sudo ip link set {STAND_IN} up
     recipes(vm, image, commit, apply)
     restart_manager(vm)
     last_service(vm, commit, apply)
+
+
+def links(vm: VM, image: str) -> None:
+    assert linked(vm), "extra calls app by its link name"
+    expect(vm.run(f"{AS_SERVICES} network inspect --format '{{{{.Internal}}}}' {LINK}"), "true")
+    address = vm.run(f"{AS_SERVICES} inspect --format "
+                     f"'{{{{(index .NetworkSettings.Networks \"{LINK}\").IPAddress}}}}' app-app-1").stdout.strip()
+    assert address, "app sits on its link network"
+    for target in ["app.app:80", f"{address}:80"]:
+        out = vm.run(f"{AS_SERVICES} exec lonely-lonely-1 /app reach {target}", check=False)
+        assert out.returncode == 1, f"a service without a link can't reach app at {target}: {out.stdout}"
+    outside = image.split("/")[0]
+    expect(vm.run(f"{AS_SERVICES} exec extra-extra-1 /app reach {outside}"), "reached")
+    expect(vm.run(f"{AS_SERVICES} exec app-app-1 /app reach {outside}"), "reached")
+
+    vm.run("sudo systemd-run --unit host-listener --property=RuntimeMaxSec=300 "
+           "python3 -m http.server --bind 10.99.0.1 8000")
+    try:
+        deadline = time.time() + 30
+        while ":8000 " not in vm.run("ss -tln").stdout and time.time() < deadline:
+            time.sleep(1)
+        out = vm.run(f"{AS_SERVICES} exec extra-extra-1 /app reach 10.99.0.1:8000", check=False)
+        assert out.stdout.strip() == "reached", \
+            f"a container reaches a program on the machine through {STAND_IN}: {out.stdout}{out.stderr}"
+    finally:
+        vm.run("sudo systemctl stop host-listener", check=False)
+
+
+def stray_link(vm: VM, apply) -> None:
+    vm.run(f"{AS_SERVICES} network create --internal link.app.app.stray")
+    expect(vm.run("sudo mothership scan"), "link.app.app.stray  disconnect its containers and remove it")
+    apply()
+    networks = vm.run(f"{AS_SERVICES} network ls").stdout
+    assert "link.app.app.stray" not in networks and LINK in networks, networks
+
+
+def linked(vm: VM) -> bool:
+    out = vm.run(f"{AS_SERVICES} exec extra-extra-1 /app reach app.app:80", check=False)
+    return out.stdout.strip() == "reached"
 
 
 def last_service(vm: VM, commit, apply) -> None:
@@ -631,7 +690,7 @@ def ports(vm: VM, image: str, registry: Registry) -> None:
     denied = vm.run("python3 -c 'import socket; socket.socket().bind((\"0.0.0.0\", 81))'", check=False)
     expect(denied, "Permission denied", code=1)
     reference = f"{image}:1.0.0@{registry.digest('1.0.0')}"
-    for published in ["8080:80", "444:80", "80:80/udp"]:
+    for published in ["8080:80", "444:80", "80:80/udp", "80"]:
         refused(vm, reference, published)
     outside = image.split("/")[0]
     expect(vm.run(f"{AS_SERVICES} run --rm --entrypoint /app {reference} reach {outside}"), "reached")
