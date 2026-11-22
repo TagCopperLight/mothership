@@ -53,37 +53,40 @@ pub fn snapshot(user: &User, service: &str) -> PathBuf {
     user.home.join("snapshots").join(service)
 }
 
+fn first(paths: &[&'static str]) -> Option<&'static str> {
+    paths.iter().copied().find(|path| Path::new(path).exists())
+}
+
 fn rootless() -> Result<&'static str> {
-    ROOTLESS
-        .into_iter()
-        .find(|path| Path::new(path).exists())
-        .context(
-            "this machine has no rootless Docker: the type must list it, such as docker.io, \
+    first(&ROOTLESS).context(
+        "this machine has no rootless Docker: the type must list it, such as docker.io, \
              docker-compose, rootlesskit, uidmap, slirp4netns and dbus-user-session on Debian",
-        )
+    )
 }
 
 fn nft() -> Result<&'static str> {
-    NFT.into_iter()
-        .find(|path| Path::new(path).exists())
-        .context("this machine has no nft: the type must list nftables")
+    first(&NFT).context("this machine has no nft: the type must list nftables")
 }
 
-fn written(user: &User, ports: &BTreeSet<Port>) -> Result<[(&'static str, String); 3]> {
-    Ok([
+fn stale(user: &User, ports: &BTreeSet<Port>) -> Result<Vec<(&'static str, String)>> {
+    let wanted = [
         (UNIT, unit(rootless()?, user, ports)),
         (FIREWALL, firewall(nft()?, user)),
         (RULES, rules(user)),
-    ])
+    ];
+    let mut stale = Vec::new();
+    for (path, text) in wanted {
+        if file::read_if_any(Path::new(path))?.as_ref() != Some(&text) {
+            stale.push((path, text));
+        }
+    }
+    Ok(stale)
 }
 
 fn links(user: &User) -> [PathBuf; 2] {
-    let dir = Path::new(crate::systemd::SYSTEM_DIRS[0]);
-    [
-        dir.join("multi-user.target.wants").join(UNIT_NAME),
-        dir.join(format!("user@{}.service.wants", user.uid))
-            .join(FIREWALL_NAME),
-    ]
+    let wants =
+        Path::new(crate::systemd::SYSTEM_DIRS[0]).join(format!("user@{}.service.wants", user.uid));
+    UNIT_NAMES.map(|name| wants.join(name))
 }
 
 pub fn rules(user: &User) -> String {
@@ -91,7 +94,7 @@ pub fn rules(user: &User) -> String {
     format!(
         "table {TABLE}\ndelete table {TABLE}\ntable {TABLE} {{\n\tchain input {{\n\
          \t\ttype filter hook input priority filter; policy accept;\n\
-         \t\tct state new meta l4proto {{ tcp, udp }} socket cgroupv2 level 3 \
+         \t\tct state != {{ established, related }} meta l4proto {{ tcp, udp }} socket cgroupv2 level 3 \
          \"user.slice/user-{uid}.slice/user@{uid}.service\" reject\n\t}}\n}}\n"
     )
 }
@@ -100,7 +103,7 @@ fn firewall(nft: &str, user: &User) -> String {
     let uid = user.uid;
     format!(
         "[Unit]\nDescription=Refuse connections to what services' user manager runs\n\
-         After=user@{uid}.service\nPartOf=user@{uid}.service\n\n[Service]\nType=oneshot\n\
+         After=user@{uid}.service\nBindsTo=user@{uid}.service\n\n[Service]\nType=oneshot\n\
          RemainAfterExit=yes\nExecStart={nft} -f {RULES}\nExecStop={nft} delete table {TABLE}\n\n\
          [Install]\nWantedBy=user@{uid}.service\n"
     )
@@ -114,7 +117,7 @@ pub fn unit(rootless: &str, user: &User, ports: &BTreeSet<Port>) -> String {
         .collect();
     format!(
         "[Unit]\nDescription=Docker for the fleet's services\n\
-         Requires=user@{uid}.service {FIREWALL_NAME}\n\
+         BindsTo=user@{uid}.service\nRequires={FIREWALL_NAME}\n\
          After=user@{uid}.service {FIREWALL_NAME} network-online.target\n\
          Wants=network-online.target\n\n\
          [Service]\nUser={USER}\nEnvironment=PATH=/usr/sbin:/usr/bin:/sbin:/bin\n\
@@ -124,47 +127,45 @@ pub fn unit(rootless: &str, user: &User, ports: &BTreeSet<Port>) -> String {
          {allowed}SocketBindDeny=any\nTimeoutSec=0\nRestartSec=2\nRestart=always\n\
          StartLimitBurst=3\nStartLimitInterval=60s\nLimitNOFILE=infinity\nLimitNPROC=infinity\n\
          LimitCORE=infinity\nTasksMax=infinity\nDelegate=yes\nType=notify\nNotifyAccess=all\n\
-         KillMode=mixed\n\n[Install]\nWantedBy=multi-user.target\n",
+         KillMode=mixed\n\n[Install]\nWantedBy=user@{uid}.service\n",
         home = user.home.display(),
         run = run.display(),
     )
 }
 
-pub fn missing(ports: &BTreeSet<Port>) -> Result<Vec<&'static str>> {
+pub fn missing(ports: &BTreeSet<Port>) -> Result<Vec<String>> {
     let Some(user) = user()? else {
-        return Ok(vec!["the account is missing"]);
+        return Ok(vec!["the account is missing".into()]);
     };
     let mut missing = Vec::new();
     for path in SUBIDS {
         if subids(path)?.iter().all(|(name, ..)| name != USER) {
-            missing.push("it has no subordinate ids");
+            missing.push("it has no subordinate ids".into());
             break;
         }
     }
     if !Path::new(LINGER).join(USER).exists() {
-        missing.push("its services don't start with the machine");
+        missing.push("its services don't start with the machine".into());
     }
     if Path::new(SYSCTL).exists() {
-        missing.push("every account may open ports from 80 up");
+        missing.push("every account may open ports from 80 up".into());
     }
     if user.read(&user.home.join(OLD_UNIT))?.is_some() {
-        missing.push("its Docker runs as its own unit");
+        missing.push("its Docker runs as its own unit".into());
     }
-    let current = match written(&user, ports) {
-        Ok(files) => {
-            let mut current = true;
-            for (path, text) in files {
-                current &= file::read_if_any(Path::new(path))?.as_ref() == Some(&text);
-            }
-            current
-        }
-        Err(_) => false,
-    };
     let enabled = links(&user)
         .iter()
         .all(|link| std::fs::symlink_metadata(link).is_ok());
-    if !current || !enabled {
-        missing.push("its Docker and firewall aren't set up as the fleet's ports ask");
+    match stale(&user, ports) {
+        Ok(stale) if stale.is_empty() && enabled => {}
+        Ok(_) => {
+            missing.push("its Docker and firewall aren't set up as the fleet's ports ask".into())
+        }
+        Err(e) => missing.push(format!("{e:#}")),
+    }
+    let active = cmd::bytes_allowing_exit(As::Root, "systemctl", &["is-active", FIREWALL_NAME], 3)?;
+    if active != b"active\n" {
+        missing.push("its firewall isn't running".into());
     }
     Ok(missing)
 }
@@ -175,10 +176,7 @@ pub fn setup(ports: &BTreeSet<Port>) -> Result<()> {
     let user = match user()? {
         Some(user) => user,
         None => {
-            let shell = NOLOGIN
-                .into_iter()
-                .find(|path| Path::new(path).exists())
-                .context("this machine has no nologin shell")?;
+            let shell = first(&NOLOGIN).context("this machine has no nologin shell")?;
             cmd::root(
                 "useradd",
                 &[
@@ -210,11 +208,9 @@ pub fn setup(ports: &BTreeSet<Port>) -> Result<()> {
         cmd::root("sysctl", &["--quiet", "--system"])?;
     }
     let mut changed = Vec::new();
-    for (path, text) in written(&user, ports)? {
-        if file::read_if_any(Path::new(path))?.as_ref() != Some(&text) {
-            file::write(Path::new(path), text.as_bytes(), 0o644)?;
-            changed.push(path);
-        }
+    for (path, text) in stale(&user, ports)? {
+        file::write(Path::new(path), text.as_bytes(), 0o644)?;
+        changed.push(path);
     }
     cmd::root("systemctl", &["daemon-reload"])?;
     let firewall_changed = changed.iter().any(|path| [FIREWALL, RULES].contains(path));

@@ -530,6 +530,33 @@ sudo sysctl --quiet --system
     refused(vm, f"{image}:1.0.3@{registry.digest('1.0.3')}", "443:443/udp")
 
     recipes(vm, image, commit, apply)
+    restart_manager(vm)
+
+
+def stray_refused(vm: VM, port: int) -> None:
+    vm.run(f"sudo systemd-run --user -M services@ --unit stray python3 -m http.server {port} && sleep 2")
+    expect(vm.run("sudo ss -tlnp"), f":{port}")
+    expect(vm.run(f"curl -s --max-time 5 http://127.0.0.1:{port}/", check=False), code=7)
+    vm.run("sudo systemctl --user -M services@ stop stray")
+
+
+def restart_manager(vm: VM) -> None:
+    uid = vm.run("id -u services").stdout.strip()
+    runs = lambda: vm.run(f"systemctl show -p InvocationID user@{uid} mothership-services-firewall").stdout
+    before = runs()
+    vm.run(f"sudo systemctl kill --signal=SIGKILL user@{uid}.service; sleep 5")
+    expect(vm.run("systemctl is-active mothership-services-firewall", check=False), "inactive", code=3)
+    vm.run(f"sudo systemctl start user@{uid}.service")
+    after = runs().split("\n\n")
+    assert all(run not in before for run in after), f"the manager and firewall start again: {before} {after}"
+    expect(vm.run("systemctl is-active mothership-services-firewall"), "active")
+    expect(vm.run("sudo nft list table inet mothership"), "socket cgroupv2 level 3")
+    stray_refused(vm, 8091)
+    deadline = time.time() + 120
+    while reach(vm, "tcp", 80) != "1.0.3":
+        if time.time() > deadline:
+            sys.exit(f"app didn't come back after services' user manager restarted: see {LOG}")
+        time.sleep(5)
 
 
 AS_SERVICES = "sudo -u services env DOCKER_HOST=unix:///run/user/$(id -u services)/docker.sock docker"
@@ -563,10 +590,7 @@ def ports(vm: VM, image: str, registry: Registry) -> None:
     reference = f"{image}:1.0.0@{registry.digest('1.0.0')}"
     for published in ["8080:80", "444:80", "80:80/udp"]:
         refused(vm, reference, published)
-    vm.run("sudo systemd-run --user -M services@ --unit stray python3 -m http.server 8090 && sleep 2")
-    expect(vm.run("sudo ss -tlnp"), ":8090")
-    expect(vm.run("curl -s --max-time 5 http://127.0.0.1:8090/", check=False), code=7)
-    vm.run("sudo systemctl --user -M services@ stop stray")
+    stray_refused(vm, 8090)
     outside = image.split("/")[0]
     expect(vm.run(f"{AS_SERVICES} run --rm --entrypoint /app {reference} reach {outside}"), "reached")
 
