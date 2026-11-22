@@ -33,6 +33,7 @@ const SUBIDS: [&str; 2] = ["/etc/subuid", "/etc/subgid"];
 const FIRST_SUBID: u64 = 100_000;
 const SUBID_COUNT: u64 = 65_536;
 const EVERY_PORT: &str = "1-65535";
+const ADDRESS_POOL: &str = "base=172.16.0.0/12,size=24";
 const START_LIMIT: Duration = Duration::from_secs(90);
 
 pub fn user() -> Result<Option<User>> {
@@ -167,7 +168,7 @@ pub fn unit(rootless: &str, user: &User, services: &[Service]) -> Result<String>
          Wants=network-online.target\n\n\
          [Service]\nUser={USER}\nEnvironment=PATH=/usr/sbin:/usr/bin:/sbin:/bin\n\
          Environment=HOME={home}\nEnvironment=XDG_RUNTIME_DIR={run}\n\
-         Environment=DBUS_SESSION_BUS_ADDRESS=unix:path={run}/bus\nExecStart={rootless}\n\
+         Environment=DBUS_SESSION_BUS_ADDRESS=unix:path={run}/bus\nExecStart={rootless} --default-address-pool {ADDRESS_POOL}\n\
          ExecReload=/bin/kill -s HUP $MAINPID\nAmbientCapabilities=CAP_NET_BIND_SERVICE\n\
          {allowed}SocketBindDeny={EVERY_PORT}\nTimeoutSec=0\nRestartSec=2\nRestart=always\n\
          StartLimitBurst=3\nStartLimitInterval=60s\nLimitNOFILE=infinity\nLimitNPROC=infinity\n\

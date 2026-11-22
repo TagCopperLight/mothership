@@ -402,6 +402,9 @@ fn services_docker_may_bind_only_the_declared_ports() {
             "SocketBindDeny=1-65535"
         ]
     );
+    assert!(unit.contains(
+        "ExecStart=/usr/bin/dockerd-rootless.sh --default-address-pool base=172.16.0.0/12,size=24\n"
+    ));
     assert!(unit.contains("User=services\n"));
     assert!(unit.contains("AmbientCapabilities=CAP_NET_BIND_SERVICE\n"));
     assert!(unit.contains("XDG_RUNTIME_DIR=/run/user/990\n"));
