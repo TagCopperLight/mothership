@@ -7,7 +7,6 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
-    collections::BTreeSet,
     ffi::OsString,
     path::{Path, PathBuf},
     process::Command,
@@ -172,8 +171,8 @@ impl Docker {
     }
 
     fn attached(&self, network: &str) -> Result<Vec<String>> {
-        let format = "{{range $id, $_ := .Containers}}{{$id}} {{end}}";
-        let out = self.query(&["network", "inspect", "--format", format, "--", network])?;
+        let filter = format!("network={network}");
+        let out = self.query(&["ps", "--all", "--quiet", "--no-trunc", "--filter", &filter])?;
         Ok(String::from_utf8(out)?
             .split_whitespace()
             .map(str::to_owned)
@@ -185,15 +184,6 @@ impl Docker {
             self.query(&["network", "disconnect", "--force", network, &container])?;
         }
         self.query(&["network", "rm", "--", network]).map(drop)
-    }
-
-    pub fn drop_unused_links(&self, wanted: &BTreeSet<String>) -> Result<()> {
-        for network in self.links()? {
-            if !wanted.contains(&network) && self.attached(&network)?.is_empty() {
-                self.query(&["network", "rm", "--", &network])?;
-            }
-        }
-        Ok(())
     }
 
     fn of(&self, name: &str) -> Result<Vec<Container>> {

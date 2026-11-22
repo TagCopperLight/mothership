@@ -3,7 +3,7 @@ use super::{
     confirm::Unconfirmed,
     deploy::{self, Outcome, Places, Wanted},
     docker::Docker,
-    docker_config, link, registry, start,
+    docker_config, registry, start,
     state::State,
 };
 use crate::{file, fleet::Fleet, http::Curl, probe};
@@ -160,9 +160,6 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
         }
         state.save()?;
         unconfirmed.save()?;
-    }
-    if let Err(e) = docker.drop_unused_links(&link::networks(&fleet.services)) {
-        failed.push(format!("removing links no service declares: {e:#}"));
     }
     if !failed.is_empty() {
         bail!("couldn't apply {}", failed.join("\n"));

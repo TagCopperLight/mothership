@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 pub const PREFIX: &str = "link.";
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone)]
 pub struct Link {
     pub service: String,
     pub container: String,

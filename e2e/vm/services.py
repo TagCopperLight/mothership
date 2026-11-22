@@ -566,7 +566,10 @@ sudo ip link set {STAND_IN} up
 
 def links(vm: VM, image: str) -> None:
     assert linked(vm), "extra calls app by its link name"
-    expect(vm.run(f"{AS_SERVICES} network inspect --format '{{{{.Internal}}}}' {LINK}"), "true")
+    expect(vm.run(f"{AS_SERVICES} network inspect --format '{{{{.Internal}}}} "
+                  f"{{{{range .IPAM.Config}}}}{{{{.Subnet}}}}{{{{end}}}}' {LINK}"), "true 172.")
+    assert vm.run(f"{AS_SERVICES} network inspect --format '{{{{range .IPAM.Config}}}}{{{{.Subnet}}}}"
+                  f"{{{{end}}}}' {LINK}").stdout.strip().endswith("/24"), "links take small subnets"
     address = vm.run(f"{AS_SERVICES} inspect --format "
                      f"'{{{{(index .NetworkSettings.Networks \"{LINK}\").IPAddress}}}}' app-app-1").stdout.strip()
     assert address, "app sits on its link network"
@@ -591,11 +594,13 @@ def links(vm: VM, image: str) -> None:
 
 
 def stray_link(vm: VM, apply) -> None:
-    vm.run(f"{AS_SERVICES} network create --internal link.app.app.stray")
+    vm.run(f"{AS_SERVICES} network create --internal link.app.app.stray && "
+           f"{AS_SERVICES} network connect link.app.app.stray lonely-lonely-1")
     expect(vm.run("sudo mothership scan"), "link.app.app.stray  disconnect its containers and remove it")
     apply()
     networks = vm.run(f"{AS_SERVICES} network ls").stdout
     assert "link.app.app.stray" not in networks and LINK in networks, networks
+    assert running(vm, "lonely"), "removing a link network disconnects its containers first"
 
 
 def linked(vm: VM) -> bool:

@@ -222,11 +222,16 @@ pub struct Bindings {
     pub interfaces: BTreeSet<String>,
 }
 
-pub fn binding(places: &Places, name: &str) -> Result<Bindings> {
+fn read_override(places: &Places, name: &str) -> Result<(PathBuf, Value)> {
     let path = places.project(name).join(OVERRIDE);
-    let text = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
-    let mut config: Value =
+    let text = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let config =
         serde_json::from_slice(&text).with_context(|| format!("reading {}", path.display()))?;
+    Ok((path, config))
+}
+
+pub fn binding(places: &Places, name: &str) -> Result<Bindings> {
+    let (path, mut config) = read_override(places, name)?;
     let own = config
         .get(OWN)
         .with_context(|| format!("{} has no {OWN}", path.display()))?;
@@ -519,10 +524,7 @@ fn roll_back(
 }
 
 pub fn join_links(engine: &dyn Engine, places: &Places, name: &str) -> Result<()> {
-    let path = places.project(name).join(OVERRIDE);
-    let text = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
-    let config: Value =
-        serde_json::from_slice(&text).with_context(|| format!("reading {}", path.display()))?;
+    let (_, config) = read_override(places, name)?;
     for network in config["networks"]
         .as_object()
         .into_iter()
