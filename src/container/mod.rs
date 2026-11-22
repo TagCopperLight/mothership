@@ -132,6 +132,21 @@ pub fn recipe_version(dockerfile: &str) -> Result<String> {
     Ok(version.to_owned())
 }
 
+fn follows(image: &Image, built: &str) -> Result<()> {
+    if image.unbuilt() && built != image.version {
+        bail!(
+            "it builds {built}, and service.toml waits for {}",
+            image.version
+        );
+    }
+    version::check_update(&image.version, built).with_context(|| {
+        format!(
+            "it builds {built}, which the probe can't follow from {}",
+            image.version
+        )
+    })
+}
+
 pub fn holds_recipes(fleet_dir: &Path) -> Result<bool> {
     for type_name in crate::fleet::types(fleet_dir)? {
         let dir = crate::fleet::type_dir(fleet_dir, &type_name).join(SERVICES);
@@ -343,8 +358,10 @@ fn check_recipe(dir: &Path, images: &BTreeMap<String, Image>) -> Result<()> {
         (1, true) => {
             let text = fs::read_to_string(&dockerfile)
                 .with_context(|| format!("reading {}", dockerfile.display()))?;
-            recipe_version(&text).with_context(|| format!("reading {}", dockerfile.display()))?;
-            Ok(())
+            let built = recipe_version(&text)
+                .with_context(|| format!("reading {}", dockerfile.display()))?;
+            let image = images.values().find(|image| image.recipe).expect("counted");
+            follows(image, &built).with_context(|| format!("checking {}", dockerfile.display()))
         }
         (0, true) => bail!(
             "{} has a {DOCKERFILE}, and no image in it says recipe = true",

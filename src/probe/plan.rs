@@ -150,7 +150,13 @@ fn watch(
             break;
         }
         if ripe {
-            verify(item, &to)?;
+            if let Err(e) = verify(item, &to) {
+                found.failures.push(format!(
+                    "{}:{} in {}: {e:#}",
+                    image.image, to.version, item.service
+                ));
+                continue;
+            }
             found.updates.push(Update {
                 service: item.service.clone(),
                 name: item.name.clone(),

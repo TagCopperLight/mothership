@@ -126,7 +126,11 @@ pub fn ask(
             (Some(dockerfile), _, Some(fleet)) => (
                 Rebuild {
                     repo: fleet,
-                    key: format!("{fleet}:{}", item.service),
+                    key: format!(
+                        "{fleet}:{}@{}",
+                        item.service,
+                        crate::hash::sha256(dockerfile.as_bytes())
+                    ),
                     shown: format!("the fleet's recipe {}", item.service),
                     payload: serde_json::json!({ "service": item.service }),
                 },

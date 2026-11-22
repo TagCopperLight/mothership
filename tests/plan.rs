@@ -211,3 +211,28 @@ fn a_notice_stays_between_rounds_until_its_image_goes() {
     );
     assert!(state.notices.is_empty());
 }
+
+#[test]
+fn a_tag_the_check_refuses_leaves_the_older_ones_open() {
+    let digests = Arc::new(Mutex::new(BTreeMap::from([
+        ("1.0".to_owned(), digest(1)),
+        ("1.1".to_owned(), digest(2)),
+        ("1.2".to_owned(), digest(3)),
+    ])));
+    let client = registry(&["1.0", "1.1", "1.2"], digests);
+    let refuse_newest = |_: &Watched, pin: &Pin| match pin.version.as_str() {
+        "1.2" => anyhow::bail!("built from an old recipe"),
+        _ => Ok(()),
+    };
+    let mut state = State::default();
+    let found = plan(
+        &[watched("1.0", Some("me/db"))],
+        &client,
+        &mut state,
+        0,
+        Round::Mine,
+        &refuse_newest,
+    );
+    assert_eq!(found.updates[0].to.version, "1.1");
+    assert_eq!(found.failures.len(), 1, "{:?}", found.failures);
+}

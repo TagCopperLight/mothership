@@ -78,3 +78,29 @@ fn a_republished_tag_runs_the_pinned_digest_only_when_the_admin_agrees() {
         assert_eq!(unconfirmed, left);
     }
 }
+
+#[test]
+fn a_tag_the_registry_dropped_is_asked_about_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Fake {
+        sent: Default::default(),
+        answer: Box::new(|_, _, _| response(404, &[], "{}")),
+    };
+    let client = Client::new(Box::new(fake), None).unwrap();
+    let mut unconfirmed = waiting();
+    let mut asked = 0;
+    let mut ask = |_: &str| {
+        asked += 1;
+        Ok(true)
+    };
+    ask_republished(
+        "server",
+        &services(dir.path()),
+        &client,
+        &mut unconfirmed,
+        &mut ask,
+    )
+    .unwrap();
+    assert_eq!(asked, 1);
+    assert_eq!(unconfirmed, Unconfirmed::default());
+}

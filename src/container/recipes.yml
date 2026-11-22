@@ -3,7 +3,7 @@ name: Recipes, written by mothership
 on:
   push:
     branches: [main]
-    paths: ["types/*/services/*/Dockerfile"]
+    paths: ["types/*/services/*/Dockerfile", ".github/workflows/mothership-recipes.yml"]
   repository_dispatch:
     types: [rebuild]
   workflow_dispatch:
@@ -11,8 +11,6 @@ on:
 permissions:
   contents: read
   packages: write
-
-concurrency: recipes
 
 jobs:
   build:
@@ -51,23 +49,39 @@ jobs:
               return subprocess.run(diff).returncode != 0
 
 
+          def published(tag):
+              inspect = ["docker", "manifest", "inspect", tag]
+              return subprocess.run(inspect, capture_output=True).returncode == 0
+
+
+          def outdated(dockerfile):
+              if event != "push":
+                  return False
+              subprocess.run(["git", "fetch", "--quiet", "origin", "main"], check=True)
+              diff = ["git", "diff", "--quiet", commit, "FETCH_HEAD", "--", str(dockerfile)]
+              return subprocess.run(diff).returncode != 0
+
+
           built = 0
           for dockerfile in sorted(Path("types").glob("*/services/*/Dockerfile")):
               service = f"{dockerfile.parts[1]}/{dockerfile.parts[3]}"
               if event == "repository_dispatch" and service != os.environ.get("SERVICE"):
                   continue
-              if not changed(dockerfile):
-                  continue
               pinned = tomllib.loads((dockerfile.parent / "service.toml").read_text())
               [image] = [i["image"] for i in pinned["images"].values() if i.get("recipe")]
               [version] = VERSION.findall(dockerfile.read_text())
               tag = f"{image}:{version}"
+              if not changed(dockerfile) and published(tag):
+                  continue
               print(f"Building {service} as {tag}", flush=True)
               build = ["docker", "build", "--pull", "--tag", tag,
                        "--label", f"org.opencontainers.image.revision={commit}",
                        "--label", f"org.opencontainers.image.source={source}", "-"]
               with dockerfile.open("rb") as recipe:
                   subprocess.run(build, stdin=recipe, check=True)
+              if outdated(dockerfile):
+                  print(f"Left {tag} unpushed: a newer commit on main changed {service}")
+                  continue
               subprocess.run(["docker", "push", tag], check=True)
               built += 1
           print(f"Built {built} recipes")

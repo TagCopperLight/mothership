@@ -98,19 +98,32 @@ impl Client {
     }
 
     pub fn digest(&self, image: &str, tag: &str) -> Result<String> {
+        self.digest_if_any(image, tag)?
+            .with_context(|| format!("the registry has no {image}:{tag}"))
+    }
+
+    fn digest_if_any(&self, image: &str, tag: &str) -> Result<Option<String>> {
         let name = name(image);
         let url = format!("https://{}/v2/{}/manifests/{tag}", name.api(), name.path);
         let response = self.get(&name, "HEAD", &url, &[ACCEPT.to_owned()])?;
+        if response.status == 404 {
+            return Ok(None);
+        }
         let response = response.ok(&format!("{image}:{tag}"))?;
         let digest = response
             .header("docker-content-digest")
             .with_context(|| format!("the registry gave no digest for {image}:{tag}"))?;
         super::check_digest(digest)?;
-        Ok(digest.to_owned())
+        Ok(Some(digest.to_owned()))
     }
 
     pub fn contradicts(&self, image: &super::Image, pin: &super::Pin) -> Result<Option<String>> {
-        let digest = self.digest(&image.image, &pin.version)?;
+        let Some(digest) = self.digest_if_any(&image.image, &pin.version)? else {
+            return Ok(Some(format!(
+                "the registry no longer has {}:{}",
+                image.image, pin.version
+            )));
+        };
         Ok((digest != pin.digest).then(|| {
             format!(
                 "the registry gives {digest} for {}:{}, not the {} the fleet pins",

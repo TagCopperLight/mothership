@@ -201,3 +201,22 @@ fn the_fleet_holds_recipes_when_a_service_has_a_dockerfile() {
     fs::write(services.join(DOCKERFILE), RECIPE).unwrap();
     assert!(holds_recipes(dir.path()).unwrap());
 }
+
+#[test]
+fn a_recipe_builds_a_version_the_probe_can_follow() {
+    let dir = tempfile::tempdir().unwrap();
+    let newer = RECIPE.replace("version=\"2.8.4\"", "version=\"2.8.5\"");
+    recipe(dir.path(), DIGEST, Some(&newer)).unwrap();
+    let err = |digest: &str, dockerfile: &str| {
+        let dir = tempfile::tempdir().unwrap();
+        format!(
+            "{:#}",
+            recipe(dir.path(), digest, Some(dockerfile)).err().unwrap()
+        )
+    };
+    assert!(err("", &newer).contains("waits for 2.8.4"));
+    let older = RECIPE.replace("version=\"2.8.4\"", "version=\"2.8.0\"");
+    assert!(err(DIGEST, &older).contains("can't follow from 2.8.4"));
+    let other = RECIPE.replace("version=\"2.8.4\"", "version=\"2.8.4-ovh\"");
+    assert!(err(DIGEST, &other).contains("can't follow"));
+}
