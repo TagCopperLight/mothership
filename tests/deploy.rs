@@ -8,6 +8,11 @@ use std::{cell::RefCell, collections::VecDeque, os::unix::fs::MetadataExt};
 const A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const B: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
+fn with_parts(verb: &str, parts: &[PathBuf]) -> String {
+    let parts: Vec<String> = parts.iter().map(|p| p.display().to_string()).collect();
+    [&[verb.to_owned()][..], &parts].concat().join(" ")
+}
+
 #[derive(Default)]
 struct Fake {
     calls: RefCell<Vec<String>>,
@@ -58,15 +63,15 @@ impl Engine for Fake {
             .pop_front()
             .unwrap_or(Health::Healthy))
     }
-    fn snapshot(&self, _: &str, _: &Path) -> Result<()> {
-        self.log("snapshot");
+    fn snapshot(&self, _: &str, _: &Path, parts: &[PathBuf]) -> Result<()> {
+        self.log(with_parts("snapshot", parts));
         match self.snapshot_fails {
             true => anyhow::bail!("the disk is full"),
             false => Ok(()),
         }
     }
-    fn restore(&self, _: &str, _: &Path) -> Result<()> {
-        self.log("restore");
+    fn restore(&self, _: &str, _: &Path, parts: &[PathBuf]) -> Result<()> {
+        self.log(with_parts("restore", parts));
         Ok(())
     }
     fn confirm(&self, _: &Image, pin: &Pin) -> Result<Option<String>> {
@@ -203,6 +208,33 @@ fn an_update_snapshots_the_data_and_a_failed_one_rolls_back_for_good() {
     assert_eq!(outcome, Outcome::Blocked("images.app 1.0.2".into()));
     assert!(engine.calls().is_empty());
     assert_eq!(fourth.running, second.running);
+}
+
+#[test]
+fn a_service_snapshots_only_the_parts_it_names() {
+    let mut world = World::new();
+    let engine = Fake::default();
+    let (first, _) = world.deploy(&engine, &world.pin("1.0.0", A), None);
+    engine.calls();
+    let toml = world.fleet.join("services/app/service.toml");
+    let text = fs::read_to_string(&toml).unwrap();
+    fs::write(&toml, format!("snapshot = [\"db\", \"conf/keys\"]\n{text}")).unwrap();
+    let mut service = load(&world.fleet).unwrap().remove(0);
+    service.images.get_mut("app").unwrap().version = "1.0.1".into();
+    engine
+        .health
+        .borrow_mut()
+        .push_back(Health::Unhealthy("app reports unhealthy".into()));
+    world.deploy(&engine, &service, Some(&first));
+    let calls = engine.calls();
+    assert!(
+        calls.contains(&"snapshot db conf/keys".to_owned()),
+        "{calls:?}"
+    );
+    assert!(
+        calls.contains(&"restore db conf/keys".to_owned()),
+        "{calls:?}"
+    );
 }
 
 #[test]

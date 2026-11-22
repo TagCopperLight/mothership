@@ -251,7 +251,7 @@ pub fn deploy(
     let started = (|| {
         if update {
             engine.stop(name)?;
-            engine.snapshot(name, &data)?;
+            engine.snapshot(name, &data, &service.snapshot)?;
             snapshotted = true;
         }
         engine.up(&project)?;
@@ -265,10 +265,14 @@ pub fn deploy(
     entry.fleet = wanted.fleet.clone();
     let outcome = match failure {
         Some(why) if update => {
-            let after =
-                roll_back(engine, &project, &data, &previous, snapshotted).with_context(|| {
-                    format!("{name} failed ({why}), and putting it back failed too")
-                })?;
+            let after = roll_back(
+                engine,
+                &project,
+                &data,
+                &previous,
+                snapshotted.then_some(&service.snapshot[..]),
+            )
+            .with_context(|| format!("{name} failed ({why}), and putting it back failed too"))?;
             let failed: Vec<(&String, &super::Pin)> = pins
                 .iter()
                 .filter(|(image, pin)| entry.running.get(*image) != Some(pin))
@@ -357,11 +361,11 @@ fn roll_back(
     project: &Project,
     data: &Path,
     previous: &Path,
-    snapshotted: bool,
+    snapshot: Option<&[PathBuf]>,
 ) -> Result<Health> {
     engine.stop(project.name)?;
-    if snapshotted {
-        engine.restore(project.name, data)?;
+    if let Some(parts) = snapshot {
+        engine.restore(project.name, data, parts)?;
     }
     put_back(&project.dir, previous)?;
     engine.up(project)?;

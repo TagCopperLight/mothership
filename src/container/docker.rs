@@ -40,8 +40,8 @@ pub trait Engine {
     fn stop(&self, name: &str) -> Result<()>;
     fn down(&self, name: &str) -> Result<()>;
     fn health(&self, name: &str) -> Result<Health>;
-    fn snapshot(&self, name: &str, data: &Path) -> Result<()>;
-    fn restore(&self, name: &str, data: &Path) -> Result<()>;
+    fn snapshot(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()>;
+    fn restore(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()>;
     fn confirm(&self, image: &Image, pin: &Pin) -> Result<Option<String>>;
 }
 
@@ -179,6 +179,7 @@ impl Docker {
         if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
             bail!("{} doesn't hold a process id", pid_file.display());
         }
+        let script = format!("{PARTS}{script}");
         let mut all: Vec<OsString> = [
             "-U",
             "--preserve-credentials",
@@ -188,7 +189,7 @@ impl Docker {
             "--",
             "sh",
             "-euc",
-            script,
+            &script,
             "sh",
         ]
         .map(OsString::from)
@@ -262,20 +263,14 @@ impl Engine for Docker {
         }
     }
 
-    fn snapshot(&self, name: &str, data: &Path) -> Result<()> {
+    fn snapshot(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()> {
         let to = account::snapshot(&self.user, name);
-        self.in_namespace(
-            "rm -rf \"$2.new\"; mkdir -p \"$2.new\"; cp -a \"$1/.\" \"$2.new/\"; rm -rf \"$2\"; mv \"$2.new\" \"$2\"",
-            &[data, &to],
-        )
+        self.in_namespace(SNAPSHOT, &with_parts(data, &to, parts))
     }
 
-    fn restore(&self, name: &str, data: &Path) -> Result<()> {
+    fn restore(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()> {
         let from = account::snapshot(&self.user, name);
-        self.in_namespace(
-            "find \"$1\" -mindepth 1 -delete; cp -a \"$2/.\" \"$1/\"",
-            &[data, &from],
-        )
+        self.in_namespace(RESTORE, &with_parts(data, &from, parts))
     }
 
     fn confirm(&self, image: &Image, pin: &Pin) -> Result<Option<String>> {
@@ -287,6 +282,33 @@ impl Engine for Docker {
             )
         }))
     }
+}
+
+const PARTS: &str = r#"d=$1 s=$2; shift 2; [ $# -gt 0 ] || set -- .
+inside() {
+  b=$(realpath -m -- "$1")
+  case "$(realpath -m -- "$1/$2")" in "$b" | "$b"/*) ;; *) echo "$1/$2 leads out of $1" >&2; exit 1 ;; esac
+}
+"#;
+
+const SNAPSHOT: &str = r#"rm -rf "$s.new"; mkdir -p "$s.new"
+for p; do
+  inside "$d" "$p"
+  if [ -e "$d/$p" ]; then mkdir -p "$s.new/$(dirname "$p")"; cp -a "$d/$p" "$s.new/$(dirname "$p")/"; fi
+done
+rm -rf "$s"; mv "$s.new" "$s""#;
+
+const RESTORE: &str = r#"for p; do
+  inside "$d" "$p"
+  if [ "$p" = . ]; then find "$d" -mindepth 1 -delete; else rm -rf "$d/$p"; fi
+  if [ -e "$s/$p" ]; then mkdir -p "$d/$(dirname "$p")"; cp -a "$s/$p" "$d/$(dirname "$p")/"; fi
+done"#;
+
+fn with_parts<'a>(data: &'a Path, snapshot: &'a Path, parts: &'a [PathBuf]) -> Vec<&'a Path> {
+    [data, snapshot]
+        .into_iter()
+        .chain(parts.iter().map(PathBuf::as_path))
+        .collect()
 }
 
 fn sick(containers: &[Container]) -> Option<String> {
@@ -304,3 +326,7 @@ fn sick(containers: &[Container]) -> Option<String> {
         }
     })
 }
+
+#[cfg(test)]
+#[path = "../../tests/docker.rs"]
+mod tests;

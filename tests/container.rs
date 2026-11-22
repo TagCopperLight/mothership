@@ -74,3 +74,24 @@ fn a_service_holds_no_links() {
     let err = format!("{:#}", service.render(&Keys::default()).unwrap_err());
     assert!(err.contains("is a link"), "{err}");
 }
+
+#[test]
+fn a_snapshot_names_paths_inside_the_data_folder() {
+    let with = |parts: &str| format!("snapshot = [{parts}]\n{}", toml("1.2.3"));
+    assert_eq!(
+        parse_toml(&with("\"db\", \"a/b\"")).unwrap().snapshot,
+        [PathBuf::from("db"), PathBuf::from("a/b")]
+    );
+    for bad in ["\"../etc\"", "\"/etc\"", "\"\"", "\"./db\""] {
+        let err = format!("{:#}", parse_toml(&with(bad)).unwrap_err());
+        assert!(err.contains("isn't a path inside"), "{bad}: {err}");
+    }
+}
+
+#[test]
+fn a_versions_signer_leaves_the_snapshot_alone() {
+    let before = toml("1.2.3");
+    let after = format!("snapshot = [\"db\"]\n{}", toml("1.2.4"));
+    let err = format!("{:#}", versions_only(&before, &after).unwrap_err());
+    assert!(err.contains("what the snapshot covers"), "{err}");
+}

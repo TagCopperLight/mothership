@@ -27,11 +27,13 @@ pub const SECRETS: &str = "secrets";
 const TEMPLATE: &str = ".tmpl";
 pub const DATA: &str = "/srv";
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
-struct ServiceToml {
+pub struct ServiceToml {
     #[serde(default)]
-    images: BTreeMap<String, Image>,
+    pub images: BTreeMap<String, Image>,
+    #[serde(default)]
+    pub snapshot: Vec<PathBuf>,
 }
 
 #[derive(Deserialize, Clone, PartialEq, Eq, Debug)]
@@ -97,7 +99,7 @@ pub fn check_digest(digest: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn parse(text: &str) -> Result<BTreeMap<String, Image>> {
+pub fn parse_toml(text: &str) -> Result<ServiceToml> {
     let parsed: ServiceToml = toml::from_str(text)?;
     if parsed.images.is_empty() {
         bail!("it pins no image");
@@ -105,7 +107,22 @@ pub fn parse(text: &str) -> Result<BTreeMap<String, Image>> {
     for (name, image) in &parsed.images {
         image.check().with_context(|| format!("images.{name}"))?;
     }
-    Ok(parsed.images)
+    for part in &parsed.snapshot {
+        let plain = part
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+        if !plain || part.as_os_str().is_empty() {
+            bail!(
+                "snapshot names {}, which isn't a path inside the service's data folder",
+                part.display()
+            );
+        }
+    }
+    Ok(parsed)
+}
+
+pub fn parse(text: &str) -> Result<BTreeMap<String, Image>> {
+    parse_toml(text).map(|parsed| parsed.images)
 }
 
 pub const LOGINS: &str = "docker-config.json.age";
@@ -144,13 +161,22 @@ pub fn service_of(path: &Path) -> Option<String> {
 }
 
 pub fn versions_only(before: &str, after: &str) -> Result<()> {
-    let (old, new) = (parse(before)?, parse(after)?);
+    let (old, new) = (parse_toml(before)?, parse_toml(after)?);
+    if old.snapshot != new.snapshot {
+        bail!("it changes what the snapshot covers");
+    }
+    let (old, new) = (old.images, new.images);
     if old.keys().ne(new.keys()) {
         bail!("it adds or removes an image");
     }
     for (name, old) in &old {
         let new = &new[name];
-        if old.image != new.image || old.repo != new.repo {
+        let repinned = Image {
+            version: old.version.clone(),
+            digest: old.digest.clone(),
+            ..new.clone()
+        };
+        if *old != repinned {
             bail!("it changes images.{name} beyond its version and digest");
         }
         if old.pin() != new.pin() {
@@ -175,6 +201,7 @@ pub struct Service {
     pub name: String,
     pub dir: PathBuf,
     pub images: BTreeMap<String, Image>,
+    pub snapshot: Vec<PathBuf>,
 }
 
 pub fn load(type_dir: &Path) -> Result<Vec<Service>> {
@@ -192,11 +219,17 @@ pub fn load(type_dir: &Path) -> Result<Vec<Service>> {
         let path = dir.join(SERVICE_TOML);
         let text =
             fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-        let images = parse(&text).with_context(|| format!("parsing {}", path.display()))?;
+        let ServiceToml { images, snapshot } =
+            parse_toml(&text).with_context(|| format!("parsing {}", path.display()))?;
         if !dir.join(COMPOSE).is_file() {
             bail!("{} has no {COMPOSE}", dir.display());
         }
-        services.push(Service { name, dir, images });
+        services.push(Service {
+            name,
+            dir,
+            images,
+            snapshot,
+        });
     }
     Ok(services)
 }
