@@ -359,7 +359,7 @@ sudo install -D -m 600 /tmp/key.txt /etc/mothership/key.txt
 printf 'type = "server"\\n' | sudo install -D -m 644 /dev/stdin /etc/mothership/machine.toml
 install -m 600 /tmp/ssh ~/.ssh/id_ed25519
 install -m 644 /tmp/ssh.pub ~/.ssh/id_ed25519.pub
-ssh-keyscan -q localhost >> ~/.ssh/known_hosts
+ssh-keyscan -q localhost | sudo tee /etc/ssh/ssh_known_hosts > /dev/null
 git init -q --bare ~/origin.git
 sudo install -d -o me -g me {FLEET}
 tar -x -C {FLEET} -f /tmp/fleet.tar

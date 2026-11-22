@@ -22,8 +22,8 @@ pub const TIMER: &str = "/etc/systemd/system/mothership-probe.timer";
 pub const TIMER_NAME: &str = "mothership-probe.timer";
 pub const FLEET_VAR: &str = "MOTHERSHIP_FLEET";
 pub const HOST_VAR: &str = "MOTHERSHIP_HOST";
-const TIMER_TEXT: &str = "[Unit]\nDescription=Run mothership's probe every hour\n\n[Timer]\n\
-    OnCalendar=hourly\nRandomizedDelaySec=10min\nPersistent=true\n\n[Install]\n\
+const TIMER_TEXT: &str = "[Unit]\nDescription=Run mothership's probe every 5 minutes\n\n\
+    [Timer]\nOnCalendar=*:0/5\nRandomizedDelaySec=30s\nPersistent=true\n\n[Install]\n\
     WantedBy=timers.target\n";
 
 pub fn runs_here(fleet: &Fleet) -> Result<bool> {
@@ -110,7 +110,7 @@ pub fn items(fleet: &Fleet) -> Result<Vec<Item>> {
             }
         }
         let state = State::load_as_root()?;
-        for notice in state.notices {
+        for notice in state.notices.into_values() {
             items.push(
                 Item::new(Kind::Container, Change::Unreadable, "probe", "notice")
                     .noting(notice)

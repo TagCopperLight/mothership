@@ -3,11 +3,41 @@ use crate::container::{Image, Pin, registry::Client, version::Version};
 use anyhow::Result;
 
 pub const PUBLIC_WAIT: u64 = 2 * 24 * 60 * 60;
+pub const PUBLIC_EVERY: u64 = 60 * 60;
 
 pub struct Watched {
     pub service: String,
     pub name: String,
     pub image: Image,
+}
+
+impl Watched {
+    pub fn mine(&self) -> bool {
+        self.image.repo.is_some()
+    }
+
+    fn key(&self) -> String {
+        format!("{} {}", self.service, self.name)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Round {
+    Mine,
+    Everything,
+}
+
+impl Round {
+    pub fn at(state: &State, now: u64) -> Round {
+        match now.saturating_sub(state.public_checked) >= PUBLIC_EVERY {
+            true => Round::Everything,
+            false => Round::Mine,
+        }
+    }
+
+    pub fn covers(self, item: &Watched) -> bool {
+        self == Round::Everything || item.mine()
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -20,17 +50,26 @@ pub struct Update {
 
 pub struct Found {
     pub updates: Vec<Update>,
-    pub notices: Vec<String>,
     pub failures: Vec<String>,
 }
 
-pub fn plan(watched: &[Watched], registry: &Client, state: &mut State, now: u64) -> Found {
+pub fn plan(
+    watched: &[Watched],
+    registry: &Client,
+    state: &mut State,
+    now: u64,
+    round: Round,
+) -> Found {
     let mut found = Found {
         updates: Vec::new(),
-        notices: Vec::new(),
         failures: Vec::new(),
     };
-    for item in watched {
+    let keys: Vec<String> = watched.iter().map(Watched::key).collect();
+    state.notices.retain(|key, _| keys.contains(key));
+    if round == Round::Everything {
+        state.public_checked = now;
+    }
+    for item in watched.iter().filter(|item| round.covers(item)) {
         if let Err(e) = watch(item, registry, state, now, &mut found) {
             found
                 .failures
@@ -66,13 +105,17 @@ fn watch(
             newer.push((version, tag));
         }
     }
-    if let Some((_, tag)) = major {
-        found.notices.push(format!(
-            "{} {tag} is out, and {} follows {}: move it by hand",
-            image.image,
-            item.service,
-            current.major()
-        ));
+    match major {
+        Some((_, tag)) => drop(state.notices.insert(
+            item.key(),
+            format!(
+                "{} {tag} is out, and {} follows {}: move it by hand",
+                image.image,
+                item.service,
+                current.major()
+            ),
+        )),
+        None => drop(state.notices.remove(&item.key())),
     }
     newer.sort_by(|a, b| b.0.partial_cmp(&a.0).expect("one shape compares"));
     for (_, tag) in newer {
@@ -93,7 +136,7 @@ fn watch(
                 digest: digest.clone(),
                 since: now,
             });
-        let ripe = image.repo.is_some() || now.saturating_sub(seen.since) >= PUBLIC_WAIT;
+        let ripe = item.mine() || now.saturating_sub(seen.since) >= PUBLIC_WAIT;
         let to = Pin {
             version: tag,
             digest,

@@ -62,10 +62,16 @@ fn a_public_release_waits_two_days_and_a_new_major_is_only_noticed() {
         digests,
     );
     let mut state = State::default();
-    let found = plan(&[watched("16.4", None)], &client, &mut state, 1000);
+    let found = plan(
+        &[watched("16.4", None)],
+        &client,
+        &mut state,
+        1000,
+        Round::Everything,
+    );
     assert!(found.updates.is_empty());
     assert_eq!(
-        found.notices,
+        state.notices.values().collect::<Vec<_>>(),
         ["ghcr.io/me/db 17.0 is out, and server/db follows 16: move it by hand"]
     );
     state.seen.get_mut("ghcr.io/me/db:16.6").unwrap().since = 1000 + PUBLIC_WAIT;
@@ -74,6 +80,7 @@ fn a_public_release_waits_two_days_and_a_new_major_is_only_noticed() {
         &client,
         &mut state,
         1000 + PUBLIC_WAIT,
+        Round::Everything,
     );
     assert_eq!(
         found.updates,
@@ -100,7 +107,13 @@ fn my_image_is_taken_at_once_and_a_new_digest_for_the_same_version_too() {
     )])));
     let client = registry(&["1.1.0", "1.2.0"], digests.clone());
     let mut state = State::default();
-    let found = plan(&[watched("1.2.0", Some("me/db"))], &client, &mut state, 0);
+    let found = plan(
+        &[watched("1.2.0", Some("me/db"))],
+        &client,
+        &mut state,
+        0,
+        Round::Mine,
+    );
     assert_eq!(
         found.updates[0].to,
         Pin {
@@ -109,6 +122,59 @@ fn my_image_is_taken_at_once_and_a_new_digest_for_the_same_version_too() {
         }
     );
     digests.lock().unwrap().insert("1.2.0".into(), digest(1));
-    let found = plan(&[watched("1.2.0", Some("me/db"))], &client, &mut state, 0);
+    let found = plan(
+        &[watched("1.2.0", Some("me/db"))],
+        &client,
+        &mut state,
+        0,
+        Round::Mine,
+    );
     assert!(found.updates.is_empty());
+}
+
+#[test]
+fn public_images_wait_for_the_hourly_round_and_mine_come_every_round() {
+    let mut state = State::default();
+    assert_eq!(Round::at(&state, PUBLIC_EVERY), Round::Everything);
+    let digests = Arc::new(Mutex::new(BTreeMap::from([
+        ("1.0".to_owned(), digest(1)),
+        ("1.1".to_owned(), digest(2)),
+    ])));
+    let client = registry(&["1.0", "1.1"], digests);
+    let items = [watched("1.0", None), watched("1.0", Some("me/db"))];
+    let found = plan(&items, &client, &mut state, PUBLIC_EVERY, Round::Everything);
+    assert_eq!(found.updates.len(), 1, "mine at once, the public one waits");
+    assert_eq!(state.public_checked, PUBLIC_EVERY);
+    assert_eq!(Round::at(&state, PUBLIC_EVERY + 300), Round::Mine);
+    assert_eq!(Round::at(&state, 2 * PUBLIC_EVERY), Round::Everything);
+    let public = &items[..1];
+    assert!(!Round::Mine.covers(&public[0]));
+    let found = plan(public, &client, &mut state, PUBLIC_EVERY + 300, Round::Mine);
+    assert!(found.updates.is_empty() && found.failures.is_empty());
+    assert_eq!(state.public_checked, PUBLIC_EVERY);
+}
+
+#[test]
+fn a_notice_stays_between_rounds_until_its_image_goes() {
+    let digests = Arc::new(Mutex::new(BTreeMap::from([("1.0".to_owned(), digest(1))])));
+    let client = registry(&["1.0", "2.0"], digests);
+    let mut state = State::default();
+    plan(
+        &[watched("1.0", None)],
+        &client,
+        &mut state,
+        PUBLIC_EVERY,
+        Round::Everything,
+    );
+    assert_eq!(state.notices.len(), 1);
+    plan(
+        &[watched("1.0", None)],
+        &client,
+        &mut state,
+        PUBLIC_EVERY + 300,
+        Round::Mine,
+    );
+    assert_eq!(state.notices.len(), 1);
+    plan(&[], &client, &mut state, PUBLIC_EVERY + 600, Round::Mine);
+    assert!(state.notices.is_empty());
 }

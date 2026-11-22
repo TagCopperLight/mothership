@@ -22,7 +22,10 @@ fn only_an_ssh_url_or_a_local_path_is_accepted() {
 
 #[test]
 fn adds_only_the_github_host_keys_not_known_yet() {
-    let keys = ["ssh-ed25519 AAAA".to_owned(), "ssh-rsa BBBB".to_owned()];
+    let keys = crate::github::known_hosts(
+        br#"{"ssh_keys": ["ssh-ed25519 AAAA", "ssh-rsa BBBB"], "hooks": []}"#,
+    )
+    .unwrap();
     assert_eq!(
         known_hosts_lines(
             "other.host ssh-ed25519 CCCC\ngithub.com ssh-rsa BBBB\n",

@@ -4,18 +4,15 @@ use super::{
 };
 use crate::{
     cmd::{self, As},
-    file,
+    file, github,
     package::Distro,
     prompt::Prompt,
     ssh,
     user::User,
 };
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
 use std::{fs, path::Path};
 
-const GITHUB: &str = "github.com";
-const GITHUB_META: &str = "https://api.github.com/meta";
 const NEW_KEY_PAGE: &str = "https://github.com/settings/ssh/new";
 pub const KNOWN_HOSTS: &str = "/etc/ssh/ssh_known_hosts";
 
@@ -29,28 +26,23 @@ fn check_url(url: &str) -> Result<Option<Remote<'_>>> {
     }
 }
 
-#[derive(Deserialize)]
-struct Meta {
-    ssh_keys: Vec<String>,
-}
-
-fn known_hosts_lines(known: &str, keys: &[String]) -> String {
-    keys.iter()
-        .map(|key| format!("{GITHUB} {key}\n"))
-        .filter(|line| !known.lines().any(|known| known == line.trim_end()))
+fn known_hosts_lines(known: &str, lines: &[String]) -> String {
+    lines
+        .iter()
+        .filter(|line| !known.lines().any(|known| known == *line))
+        .map(|line| format!("{line}\n"))
         .collect()
 }
 
 fn know_github() -> Result<()> {
     let text = net::retry(
         "Reading GitHub's host keys",
-        &Needs::url(GITHUB_META)?,
-        || cmd::stdout(As::Root, "curl", &["-fsSL", GITHUB_META]),
+        &Needs::url(github::META)?,
+        || cmd::bytes(As::Root, "curl", &["-fsSL", github::META]),
     )?;
-    let meta: Meta = serde_json::from_str(&text).context("reading GitHub's host keys")?;
     let path = Path::new(KNOWN_HOSTS);
     let known = file::read_if_any(path)?.unwrap_or_default();
-    let added = known_hosts_lines(&known, &meta.ssh_keys);
+    let added = known_hosts_lines(&known, &github::known_hosts(&text)?);
     if !added.is_empty() {
         file::write(path, format!("{known}{added}").as_bytes(), 0o644)?;
     }
@@ -87,7 +79,7 @@ pub fn clone(
     let needs = Needs::url(url)?;
     if let Some(remote) = remote {
         bootstrap::ssh(distro)?;
-        if remote.host == GITHUB {
+        if remote.host == github::HOST {
             know_github()?;
         }
         if ssh::user_key(owner)?.is_none() {
@@ -96,7 +88,7 @@ pub fn clone(
         while !net::retry("Reaching the fleet", &needs, || lets_in(url, owner))? {
             let public = ssh::user_key(owner)?.context("install made the key")?;
             println!("{} doesn't let this machine's key in yet.", remote.host);
-            if remote.host == GITHUB {
+            if remote.host == github::HOST {
                 println!("On a machine logged in to gh, run:");
                 println!("  echo '{public}' | gh ssh-key add - --title {title}");
                 println!("or paste it at {NEW_KEY_PAGE}, titled {title}.");

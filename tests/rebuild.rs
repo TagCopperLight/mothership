@@ -97,3 +97,35 @@ fn a_base_with_a_new_digest_asks_the_project_to_rebuild_its_version() {
     );
     assert!(headers.contains(&"Authorization: Bearer t".to_owned()));
 }
+
+#[test]
+fn a_release_tag_may_leave_out_the_v() {
+    let fake = Fake {
+        sent: Arc::default(),
+        answer: Box::new(|_, url, _| match url.ends_with("?ref=1.2.0") {
+            true => response(200, &[], "FROM debian:13\n"),
+            false => response(404, &[], "{}"),
+        }),
+    };
+    let github = GitHub {
+        http: &fake,
+        token: "t".into(),
+    };
+    assert_eq!(
+        github.dockerfile("me/app", "1.2.0").unwrap(),
+        "FROM debian:13\n"
+    );
+    let missing = Fake {
+        sent: Arc::default(),
+        answer: Box::new(|_, _, _| response(404, &[], "{}")),
+    };
+    let github = GitHub {
+        http: &missing,
+        token: "t".into(),
+    };
+    let err = format!("{:#}", github.dockerfile("me/app", "1.2.0").unwrap_err());
+    assert!(
+        err.contains("no Dockerfile at a tag v1.2.0 or 1.2.0"),
+        "{err}"
+    );
+}

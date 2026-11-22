@@ -3,7 +3,7 @@ use crate::{
     container::registry::Client,
     http::{Http, Request},
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 const API: &str = "https://api.github.com";
 const EVENT: &str = "rebuild";
@@ -24,15 +24,22 @@ impl GitHub<'_> {
     }
 
     fn dockerfile(&self, repo: &str, version: &str) -> Result<String> {
-        let url = format!("{API}/repos/{repo}/contents/Dockerfile?ref=v{version}");
-        let response = self.http.send(&Request {
-            method: "GET",
-            url: &url,
-            headers: self.headers("application/vnd.github.raw+json"),
-            body: None,
-        })?;
-        let response = response.ok(&format!("{repo}'s Dockerfile at v{version}"))?;
-        String::from_utf8(response.body).context("a Dockerfile that isn't text")
+        let number = version.strip_prefix('v').unwrap_or(version);
+        for tag in [format!("v{number}"), number.to_owned()] {
+            let url = format!("{API}/repos/{repo}/contents/Dockerfile?ref={tag}");
+            let response = self.http.send(&Request {
+                method: "GET",
+                url: &url,
+                headers: self.headers("application/vnd.github.raw+json"),
+                body: None,
+            })?;
+            if response.status == 404 {
+                continue;
+            }
+            let response = response.ok(&format!("{repo}'s Dockerfile at {tag}"))?;
+            return String::from_utf8(response.body).context("a Dockerfile that isn't text");
+        }
+        bail!("{repo} has no Dockerfile at a tag v{number} or {number}")
     }
 
     fn dispatch(&self, repo: &str, version: &str) -> Result<()> {

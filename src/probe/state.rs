@@ -11,7 +11,8 @@ pub const ROOT_VIEW: &str = "/var/lib/private/mothership-probe/state.json";
 pub struct State {
     pub seen: BTreeMap<String, Seen>,
     pub bases: BTreeMap<String, BTreeMap<String, String>>,
-    pub notices: Vec<String>,
+    pub notices: BTreeMap<String, String>,
+    pub public_checked: u64,
     pub problem: Option<String>,
 }
 

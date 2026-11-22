@@ -7,6 +7,22 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 const KEYS_PAGE: &str = "https://github.com/settings/keys";
+pub const HOST: &str = "github.com";
+pub const META: &str = "https://api.github.com/meta";
+
+#[derive(Deserialize)]
+struct Meta {
+    ssh_keys: Vec<String>,
+}
+
+pub fn known_hosts(meta: &[u8]) -> Result<Vec<String>> {
+    let meta: Meta = serde_json::from_slice(meta).context("reading GitHub's host keys")?;
+    Ok(meta
+        .ssh_keys
+        .iter()
+        .map(|key| format!("{HOST} {key}"))
+        .collect())
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Use {

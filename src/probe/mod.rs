@@ -7,7 +7,8 @@ use crate::{
     container::{self, registry::Client},
     file,
     fleet::checked::{self, GIT_DIR, Git},
-    http::Curl,
+    github,
+    http::{Curl, Http, Request},
     sign,
 };
 use anyhow::{Context, Result, bail};
@@ -54,9 +55,9 @@ pub fn run() -> Result<()> {
 fn round(setting: &Setting, state: &mut State) -> Result<()> {
     let dir = setting.state.join("fleet.git");
     let ssh = format!(
-        "ssh -i {} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={}",
+        "ssh -i {} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={}",
         setting.credentials.join(unit::SSH).display(),
-        setting.state.join("known_hosts").display()
+        known_hosts(setting)?.display()
     );
     let git = Git::at(&dir).with_env("GIT_SSH_COMMAND", ssh);
     if !dir.exists() {
@@ -84,13 +85,16 @@ fn round(setting: &Setting, state: &mut State) -> Result<()> {
     let watched = watched(&git, &tip)?;
     let credential = |name: &str| file::read(&setting.credentials.join(name));
     let registry = Client::new(Box::new(Curl), credential(unit::LOGINS)?.as_deref())?;
-    let found = plan::plan(&watched, &registry, state, now()?);
-    for notice in &found.notices {
+    let now = now()?;
+    let round = plan::Round::at(state, now);
+    let found = plan::plan(&watched, &registry, state, now, round);
+    for notice in state.notices.values() {
         println!("{notice}");
     }
-    state.notices = found.notices;
     let mut failures = found.failures;
-    if let Some(token) = credential(unit::GITHUB_TOKEN)? {
+    if round == plan::Round::Everything
+        && let Some(token) = credential(unit::GITHUB_TOKEN)?
+    {
         let github = rebuild::GitHub {
             http: &Curl,
             token: String::from_utf8(token)?.trim().to_owned(),
@@ -124,6 +128,24 @@ fn round(setting: &Setting, state: &mut State) -> Result<()> {
     ])?;
     println!("Pushed {}", checked::short(&commit));
     failed()
+}
+
+fn known_hosts(setting: &Setting) -> Result<PathBuf> {
+    if github::repo(&setting.fleet).is_none() {
+        return Ok(PathBuf::from("/dev/null"));
+    }
+    let response = Curl
+        .send(&Request {
+            method: "GET",
+            url: github::META,
+            headers: vec!["User-Agent: mothership-probe".to_owned()],
+            body: None,
+        })?
+        .ok("GitHub's metadata")?;
+    let lines = github::known_hosts(&response.body)?;
+    let path = setting.state.join("known_hosts");
+    file::write(&path, format!("{}\n", lines.join("\n")).as_bytes(), 0o644)?;
+    Ok(path)
 }
 
 fn root_checked() -> Result<String> {
