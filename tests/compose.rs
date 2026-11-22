@@ -74,4 +74,11 @@ fn every_container_runs_its_pinned_image() {
         err(json!({"services": {"app": {"image": "app:1@sha256:1", "build": {"context": "."}}}})),
         "app builds its image: the fleet runs only pinned images"
     );
+    assert_eq!(
+        err(
+            json!({"services": {"app": {"image": "app:1@sha256:1", "ports": [
+            {"mode": "ingress", "target": 80, "published": "80", "protocol": "tcp"}]}}})
+        ),
+        "app publishes ports in compose.yaml: declare them in service.toml"
+    );
 }

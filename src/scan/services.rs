@@ -55,7 +55,13 @@ pub fn scan(fleet: &Fleet, ships: &Ships) -> Result<Vec<Item>> {
     .map(|items| {
         items
             .into_iter()
-            .filter(|item| item.subject != crate::probe::unit::TIMER_NAME)
+            .filter(|item| {
+                ![
+                    crate::probe::unit::TIMER_NAME,
+                    crate::container::account::UNIT_NAME,
+                ]
+                .contains(&item.subject.as_str())
+            })
             .collect()
     })
 }

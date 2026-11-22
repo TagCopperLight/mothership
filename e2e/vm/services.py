@@ -397,7 +397,7 @@ def fleet(tmp: Path, image: str, registry: Registry, root: x25519.Identity) -> P
 
 
 def pinned(image: str, registry: Registry, version: str, mine: bool) -> str:
-    repo = 'repo = "me/app"\n' if mine else ""
+    repo = 'repo = "me/app"\nports = ["80/tcp", "443/udp"]\n' if mine else ""
     snapshot = 'snapshot = ["precious"]\n\n' if mine else ""
     return (f'{snapshot}[images.app]\nimage = "{image}"\nversion = "{version}"\n'
             f'digest = "{registry.digest(version)}"\n{repo}')
@@ -438,9 +438,11 @@ git -c user.name=Me -c user.email=me@example.com commit -q -m 'The fleet'
 git remote add origin ssh://me@localhost/home/me/origin.git
 git push -q -u origin main
 sudo sh /tmp/anchor.sh
+echo 'net.ipv4.ip_unprivileged_port_start = 80' | sudo tee /etc/sysctl.d/60-mothership-services.conf > /dev/null
+sudo sysctl --quiet --system
 """)
     apply = lambda: vm.run("sudo mothership apply", input="y\n" * 6, check=False, timeout=1800)
-    data = lambda service, name: vm.run(f"sudo cat /srv/{service}/{name}").stdout
+    data = partial(data_of, vm)
 
     expect(apply(), "Started app", "Started extra")
     assert data("app", "version") == "1.0.0"
@@ -449,6 +451,7 @@ sudo sh /tmp/anchor.sh
     assert data("app", "precious") == "kept"
     expect(vm.run("stat -c '%U %a' /srv/app /var/lib/mothership/services/app"),
            "services 700", "root 750")
+    ports(vm, image, registry)
     expect(apply(), "probe  install and start it")
     expect(apply(), "Nothing to apply.")
     scan = vm.run("sudo mothership scan").stdout
@@ -475,6 +478,16 @@ sudo sh /tmp/anchor.sh
     assert vm.run("sudo cat /var/lib/services/snapshots/app/precious").stdout == "kept"
     snapshot = vm.run("sudo ls /var/lib/services/snapshots/app").stdout.split()
     assert snapshot == ["precious"], f"the snapshot covers only what the service names: {snapshot}"
+
+    extra = "types/server/services/extra"
+    commit("Publish from compose", f"echo '    ports: [\"8080:80\"]' >> {extra}/compose.yaml")
+    expect(apply(), "extra publishes ports in compose.yaml: declare them in service.toml", code=1)
+    commit("Publish nothing from compose", f"git checkout HEAD~1 -- {extra}/compose.yaml")
+    expect(apply(), "Nothing to apply.")
+    commit("Take port 80", f"echo 'ports = [\"80/tcp\"]' >> {extra}/service.toml")
+    expect(apply(), "app's images.app and extra's images.extra both publish 80/tcp", code=1)
+    commit("Give port 80 back", f"git checkout HEAD~1 -- {extra}/service.toml")
+    expect(apply(), "Nothing to apply.")
 
     commit("Drop extra", "git rm -q -r types/server/services/extra")
     expect(apply(), "Removed extra, keeping /srv/extra")
@@ -508,7 +521,53 @@ sudo sh /tmp/anchor.sh
     log = vm.run(f"git -C {FLEET} log -1 --format='%an %s'").stdout
     assert log.startswith("minipc/probe Update 1 image"), log
 
+    commit("Stop publishing 443/udp", "sed -i 's/, \"443\\/udp\"//' types/server/services/app/service.toml")
+    expect(apply(), "Updated app")
+    assert reach(vm, "tcp", 80) == "1.0.3"
+    assert reach(vm, "udp", 443) == "", "a port the fleet no longer declares is closed"
+    expect(vm.run("systemctl show -p SocketBindAllow mothership-services"), "tcp80")
+
     recipes(vm, image, commit, apply)
+
+
+AS_SERVICES = "sudo -u services env DOCKER_HOST=unix:///run/user/$(id -u services)/docker.sock docker"
+
+
+def reach(vm: VM, protocol: str, port: int) -> str:
+    kind = "SOCK_STREAM" if protocol == "tcp" else "SOCK_DGRAM"
+    return vm.run(f"""python3 -c '
+import socket
+s = socket.socket(socket.AF_INET, socket.{kind})
+s.settimeout(3)
+try:
+    s.connect(("127.0.0.1", {port}))
+    s.send(b"hi")
+    print(s.recv(64).decode(), end="")
+except OSError:
+    pass
+'""").stdout
+
+
+def ports(vm: VM, image: str, registry: Registry) -> None:
+    assert data_of(vm, "app", "ports") == "80/tcp ok\n5432/tcp ok\n443/udp ok\n", \
+        "a container opens any port inside its own network"
+    assert reach(vm, "tcp", 80) == "1.0.0", "a declared low TCP port works"
+    assert reach(vm, "udp", 443) == "1.0.0", "a declared low UDP port works"
+    expect(vm.run("cat /proc/sys/net/ipv4/ip_unprivileged_port_start; "
+                  "ls /etc/sysctl.d/60-mothership-services.conf", check=False),
+           "1024", "No such file", code=2)
+    denied = vm.run("python3 -c 'import socket; socket.socket().bind((\"0.0.0.0\", 81))'", check=False)
+    expect(denied, "Permission denied", code=1)
+    reference = f"{image}:1.0.0@{registry.digest('1.0.0')}"
+    for published in ["8080:80", "444:80", "80:80/udp"]:
+        out = vm.run(f"{AS_SERVICES} run --detach --name stray --publish {published} {reference}",
+                     check=False)
+        vm.run(f"{AS_SERVICES} rm --force stray", check=False)
+        expect(out, "bind: operation not permitted", code=125)
+
+
+def data_of(vm: VM, service: str, name: str) -> str:
+    return vm.run(f"sudo cat /srv/{service}/{name}").stdout
 
 
 WORKFLOW = HERE.parent.parent / "src/container/recipes.yml"

@@ -28,7 +28,7 @@ pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
         return Ok(items);
     }
     let places = Places::here()?;
-    let missing = account::missing()?;
+    let missing = account::missing(&super::published(&fleet.services)?)?;
     if !fleet.services.is_empty() && !missing.is_empty() {
         items.push(fleet_item(
             Item::new(Kind::Container, Change::Removed, account::USER, "account")

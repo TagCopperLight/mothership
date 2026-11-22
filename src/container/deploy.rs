@@ -1,5 +1,5 @@
 use super::{
-    COMPOSE, Rendered, SECRETS, Service, compose,
+    COMPOSE, Port, Rendered, SECRETS, Service, compose,
     confirm::Unconfirmed,
     docker::{Engine, Health, Project},
     state::{Deployed, Pins, Problem},
@@ -58,9 +58,12 @@ pub enum Outcome {
 pub fn fingerprint(service: &Service, rendered: &Rendered, token: Option<&[u8]>) -> String {
     let mut fields = hash::Fields::new();
     fields.add(token.unwrap_or_default());
-    for (image, pin) in service.pins() {
-        for part in [image, pin.version, pin.digest] {
+    for (name, image) in &service.images {
+        for part in [name, &image.version, &image.digest] {
             fields.add(part.as_bytes());
+        }
+        for port in &image.ports {
+            fields.add(port.to_string().as_bytes());
         }
     }
     for (rel, bytes) in &rendered.files {
@@ -139,19 +142,32 @@ fn private_dir(dir: &Path, gid: u32) -> Result<()> {
     Ok(())
 }
 
-fn write_override(dir: &Path, service: &Service, pins: &Pins) -> Result<BTreeMap<String, String>> {
+#[derive(Clone, Copy)]
+enum Stage {
+    Checked,
+    Published,
+}
+
+fn write_override(
+    dir: &Path,
+    service: &Service,
+    pins: &Pins,
+    stage: Stage,
+) -> Result<BTreeMap<String, String>> {
     let mut images = BTreeMap::new();
+    let mut services = serde_json::Map::new();
     for (name, pin) in pins {
         let image = service
             .images
             .get(name)
             .with_context(|| format!("{} no longer pins images.{name}", service.name))?;
+        let mut entry = serde_json::json!({ "image": image.reference(pin) });
+        if let Stage::Published = stage {
+            entry["ports"] = image.ports.iter().map(Port::compose).collect();
+        }
         images.insert(name.clone(), image.reference(pin));
+        services.insert(name.clone(), entry);
     }
-    let services: serde_json::Map<String, serde_json::Value> = images
-        .iter()
-        .map(|(name, image)| (name.clone(), serde_json::json!({ "image": image })))
-        .collect();
     let text = serde_json::to_string_pretty(&serde_json::json!({ "services": services }))?;
     file::write(&dir.join(OVERRIDE), text.as_bytes(), 0o644)?;
     Ok(images)
@@ -329,10 +345,11 @@ fn prepare(
 ) -> Result<(BTreeMap<PathBuf, String>, PathBuf)> {
     let service = wanted.service;
     let files = write_files(places, wanted, entry)?;
-    let images = write_override(&project.dir, service, &service.pins())?;
+    let images = write_override(&project.dir, service, &service.pins(), Stage::Checked)?;
     let data = data_dir(places, &service.name)?;
     compose::check(&engine.config(project)?, &project.dir, &data, &images)
         .with_context(|| format!("checking {}/{COMPOSE}", service.dir.display()))?;
+    write_override(&project.dir, service, &service.pins(), Stage::Published)?;
     engine.pull(project)?;
     Ok((files, data))
 }

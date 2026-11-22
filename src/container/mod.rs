@@ -4,18 +4,20 @@ mod compose;
 pub mod confirm;
 pub mod deploy;
 pub mod docker;
+mod port;
 pub mod registry;
 pub mod scan;
 pub mod state;
 pub mod version;
 
 pub use apply::{Action, problems, run};
+pub use port::Port;
 
 use crate::{fleet::Fleet, host, secrets::Keys, walk};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -47,6 +49,8 @@ pub struct Image {
     pub repo: Option<String>,
     #[serde(default)]
     pub recipe: bool,
+    #[serde(default)]
+    pub ports: Vec<Port>,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, PartialOrd, Ord)]
@@ -347,7 +351,23 @@ pub fn load(type_dir: &Path) -> Result<Vec<Service>> {
             snapshot,
         });
     }
+    published(&services)?;
     Ok(services)
+}
+
+pub fn published(services: &[Service]) -> Result<BTreeSet<Port>> {
+    let mut owners: BTreeMap<Port, String> = BTreeMap::new();
+    for service in services {
+        for (name, image) in &service.images {
+            let owner = format!("{}'s images.{name}", service.name);
+            for port in &image.ports {
+                if let Some(first) = owners.insert(*port, owner.clone()) {
+                    bail!("{first} and {owner} both publish {port}");
+                }
+            }
+        }
+    }
+    Ok(owners.into_keys().collect())
 }
 
 fn check_recipe(dir: &Path, images: &BTreeMap<String, Image>) -> Result<()> {

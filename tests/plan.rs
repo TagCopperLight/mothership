@@ -43,6 +43,7 @@ fn watched(version: &str, repo: Option<&str>) -> Watched {
             digest: digest(1),
             repo: repo.map(str::to_owned),
             recipe: false,
+            ports: Vec::new(),
         },
         dockerfile: None,
     }

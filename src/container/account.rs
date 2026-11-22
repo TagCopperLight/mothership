@@ -1,3 +1,4 @@
+use super::Port;
 use crate::{
     cmd::{self, As},
     file,
@@ -5,6 +6,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
@@ -13,8 +15,10 @@ use std::{
 pub const USER: &str = "services";
 const HOME: &str = "/var/lib/services";
 pub const SYSCTL: &str = "/etc/sysctl.d/60-mothership-services.conf";
-const PORTS: &str = "net.ipv4.ip_unprivileged_port_start = 80\n";
-const UNIT: &str = ".config/systemd/user/docker.service";
+const PORT_START: &str = "net.ipv4.ip_unprivileged_port_start";
+const OLD_UNIT: &str = ".config/systemd/user/docker.service";
+pub const UNIT_NAME: &str = "mothership-services.service";
+pub const UNIT: &str = "/etc/systemd/system/mothership-services.service";
 const LINGER: &str = "/var/lib/systemd/linger";
 const ROOTLESS: [&str; 2] = [
     "/usr/bin/dockerd-rootless.sh",
@@ -52,18 +56,29 @@ fn rootless() -> Result<&'static str> {
         )
 }
 
-fn unit(rootless: &str) -> String {
+pub fn unit(rootless: &str, user: &User, ports: &BTreeSet<Port>) -> String {
+    let (uid, run) = (user.uid, runtime(user));
+    let allowed: String = ports
+        .iter()
+        .map(|port| format!("SocketBindAllow={}\n", port.bind_rule()))
+        .collect();
     format!(
-        "[Unit]\nDescription=Docker for the fleet's services\n\n[Service]\n\
-         Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin\nExecStart={rootless}\n\
-         ExecReload=/bin/kill -s HUP $MAINPID\nTimeoutSec=0\nRestartSec=2\nRestart=always\n\
+        "[Unit]\nDescription=Docker for the fleet's services\nRequires=user@{uid}.service\n\
+         After=user@{uid}.service network-online.target\nWants=network-online.target\n\n\
+         [Service]\nUser={USER}\nEnvironment=PATH=/usr/sbin:/usr/bin:/sbin:/bin\n\
+         Environment=HOME={home}\nEnvironment=XDG_RUNTIME_DIR={run}\n\
+         Environment=DBUS_SESSION_BUS_ADDRESS=unix:path={run}/bus\nExecStart={rootless}\n\
+         ExecReload=/bin/kill -s HUP $MAINPID\nAmbientCapabilities=CAP_NET_BIND_SERVICE\n\
+         {allowed}SocketBindDeny=any\nTimeoutSec=0\nRestartSec=2\nRestart=always\n\
          StartLimitBurst=3\nStartLimitInterval=60s\nLimitNOFILE=infinity\nLimitNPROC=infinity\n\
          LimitCORE=infinity\nTasksMax=infinity\nDelegate=yes\nType=notify\nNotifyAccess=all\n\
-         KillMode=mixed\n\n[Install]\nWantedBy=default.target\n"
+         KillMode=mixed\n\n[Install]\nWantedBy=multi-user.target\n",
+        home = user.home.display(),
+        run = run.display(),
     )
 }
 
-pub fn missing() -> Result<Vec<&'static str>> {
+pub fn missing(ports: &BTreeSet<Port>) -> Result<Vec<&'static str>> {
     let Some(user) = user()? else {
         return Ok(vec!["the account is missing"]);
     };
@@ -77,18 +92,30 @@ pub fn missing() -> Result<Vec<&'static str>> {
     if !Path::new(LINGER).join(USER).exists() {
         missing.push("its services don't start with the machine");
     }
-    if file::read_if_any(Path::new(SYSCTL))?.as_deref() != Some(PORTS) {
-        missing.push("it can't open ports 80 and 443");
+    if Path::new(SYSCTL).exists() {
+        missing.push("every account may open ports from 80 up");
     }
-    let unit_text = user.read(&user.home.join(UNIT))?;
-    let wanted = rootless().ok().map(unit);
-    if wanted.is_none() || unit_text.as_deref() != wanted.as_deref().map(str::as_bytes) {
-        missing.push("its Docker isn't set up");
+    if user.read(&user.home.join(OLD_UNIT))?.is_some() {
+        missing.push("its Docker runs as its own unit");
+    }
+    let written = file::read_if_any(Path::new(UNIT))?;
+    match rootless().ok().map(|r| unit(r, &user, ports)) {
+        Some(wanted) if written.as_ref() == Some(&wanted) => {}
+        Some(_) if written.is_some() => missing.push("its Docker may open other ports"),
+        _ => missing.push("its Docker isn't set up"),
+    }
+    if !enabled()? {
+        missing.push("its Docker doesn't start with the machine");
     }
     Ok(missing)
 }
 
-pub fn setup() -> Result<()> {
+fn enabled() -> Result<bool> {
+    let wants = Path::new("/etc/systemd/system/multi-user.target.wants").join(UNIT_NAME);
+    Ok(std::fs::symlink_metadata(wants).is_ok())
+}
+
+pub fn setup(ports: &BTreeSet<Port>) -> Result<()> {
     let rootless = rootless()?;
     let user = match user()? {
         Some(user) => user,
@@ -115,21 +142,25 @@ pub fn setup() -> Result<()> {
     };
     add_subids()?;
     cmd::root("loginctl", &["enable-linger", USER])?;
-    file::write(Path::new(SYSCTL), PORTS.as_bytes(), 0o644)?;
-    cmd::root("sysctl", &["--quiet", "--load", SYSCTL])?;
-    let path = user.home.join(UNIT);
-    user.with_rights(|| file::write(&path, unit(rootless).as_bytes(), 0o644))?;
     cmd::root(
         "systemctl",
         &["start", &format!("user@{}.service", user.uid)],
     )?;
-    let machine = format!("{USER}@");
-    let scope = ["--user", "--machine", &machine];
-    cmd::root("systemctl", &[&scope[..], &["daemon-reload"]].concat())?;
-    cmd::root(
-        "systemctl",
-        &[&scope[..], &["enable", "--now", "docker.service"]].concat(),
-    )?;
+    drop_old_unit(&user)?;
+    if file::remove_if_found(Path::new(SYSCTL))? {
+        cmd::root(
+            "sysctl",
+            &["--quiet", "--write", &format!("{PORT_START}=1024")],
+        )?;
+        cmd::root("sysctl", &["--quiet", "--system"])?;
+    }
+    let wanted = unit(rootless, &user, ports);
+    let changed = file::read_if_any(Path::new(UNIT))?.as_ref() != Some(&wanted);
+    file::write(Path::new(UNIT), wanted.as_bytes(), 0o644)?;
+    cmd::root("systemctl", &["daemon-reload"])?;
+    cmd::root("systemctl", &["enable", "--", UNIT_NAME])?;
+    let verb = if changed { "restart" } else { "start" };
+    cmd::root("systemctl", &[verb, "--", UNIT_NAME])?;
     let start = Instant::now();
     let info = ["info", "--format", "{{.ServerVersion}}"];
     loop {
@@ -139,10 +170,25 @@ pub fn setup() -> Result<()> {
             return Ok(());
         }
         if start.elapsed() > START_LIMIT {
-            bail!("the services account's Docker didn't start: `journalctl --user -M services@`");
+            bail!("the services account's Docker didn't start: `journalctl -u {UNIT_NAME}`");
         }
         thread::sleep(Duration::from_secs(2));
     }
+}
+
+fn drop_old_unit(user: &User) -> Result<()> {
+    let path = user.home.join(OLD_UNIT);
+    if user.read(&path)?.is_none() {
+        return Ok(());
+    }
+    let machine = format!("{USER}@");
+    let scope = ["--user", "--machine", &machine];
+    cmd::root(
+        "systemctl",
+        &[&scope[..], &["disable", "--now", "docker.service"]].concat(),
+    )?;
+    user.with_rights(|| file::remove_if_found(&path))?;
+    cmd::root("systemctl", &[&scope[..], &["daemon-reload"]].concat())
 }
 
 fn subids(path: &str) -> Result<Vec<(String, u64, u64)>> {

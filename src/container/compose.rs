@@ -39,6 +39,9 @@ pub fn check(
         if service["image"].as_str() != Some(&images[name]) {
             bail!("{name} doesn't run the image service.toml pins");
         }
+        if service.get("ports").is_some() {
+            bail!("{name} publishes ports in compose.yaml: declare them in service.toml");
+        }
         for volume in service["volumes"].as_array().into_iter().flatten() {
             let source = volume["source"].as_str().unwrap_or("");
             match volume["type"].as_str() {

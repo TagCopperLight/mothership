@@ -39,7 +39,7 @@ const DOCKER_CONFIG: &str = ".docker/config.json";
 pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     for action in actions {
         match action {
-            Action::Setup => account::setup()?,
+            Action::Setup => account::setup(&super::published(&fleet.services)?)?,
             Action::Probe => probe::unit::install(fleet)?,
             Action::Unprobe => probe::unit::remove()?,
             _ => {}

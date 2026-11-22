@@ -220,3 +220,97 @@ fn a_recipe_builds_a_version_the_probe_can_follow() {
     let other = RECIPE.replace("version=\"2.8.4\"", "version=\"2.8.4-ovh\"");
     assert!(err(DIGEST, &other).contains("can't follow"));
 }
+
+fn published_service(dir: &Path, name: &str, ports: &str) {
+    let svc = dir.join("services").join(name);
+    fs::create_dir_all(&svc).unwrap();
+    fs::write(
+        svc.join(SERVICE_TOML),
+        format!("{}ports = [{ports}]\n", toml("1.0.0")),
+    )
+    .unwrap();
+    fs::write(svc.join(COMPOSE), "services:\n  app: {}\n").unwrap();
+}
+
+#[test]
+fn an_image_declares_its_ports_with_their_protocol() {
+    let images = parse(&format!(
+        "{}ports = [\"443/tcp\", \"443/udp\"]\n",
+        toml("1.0.0")
+    ))
+    .unwrap();
+    let shown: Vec<String> = images["app"].ports.iter().map(Port::to_string).collect();
+    assert_eq!(shown, ["443/tcp", "443/udp"]);
+    for bad in [
+        "\"443\"",
+        "\"0/tcp\"",
+        "\"70000/tcp\"",
+        "\"53/sctp\"",
+        "443",
+    ] {
+        let err = format!(
+            "{:#}",
+            parse(&format!("{}ports = [{bad}]\n", toml("1"))).unwrap_err()
+        );
+        assert!(
+            err.contains("isn't a port like") || err.contains("invalid type"),
+            "{bad}: {err}"
+        );
+    }
+}
+
+#[test]
+fn two_services_never_publish_the_same_port() {
+    let dir = tempfile::tempdir().unwrap();
+    published_service(dir.path(), "dns", "\"53/udp\", \"53/tcp\"");
+    published_service(dir.path(), "web", "\"443/tcp\", \"443/udp\"");
+    let services = load(dir.path()).unwrap();
+    let rules: Vec<String> = published(&services)
+        .unwrap()
+        .iter()
+        .map(Port::bind_rule)
+        .collect();
+    assert_eq!(rules, ["tcp:53", "udp:53", "tcp:443", "udp:443"]);
+    published_service(dir.path(), "other", "\"53/udp\"");
+    let err = format!("{:#}", load(dir.path()).err().unwrap());
+    assert_eq!(
+        err,
+        "dns's images.app and other's images.app both publish 53/udp"
+    );
+}
+
+#[test]
+fn a_versions_signer_leaves_the_ports_alone() {
+    let before = format!("{}ports = [\"443/tcp\"]\n", toml("1.2.3"));
+    let after = format!("{}ports = [\"22/tcp\"]\n", toml("1.2.4"));
+    let err = format!("{:#}", versions_only(&before, &after).unwrap_err());
+    assert!(err.contains("beyond its version and digest"), "{err}");
+}
+
+#[test]
+fn services_docker_may_bind_only_the_declared_ports() {
+    let user = crate::user::User {
+        name: account::USER.into(),
+        uid: 990,
+        gid: 990,
+        home: PathBuf::from("/var/lib/services"),
+        shell: "/usr/sbin/nologin".into(),
+    };
+    let ports = ["443/udp", "80/tcp"].map(|p| Port::try_from(p.to_owned()).unwrap());
+    let unit = account::unit("/usr/bin/dockerd-rootless.sh", &user, &ports.into());
+    let rules: Vec<&str> = unit
+        .lines()
+        .filter(|l| l.starts_with("SocketBind"))
+        .collect();
+    assert_eq!(
+        rules,
+        [
+            "SocketBindAllow=tcp:80",
+            "SocketBindAllow=udp:443",
+            "SocketBindDeny=any"
+        ]
+    );
+    assert!(unit.contains("User=services\n"));
+    assert!(unit.contains("AmbientCapabilities=CAP_NET_BIND_SERVICE\n"));
+    assert!(unit.contains("XDG_RUNTIME_DIR=/run/user/990\n"));
+}
