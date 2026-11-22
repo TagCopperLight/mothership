@@ -1,7 +1,7 @@
 use std::{
     env, fs,
     io::Write,
-    net::{TcpListener, UdpSocket},
+    net::{TcpListener, TcpStream, UdpSocket},
     thread,
     time::Duration,
 };
@@ -14,6 +14,12 @@ const UDP: u16 = 443;
 fn main() {
     if env::args().nth(1).as_deref() == Some("health") {
         std::process::exit(if VERSION == BROKEN { 1 } else { 0 });
+    }
+    if env::args().nth(1).as_deref() == Some("reach") {
+        let address = env::args().nth(2).unwrap();
+        TcpStream::connect(address).unwrap();
+        println!("reached");
+        return;
     }
     let read = |path: &str| fs::read_to_string(path).unwrap_or_default();
     fs::write("/data/version", VERSION).unwrap();

@@ -19,6 +19,13 @@ const PORT_START: &str = "net.ipv4.ip_unprivileged_port_start";
 const OLD_UNIT: &str = ".config/systemd/user/docker.service";
 pub const UNIT_NAME: &str = "mothership-services.service";
 pub const UNIT: &str = "/etc/systemd/system/mothership-services.service";
+pub const FIREWALL_NAME: &str = "mothership-services-firewall.service";
+pub const FIREWALL: &str = "/etc/systemd/system/mothership-services-firewall.service";
+pub const RULES: &str = "/etc/mothership/services.nft";
+pub const WRITTEN: [&str; 3] = [UNIT, FIREWALL, RULES];
+pub const UNIT_NAMES: [&str; 2] = [UNIT_NAME, FIREWALL_NAME];
+const TABLE: &str = "inet mothership";
+const NFT: [&str; 2] = ["/usr/sbin/nft", "/usr/bin/nft"];
 const LINGER: &str = "/var/lib/systemd/linger";
 const ROOTLESS: [&str; 2] = [
     "/usr/bin/dockerd-rootless.sh",
@@ -56,6 +63,49 @@ fn rootless() -> Result<&'static str> {
         )
 }
 
+fn nft() -> Result<&'static str> {
+    NFT.into_iter()
+        .find(|path| Path::new(path).exists())
+        .context("this machine has no nft: the type must list nftables")
+}
+
+fn written(user: &User, ports: &BTreeSet<Port>) -> Result<[(&'static str, String); 3]> {
+    Ok([
+        (UNIT, unit(rootless()?, user, ports)),
+        (FIREWALL, firewall(nft()?, user)),
+        (RULES, rules(user)),
+    ])
+}
+
+fn links(user: &User) -> [PathBuf; 2] {
+    let dir = Path::new(crate::systemd::SYSTEM_DIRS[0]);
+    [
+        dir.join("multi-user.target.wants").join(UNIT_NAME),
+        dir.join(format!("user@{}.service.wants", user.uid))
+            .join(FIREWALL_NAME),
+    ]
+}
+
+pub fn rules(user: &User) -> String {
+    let uid = user.uid;
+    format!(
+        "table {TABLE}\ndelete table {TABLE}\ntable {TABLE} {{\n\tchain input {{\n\
+         \t\ttype filter hook input priority filter; policy accept;\n\
+         \t\tct state new meta l4proto {{ tcp, udp }} socket cgroupv2 level 3 \
+         \"user.slice/user-{uid}.slice/user@{uid}.service\" reject\n\t}}\n}}\n"
+    )
+}
+
+fn firewall(nft: &str, user: &User) -> String {
+    let uid = user.uid;
+    format!(
+        "[Unit]\nDescription=Refuse connections to what services' user manager runs\n\
+         After=user@{uid}.service\nPartOf=user@{uid}.service\n\n[Service]\nType=oneshot\n\
+         RemainAfterExit=yes\nExecStart={nft} -f {RULES}\nExecStop={nft} delete table {TABLE}\n\n\
+         [Install]\nWantedBy=user@{uid}.service\n"
+    )
+}
+
 pub fn unit(rootless: &str, user: &User, ports: &BTreeSet<Port>) -> String {
     let (uid, run) = (user.uid, runtime(user));
     let allowed: String = ports
@@ -63,8 +113,10 @@ pub fn unit(rootless: &str, user: &User, ports: &BTreeSet<Port>) -> String {
         .map(|port| format!("SocketBindAllow={}\n", port.bind_rule()))
         .collect();
     format!(
-        "[Unit]\nDescription=Docker for the fleet's services\nRequires=user@{uid}.service\n\
-         After=user@{uid}.service network-online.target\nWants=network-online.target\n\n\
+        "[Unit]\nDescription=Docker for the fleet's services\n\
+         Requires=user@{uid}.service {FIREWALL_NAME}\n\
+         After=user@{uid}.service {FIREWALL_NAME} network-online.target\n\
+         Wants=network-online.target\n\n\
          [Service]\nUser={USER}\nEnvironment=PATH=/usr/sbin:/usr/bin:/sbin:/bin\n\
          Environment=HOME={home}\nEnvironment=XDG_RUNTIME_DIR={run}\n\
          Environment=DBUS_SESSION_BUS_ADDRESS=unix:path={run}/bus\nExecStart={rootless}\n\
@@ -98,25 +150,28 @@ pub fn missing(ports: &BTreeSet<Port>) -> Result<Vec<&'static str>> {
     if user.read(&user.home.join(OLD_UNIT))?.is_some() {
         missing.push("its Docker runs as its own unit");
     }
-    let written = file::read_if_any(Path::new(UNIT))?;
-    match rootless().ok().map(|r| unit(r, &user, ports)) {
-        Some(wanted) if written.as_ref() == Some(&wanted) => {}
-        Some(_) if written.is_some() => missing.push("its Docker may open other ports"),
-        _ => missing.push("its Docker isn't set up"),
-    }
-    if !enabled()? {
-        missing.push("its Docker doesn't start with the machine");
+    let current = match written(&user, ports) {
+        Ok(files) => {
+            let mut current = true;
+            for (path, text) in files {
+                current &= file::read_if_any(Path::new(path))?.as_ref() == Some(&text);
+            }
+            current
+        }
+        Err(_) => false,
+    };
+    let enabled = links(&user)
+        .iter()
+        .all(|link| std::fs::symlink_metadata(link).is_ok());
+    if !current || !enabled {
+        missing.push("its Docker and firewall aren't set up as the fleet's ports ask");
     }
     Ok(missing)
 }
 
-fn enabled() -> Result<bool> {
-    let wants = Path::new("/etc/systemd/system/multi-user.target.wants").join(UNIT_NAME);
-    Ok(std::fs::symlink_metadata(wants).is_ok())
-}
-
 pub fn setup(ports: &BTreeSet<Port>) -> Result<()> {
-    let rootless = rootless()?;
+    rootless()?;
+    nft()?;
     let user = match user()? {
         Some(user) => user,
         None => {
@@ -154,13 +209,23 @@ pub fn setup(ports: &BTreeSet<Port>) -> Result<()> {
         )?;
         cmd::root("sysctl", &["--quiet", "--system"])?;
     }
-    let wanted = unit(rootless, &user, ports);
-    let changed = file::read_if_any(Path::new(UNIT))?.as_ref() != Some(&wanted);
-    file::write(Path::new(UNIT), wanted.as_bytes(), 0o644)?;
+    let mut changed = Vec::new();
+    for (path, text) in written(&user, ports)? {
+        if file::read_if_any(Path::new(path))?.as_ref() != Some(&text) {
+            file::write(Path::new(path), text.as_bytes(), 0o644)?;
+            changed.push(path);
+        }
+    }
     cmd::root("systemctl", &["daemon-reload"])?;
-    cmd::root("systemctl", &["enable", "--", UNIT_NAME])?;
-    let verb = if changed { "restart" } else { "start" };
-    cmd::root("systemctl", &[verb, "--", UNIT_NAME])?;
+    let firewall_changed = changed.iter().any(|path| [FIREWALL, RULES].contains(path));
+    for (name, again) in [
+        (FIREWALL_NAME, firewall_changed),
+        (UNIT_NAME, changed.contains(&UNIT)),
+    ] {
+        cmd::root("systemctl", &["enable", "--", name])?;
+        let verb = if again { "restart" } else { "start" };
+        cmd::root("systemctl", &[verb, "--", name])?;
+    }
     let start = Instant::now();
     let info = ["info", "--format", "{{.ServerVersion}}"];
     loop {

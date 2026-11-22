@@ -313,4 +313,9 @@ fn services_docker_may_bind_only_the_declared_ports() {
     assert!(unit.contains("User=services\n"));
     assert!(unit.contains("AmbientCapabilities=CAP_NET_BIND_SERVICE\n"));
     assert!(unit.contains("XDG_RUNTIME_DIR=/run/user/990\n"));
+    assert!(unit.contains("Requires=user@990.service mothership-services-firewall.service\n"));
+    assert!(account::rules(&user).contains(
+        "ct state new meta l4proto { tcp, udp } socket cgroupv2 level 3 \
+         \"user.slice/user-990.slice/user@990.service\" reject\n"
+    ));
 }

@@ -6,6 +6,7 @@ packages = [
   "docker.io",
   "git",
   "libnss-systemd",
+  "nftables",
   "rootlesskit",
   "slirp4netns",
   "sudo",

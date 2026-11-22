@@ -38,7 +38,7 @@ HOST = "192.168.76.2"
 NET = "192.168.76.0/24"
 TOOLS = ["qemu-system-x86_64", "qemu-img", "docker", "openssl", "ssh", "scp", "rustc"]
 PACKAGES = ["chezmoi", "curl", "dbus-user-session", "docker-compose", "docker.io", "git",
-            "rootlesskit", "slirp4netns", "sudo", "systemd-container", "uidmap"]
+            "nftables", "rootlesskit", "slirp4netns", "sudo", "systemd-container", "uidmap"]
 VERSIONS = ["1.0.0", "1.0.1", "1.0.2", "1.0.3"]
 TOKEN = "s3cret-token"
 FLEET = "/var/lib/mothership/fleet"
@@ -525,7 +525,9 @@ sudo sysctl --quiet --system
     expect(apply(), "Updated app")
     assert reach(vm, "tcp", 80) == "1.0.3"
     assert reach(vm, "udp", 443) == "", "a port the fleet no longer declares is closed"
-    expect(vm.run("systemctl show -p SocketBindAllow mothership-services"), "tcp80")
+    allowed = vm.run("systemctl show -p SocketBindAllow mothership-services").stdout
+    assert allowed == "SocketBindAllow=tcp80\n", allowed
+    refused(vm, f"{image}:1.0.3@{registry.digest('1.0.3')}", "443:443/udp")
 
     recipes(vm, image, commit, apply)
 
@@ -560,10 +562,20 @@ def ports(vm: VM, image: str, registry: Registry) -> None:
     expect(denied, "Permission denied", code=1)
     reference = f"{image}:1.0.0@{registry.digest('1.0.0')}"
     for published in ["8080:80", "444:80", "80:80/udp"]:
-        out = vm.run(f"{AS_SERVICES} run --detach --name stray --publish {published} {reference}",
-                     check=False)
-        vm.run(f"{AS_SERVICES} rm --force stray", check=False)
-        expect(out, "bind: operation not permitted", code=125)
+        refused(vm, reference, published)
+    vm.run("sudo systemd-run --user -M services@ --unit stray python3 -m http.server 8090 && sleep 2")
+    expect(vm.run("sudo ss -tlnp"), ":8090")
+    expect(vm.run("curl -s --max-time 5 http://127.0.0.1:8090/", check=False), code=7)
+    vm.run("sudo systemctl --user -M services@ stop stray")
+    outside = image.split("/")[0]
+    expect(vm.run(f"{AS_SERVICES} run --rm --entrypoint /app {reference} reach {outside}"), "reached")
+
+
+def refused(vm: VM, reference: str, published: str) -> None:
+    out = vm.run(f"{AS_SERVICES} run --detach --name stray --publish {published} {reference}",
+                 check=False)
+    vm.run(f"{AS_SERVICES} rm --force stray", check=False)
+    expect(out, "bind: operation not permitted", code=125)
 
 
 def data_of(vm: VM, service: str, name: str) -> str:
