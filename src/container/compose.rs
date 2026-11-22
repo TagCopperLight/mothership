@@ -7,6 +7,8 @@ use std::{
     path::Path,
 };
 
+const NAMESPACES: [&str; 5] = ["pid", "ipc", "uts", "userns_mode", "cgroup"];
+
 pub fn check(
     config: &Value,
     name: &str,
@@ -53,6 +55,22 @@ pub fn check(
     for (name, service) in services {
         if service.get("network_mode").is_some() {
             bail!("{name} sets network_mode: a container stays on its service's networks");
+        }
+        if service["volumes_from"]
+            .as_array()
+            .is_some_and(|v| !v.is_empty())
+        {
+            bail!(
+                "{name} mounts another container's volumes: a service reaches only its own files"
+            );
+        }
+        for key in NAMESPACES {
+            let shared = service[key]
+                .as_str()
+                .is_some_and(|value| value == "host" || value.starts_with("container:"));
+            if shared {
+                bail!("{name} shares its {key} namespace outside the service");
+            }
         }
         if service["external_links"]
             .as_array()

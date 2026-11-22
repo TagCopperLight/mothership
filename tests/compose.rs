@@ -129,4 +129,29 @@ fn a_service_stays_on_its_own_networks() {
         err(with(json!({}), json!({"external_links": ["other-db-1"]})))
             .starts_with("app links containers outside the service")
     );
+    assert_eq!(
+        err(with(
+            json!({}),
+            json!({"volumes_from": ["container:other-db-1"]})
+        )),
+        "app mounts another container's volumes: a service reaches only its own files"
+    );
+    for (key, value) in [
+        ("pid", "container:other-db-1"),
+        ("ipc", "host"),
+        ("uts", "host"),
+    ] {
+        assert_eq!(
+            err(with(json!({}), json!({ key: value }))),
+            format!("app shares its {key} namespace outside the service")
+        );
+    }
+    check(
+        &with(json!({}), json!({"ipc": "private"})),
+        "app",
+        project,
+        data,
+        &images(),
+    )
+    .unwrap();
 }
