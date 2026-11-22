@@ -1,7 +1,7 @@
 use super::doc::{self, edit_toml, find_array};
 use crate::{
     file,
-    fleet::{Fleet, Mode},
+    fleet::{Fleet, Mode, homes},
     hash,
     preview::Seen,
     secrets::{self, Storage},
@@ -26,6 +26,13 @@ pub fn copy(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage, seen: &See
     let mut sealed = clear.clone().into_os_string();
     sealed.push(secrets::AGE);
     let sealed = PathBuf::from(sealed);
+    if fs::symlink_metadata(&sealed).is_ok_and(|meta| meta.is_symlink()) {
+        bail!(
+            "etc/{} is a shared secret: change {} by hand",
+            rel.display(),
+            homes::target(&fleet.dir, &sealed)?.display()
+        );
+    }
     let (dest, other) = match storage {
         Storage::Clear => (clear.as_path(), sealed.as_path()),
         Storage::Encrypted => (sealed.as_path(), clear.as_path()),

@@ -974,6 +974,7 @@ version = "0.2.0"
 dependencies = [
  "age",
  "anyhow",
+ "base64",
  "globset",
  "libc",
  "md-5",

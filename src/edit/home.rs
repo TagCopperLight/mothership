@@ -2,7 +2,10 @@ use super::{FILE_MODE, append_line};
 use crate::{
     chezmoi::{self, ENCRYPTED, TEMPLATE},
     file,
-    fleet::{Fleet, Member, homes},
+    fleet::{
+        Fleet, Member,
+        homes::{self, Home, Reader},
+    },
     pref,
     preview::Seen,
     prompt::Prompt,
@@ -177,8 +180,14 @@ fn confirm_shared(
     let shared = homes::target(&fleet.dir, source)?;
     let others: Vec<String> = homes::owners(&fleet.dir, source)?
         .into_iter()
-        .filter(|home| home.type_name != fleet.type_name || home.user != member.name)
-        .map(|home| home.to_string())
+        .filter(|reader| {
+            *reader
+                != Reader::Home(Home {
+                    type_name: fleet.type_name.clone(),
+                    user: member.name.clone(),
+                })
+        })
+        .map(|reader| reader.to_string())
         .collect();
     let shown = shared.strip_prefix(&fleet.dir).unwrap_or(&shared).display();
     println!(
@@ -190,7 +199,7 @@ fn confirm_shared(
 }
 
 fn own_list(fleet: &Fleet, member: &Member) -> Result<String> {
-    trust::home_list(fleet, &member.home())
+    trust::readers_list(fleet, &member.home())
 }
 
 fn update_shared(
@@ -202,7 +211,7 @@ fn update_shared(
 ) -> Result<()> {
     let shared = homes::target(&fleet.dir, source)?;
     let link = fs::read_link(source)?;
-    let recipients = trust::home_list(fleet, source)?;
+    let recipients = trust::readers_list(fleet, source)?;
     root.run(
         &recipients,
         snapshot,

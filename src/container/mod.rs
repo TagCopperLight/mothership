@@ -125,7 +125,8 @@ pub fn parse(text: &str) -> Result<BTreeMap<String, Image>> {
     parse_toml(text).map(|parsed| parsed.images)
 }
 
-pub const LOGINS: &str = "docker-config.json.age";
+pub const TOKEN: &str = "ghcr-token.age";
+const GHCR: &str = "ghcr.io";
 
 pub fn sealed(type_dir: &Path) -> Result<Vec<PathBuf>> {
     let dir = type_dir.join(SERVICES);
@@ -144,7 +145,7 @@ pub fn ask_republished(fleet: &Fleet, ask: &mut dyn FnMut(&str) -> Result<bool>)
     if fleet.services.is_empty() {
         return Ok(());
     }
-    let logins = logins(fleet)?;
+    let logins = docker_config(fleet)?;
     let client = registry::Client::new(Box::new(crate::http::Curl), logins.as_deref())?;
     let mut unconfirmed = confirm::Unconfirmed::load()?;
     confirm::ask_republished(
@@ -157,16 +158,37 @@ pub fn ask_republished(fleet: &Fleet, ask: &mut dyn FnMut(&str) -> Result<bool>)
     unconfirmed.save()
 }
 
-pub fn logins_path(fleet: &Fleet) -> PathBuf {
-    fleet.type_dir.join(SERVICES).join(LOGINS)
+pub fn token_path(fleet: &Fleet) -> PathBuf {
+    fleet.type_dir.join(SERVICES).join(TOKEN)
 }
 
-pub fn logins(fleet: &Fleet) -> Result<Option<Vec<u8>>> {
-    let path = logins_path(fleet);
-    match path.exists() {
+pub fn token(fleet: &Fleet) -> Result<Option<Vec<u8>>> {
+    let path = token_path(fleet);
+    match fs::symlink_metadata(&path).is_ok() {
         true => fleet.root_keys().decrypt(&path).map(Some),
         false => Ok(None),
     }
+}
+
+pub fn docker_config(fleet: &Fleet) -> Result<Option<Vec<u8>>> {
+    let Some(token) = token(fleet)? else {
+        return Ok(None);
+    };
+    let origin = crate::fleet::checked::origin(fleet.admin())?;
+    let repo = crate::github::repo(&origin).with_context(|| {
+        format!("{TOKEN} is a ghcr.io token, and the fleet's origin {origin} isn't on GitHub to name its user")
+    })?;
+    let user = repo.split('/').next().expect("split gives one part");
+    let token = String::from_utf8(token).with_context(|| format!("{TOKEN} isn't text"))?;
+    Ok(Some(login_file(user, token.trim())))
+}
+
+pub fn login_file(user: &str, token: &str) -> Vec<u8> {
+    use base64::Engine;
+    let auth = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{token}"));
+    serde_json::json!({ "auths": { GHCR: { "auth": auth } } })
+        .to_string()
+        .into_bytes()
 }
 
 pub fn is_service_toml(path: &Path) -> bool {

@@ -53,7 +53,7 @@ fn a_shared_home_file_is_for_the_list_of_every_home_linking_it() {
     let keys = |list: Vec<Recipient>| list.into_iter().map(|r| r.key).collect::<Vec<_>>();
     let link = fleet.join("types/server/users/dev/home/dot_token");
     assert_eq!(
-        keys(home_recipients(fleet, &link, None).unwrap()),
+        keys(reader_recipients(fleet, &link, None).unwrap()),
         ["age1dev", "age1rec", "age1tag"]
     );
     let dev_list = fleet.join("types/server/users/dev").join(RECIPIENTS);
@@ -62,7 +62,7 @@ fn a_shared_home_file_is_for_the_list_of_every_home_linking_it() {
         key: "age1new".into(),
     }];
     assert_eq!(
-        keys(home_recipients(fleet, &link, Some((&dev_list, &new))).unwrap()),
+        keys(reader_recipients(fleet, &link, Some((&dev_list, &new))).unwrap()),
         ["age1new", "age1tag", "age1rec"]
     );
 }
@@ -423,4 +423,42 @@ fn the_probe_signs_only_versions_and_its_ssh_key_goes_to_github() {
     assert_eq!(parsed[0].reach, sign::Reach::Versions);
     retire_host(&fleet, "minipc", &mut Prompt::answering("")).unwrap();
     assert!(read(&signers).unwrap().is_empty());
+}
+
+#[test]
+fn a_shared_secret_root_links_is_for_the_root_list_too() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let fleet = dir.path();
+    let dev = fleet.join("types/server/users/dev");
+    fs::create_dir_all(dev.join("home/.secrets")).unwrap();
+    fs::write(dev.join(RECIPIENTS), "# minipc\nage1dev\n").unwrap();
+    fs::write(
+        fleet.join("types/server").join(RECIPIENTS),
+        "# minipc\nage1root\n",
+    )
+    .unwrap();
+    fs::create_dir_all(fleet.join("shared/.secrets")).unwrap();
+    fs::write(fleet.join("shared/.secrets/token.age"), "").unwrap();
+    symlink(
+        "../../../../../../shared/.secrets/token.age",
+        dev.join("home/.secrets/token.age"),
+    )
+    .unwrap();
+    let etc = fleet.join("types/server/etc/mothership/probe");
+    fs::create_dir_all(&etc).unwrap();
+    symlink(
+        "../../../../../shared/.secrets/token.age",
+        etc.join("github-token.age"),
+    )
+    .unwrap();
+    let keys = |list: Vec<Recipient>| list.into_iter().map(|r| r.key).collect::<Vec<_>>();
+    for link in [
+        dev.join("home/.secrets/token.age"),
+        etc.join("github-token.age"),
+    ] {
+        assert_eq!(
+            keys(reader_recipients(fleet, &link, None).unwrap()),
+            ["age1root", "age1dev"]
+        );
+    }
 }

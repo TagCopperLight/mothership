@@ -3,7 +3,7 @@ use super::{
     confirm::Unconfirmed,
     deploy::{self, Outcome, Places, Wanted},
     docker::Docker,
-    logins, registry,
+    docker_config, registry,
     state::State,
 };
 use crate::{file, fleet::Fleet, http::Curl, probe};
@@ -51,7 +51,8 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     {
         return Ok(());
     }
-    let logins = logins(fleet)?;
+    let logins = docker_config(fleet)?;
+    let token = super::token(fleet)?;
     let client = registry::Client::new(Box::new(Curl), logins.as_deref())?;
     let docker = Docker::find(client)?.context("the services account is missing")?;
     let config = docker.user.home.join(DOCKER_CONFIG);
@@ -98,7 +99,7 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
         let wanted = Wanted {
             service,
             key: super::key(&fleet.type_name, service),
-            fleet: deploy::fingerprint(service, &rendered, logins.as_deref()),
+            fleet: deploy::fingerprint(service, &rendered, token.as_deref()),
             rendered: &rendered,
             overwrite: overwrite
                 .iter()

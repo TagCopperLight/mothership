@@ -121,7 +121,7 @@ impl Deref for Member {
 const TYPES: &str = "types";
 pub const SYSTEM_TOML: &str = "system.toml";
 pub const USER_TOML: &str = "user.toml";
-const ETC_DIR: &str = "etc";
+pub const ETC_DIR: &str = "etc";
 const IGNORE: &str = "ignore.txt";
 const NOT_SECRET: &str = "not-secret.txt";
 pub const USERS: &str = "users";

@@ -4,11 +4,11 @@ use std::os::unix::fs::symlink;
 const TAG: &str = "types/workstation/users/tag/home";
 const DEV: &str = "types/server/users/dev/home";
 
-fn home(type_name: &str, user: &str) -> Home {
-    Home {
+fn home(type_name: &str, user: &str) -> Reader {
+    Reader::Home(Home {
         type_name: type_name.into(),
         user: user.into(),
-    }
+    })
 }
 
 fn fleet() -> tempfile::TempDir {
@@ -63,7 +63,7 @@ fn the_shared_files_name_the_homes_linking_them() {
     let found: Vec<(String, Vec<String>)> = shared
         .iter()
         .map(|file| {
-            let homes = file.homes.iter().map(Home::to_string).collect();
+            let homes = file.readers.iter().map(Reader::to_string).collect();
             (shown(&file.rel), homes)
         })
         .collect();
@@ -125,4 +125,71 @@ fn a_link_out_of_shared_is_refused() {
     .unwrap();
     let error = check(dir.path()).unwrap_err().to_string();
     assert!(error.contains("leads out of shared/"), "{error}");
+}
+
+fn with_root_links(dir: &Path) {
+    fs::create_dir_all(dir.join("shared/.secrets")).unwrap();
+    fs::write(dir.join("shared/.secrets/token.age"), "sealed").unwrap();
+    fs::create_dir_all(dir.join(format!("{DEV}/.secrets"))).unwrap();
+    symlink(
+        "../../../../../../shared/.secrets/token.age",
+        dir.join(format!("{DEV}/.secrets/token.age")),
+    )
+    .unwrap();
+    let probe = dir.join("types/server/etc/mothership/probe");
+    fs::create_dir_all(&probe).unwrap();
+    symlink(
+        "../../../../../shared/.secrets/token.age",
+        probe.join("github-token.age"),
+    )
+    .unwrap();
+    let services = dir.join("types/server/services");
+    fs::create_dir_all(&services).unwrap();
+    symlink(
+        "../../../shared/.secrets/token.age",
+        services.join("ghcr-token.age"),
+    )
+    .unwrap();
+    symlink(
+        "/usr/share/zoneinfo/UTC",
+        dir.join("types/server/etc/localtime"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn root_reads_a_shared_secret_it_links_from_etc_or_its_services() {
+    let dir = fleet();
+    with_root_links(dir.path());
+    check(dir.path()).unwrap();
+    let link = dir
+        .path()
+        .join("types/server/etc/mothership/probe/github-token.age");
+    assert_eq!(
+        owners(dir.path(), &link).unwrap(),
+        [Reader::Root("server".into()), home("server", "dev")]
+    );
+    let token = shared(dir.path())
+        .unwrap()
+        .into_iter()
+        .find(|file| file.rel == Path::new(".secrets/token.age"))
+        .unwrap();
+    assert_eq!(
+        token.readers,
+        [Reader::Root("server".into()), home("server", "dev")]
+    );
+    assert_eq!(
+        Reader::Root("server".into()).recipients(Path::new("f")),
+        Path::new("f/types/server/recipients.txt")
+    );
+}
+
+#[test]
+fn root_links_only_secrets() {
+    let dir = fleet();
+    let etc = dir.path().join("types/server/etc");
+    fs::create_dir_all(&etc).unwrap();
+    symlink("../../../shared/dot_gitconfig", etc.join("gitconfig.age")).unwrap();
+    let error = check(dir.path()).unwrap_err().to_string();
+    assert!(error.contains("root links only shared secrets"), "{error}");
 }

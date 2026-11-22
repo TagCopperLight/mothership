@@ -95,3 +95,17 @@ fn a_versions_signer_leaves_the_snapshot_alone() {
     let err = format!("{:#}", versions_only(&before, &after).unwrap_err());
     assert!(err.contains("what the snapshot covers"), "{err}");
 }
+
+#[test]
+fn the_login_file_holds_the_token_for_ghcr() {
+    let file: serde_json::Value = serde_json::from_slice(&login_file("me", "ghp_x")).unwrap();
+    assert_eq!(file["auths"]["ghcr.io"]["auth"], "bWU6Z2hwX3g=");
+    let client = registry::Client::new(
+        Box::new(registry::tests::Fake {
+            sent: Default::default(),
+            answer: Box::new(|_, _, _| registry::tests::response(200, &[], "")),
+        }),
+        Some(&login_file("me", "ghp_x")),
+    );
+    assert!(client.is_ok());
+}

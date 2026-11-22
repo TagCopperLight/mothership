@@ -1,4 +1,7 @@
-use super::{DIR, MANIFEST, Manifest};
+use super::{
+    DIR, MANIFEST, Manifest,
+    homes::{self, Reader},
+};
 use crate::{
     cmd::{self, As},
     container::{self, confirm::Unconfirmed},
@@ -483,7 +486,7 @@ pub fn newest(admin: &User, count: usize) -> Result<Vec<String>> {
     Ok(lines)
 }
 
-pub fn linked_when_written(dir: &Path, file: &Path) -> Result<Option<Vec<PathBuf>>> {
+pub fn linked_when_written(dir: &Path, file: &Path) -> Result<Option<Vec<Reader>>> {
     if dir != Path::new(STAGING) {
         return Ok(None);
     }
@@ -500,7 +503,7 @@ pub fn linked_when_written(dir: &Path, file: &Path) -> Result<Option<Vec<PathBuf
         return Ok(None);
     }
     let listing = git.out(&["ls-tree", "-r", "-z", &written, "--", super::TYPES])?;
-    let mut homes = Vec::new();
+    let mut readers = Vec::new();
     for entry in listing.split('\0').filter(|entry| !entry.is_empty()) {
         let Some((meta, path)) = entry.split_once('\t') else {
             bail!("git ls-tree printed {entry}");
@@ -509,12 +512,13 @@ pub fn linked_when_written(dir: &Path, file: &Path) -> Result<Option<Vec<PathBuf
             bail!("git ls-tree printed {entry}");
         };
         let path = Path::new(path);
-        let home: PathBuf = path.iter().take(4).collect();
-        let in_home = home.iter().nth(2) == Some(OsStr::new(super::USERS))
-            && path.iter().nth(4) == Some(OsStr::new(super::homes::HOME));
-        if mode != "120000" || !in_home {
+        let reader = match mode {
+            "120000" => homes::owner(Path::new(""), path).ok(),
+            _ => None,
+        };
+        let Some(reader) = reader else {
             continue;
-        }
+        };
         let target = git.out(&["cat-file", "blob", blob])?;
         let mut resolved = PathBuf::new();
         for part in path.parent().unwrap_or(path).join(target).components() {
@@ -525,10 +529,10 @@ pub fn linked_when_written(dir: &Path, file: &Path) -> Result<Option<Vec<PathBuf
             }
         }
         if resolved == rel {
-            homes.push(home);
+            readers.push(reader);
         }
     }
-    Ok(Some(homes))
+    Ok(Some(readers))
 }
 
 pub fn exported() -> Result<Option<String>> {

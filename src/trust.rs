@@ -2,7 +2,7 @@ use crate::{
     chezmoi, container, file,
     fleet::{
         self, Fleet, Repo, checked,
-        homes::{self, Home},
+        homes::{self, Home, Reader},
     },
     github, host, probe,
     prompt::Prompt,
@@ -249,7 +249,7 @@ fn listed_as(list: &[Recipient], path: &Path, host: &str, key: &str) -> Result<b
 }
 
 fn add_ssh_key(fleet: &Fleet, text: &str, host: &str, key: &str) -> Result<String> {
-    let Scope::User(home) = target(fleet, text)?.scope else {
+    let Reader::Home(home) = target(fleet, text)?.scope else {
         bail!("root has no SSH key in the fleet, only its users do");
     };
     let public = ssh::normalize(key)?;
@@ -353,7 +353,7 @@ pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()>
             retire(fleet, &target.text, host, &mut readers)?;
             found = true;
         }
-        if let Scope::User(home) = &target.scope
+        if let Reader::Home(home) = &target.scope
             && drop_named(&home.dir(&fleet.dir).join(ssh::KEYS), host)?
         {
             println!("{} on {host} has no SSH key in the fleet now.", target.text);
@@ -402,15 +402,10 @@ fn drop_named(path: &Path, name: &str) -> Result<bool> {
     Ok(true)
 }
 
-enum Scope {
-    Root,
-    User(Home),
-}
-
 struct Target {
     text: String,
     type_name: String,
-    scope: Scope,
+    scope: Reader,
     list: PathBuf,
 }
 
@@ -423,7 +418,10 @@ fn target(fleet: &Fleet, text: &str) -> Result<Target> {
         bail!("the fleet has no type {type_name}");
     }
     let (scope, list) = match scope {
-        "root" => (Scope::Root, type_dir.join(RECIPIENTS)),
+        "root" => (
+            Reader::Root(type_name.to_owned()),
+            type_dir.join(RECIPIENTS),
+        ),
         user => {
             let home = Home {
                 type_name: type_name.to_owned(),
@@ -433,7 +431,7 @@ fn target(fleet: &Fleet, text: &str) -> Result<Target> {
             if user.is_empty() || user.contains('/') || user.contains("..") || !dir.is_dir() {
                 bail!("{type_name} has no user {user}");
             }
-            (Scope::User(home), dir.join(RECIPIENTS))
+            (Reader::Home(home), dir.join(RECIPIENTS))
         }
     };
     Ok(Target {
@@ -528,7 +526,7 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str, readers: &mut Readers) -> R
 
 pub struct Readers<'p> {
     pub prompt: &'p mut Prompt,
-    approved: Vec<(PathBuf, Home)>,
+    approved: Vec<(PathBuf, Reader)>,
 }
 
 impl<'p> Readers<'p> {
@@ -548,38 +546,40 @@ impl<'p> Readers<'p> {
             return Ok(());
         };
         let shown = shared.strip_prefix(&fleet.dir).unwrap_or(&shared).display();
-        for home in homes::owners(&fleet.dir, source)? {
-            let known = before.contains(&home.dir(Path::new("")))
-                || self.approved.contains(&(shared.clone(), home.clone()));
+        for reader in homes::owners(&fleet.dir, source)? {
+            let known = before.contains(&reader)
+                || self.approved.contains(&(shared.clone(), reader.clone()));
             if known {
                 continue;
             }
             let question = format!(
-                "{home} links {shown}, which was never encrypted for it. Let {home} open it"
+                "{reader} links {shown}, which was never encrypted for it. Let {reader} open it"
             );
             if !self.prompt.confirm(&question)? {
-                bail!("{shown} stays closed to {home}: remove its link from {home} first");
+                bail!("{shown} stays closed to {reader}: remove its link from {reader} first");
             }
-            self.approved.push((shared.clone(), home));
+            self.approved.push((shared.clone(), reader));
         }
         Ok(())
     }
 }
 
-pub fn home_list(repo: &Repo, source: &Path) -> Result<String> {
-    Ok(format(
-        &repo.sealed_for(home_recipients(&repo.dir, source, None)?),
-    ))
+pub fn readers_list(repo: &Repo, source: &Path) -> Result<String> {
+    Ok(format(&sealed_list(repo, source)?))
 }
 
-fn home_recipients(
+pub fn sealed_list(repo: &Repo, source: &Path) -> Result<Vec<Recipient>> {
+    Ok(repo.sealed_for(reader_recipients(&repo.dir, source, None)?))
+}
+
+fn reader_recipients(
     fleet_dir: &Path,
     source: &Path,
     replacing: Option<(&Path, &[Recipient])>,
 ) -> Result<Vec<Recipient>> {
     let mut all: Vec<Recipient> = Vec::new();
-    for home in homes::owners(fleet_dir, source)? {
-        let path = home.dir(fleet_dir).join(RECIPIENTS);
+    for reader in homes::owners(fleet_dir, source)? {
+        let path = reader.recipients(fleet_dir);
         let list = match replacing {
             Some((replaced, list)) if replaced == path => list.to_vec(),
             _ => read(&path)?,
@@ -617,14 +617,16 @@ fn rewrite(
     }
     let mut sealed = Vec::new();
     for secret in all {
-        if let Source::Home(path) = &secret.source {
-            readers.approve(fleet, path)?;
-        }
-        let recipients = fleet.sealed_for(match &secret.source {
-            Source::Home(path) => home_recipients(&fleet.dir, path, Some((&target.list, list)))?,
-            Source::Etc(_) => list.to_vec(),
-        });
-        let file = secret.source.file(&fleet.dir)?;
+        readers.approve(fleet, &secret.path)?;
+        let recipients = fleet.sealed_for(reader_recipients(
+            &fleet.dir,
+            &secret.path,
+            Some((&target.list, list)),
+        )?);
+        let file = match fs::symlink_metadata(&secret.path)?.is_symlink() {
+            true => homes::target(&fleet.dir, &secret.path)?,
+            false => secret.path.clone(),
+        };
         let bytes = encrypt_for(&recipients, &keys.decrypt(&file)?)?;
         sealed.push((file, bytes, secret, recipients));
     }
@@ -643,64 +645,45 @@ fn rewrite(
     Ok(rewritten)
 }
 
-enum Source {
-    Home(PathBuf),
-    Etc(PathBuf),
-}
-
-impl Source {
-    fn file(&self, fleet_dir: &Path) -> Result<PathBuf> {
-        match self {
-            Source::Home(path) if fs::symlink_metadata(path)?.is_symlink() => {
-                homes::target(fleet_dir, path)
-            }
-            Source::Home(path) | Source::Etc(path) => Ok(path.clone()),
-        }
-    }
-}
-
 struct Secret {
     shown: String,
-    source: Source,
+    path: PathBuf,
     readers: Vec<String>,
+}
+
+fn secret(fleet: &Fleet, shown: String, path: PathBuf) -> Result<Secret> {
+    let readers = homes::owners(&fleet.dir, &path)?
+        .iter()
+        .map(Reader::to_string)
+        .collect();
+    Ok(Secret {
+        shown,
+        path,
+        readers,
+    })
 }
 
 fn secrets_of(fleet: &Fleet, target: &Target) -> Result<Vec<Secret>> {
     let mut all = Vec::new();
     match &target.scope {
-        Scope::Root => {
+        Reader::Root(_) => {
             let type_dir = fleet::type_dir(&fleet.dir, &target.type_name);
             for file in fleet::etc_files(&type_dir)? {
                 if file.storage == Storage::Encrypted {
-                    all.push(Secret {
-                        shown: Path::new(file::ETC).join(&file.rel).display().to_string(),
-                        source: Source::Etc(file.source),
-                        readers: vec![target.text.clone()],
-                    });
+                    let shown = Path::new(file::ETC).join(&file.rel).display().to_string();
+                    all.push(secret(fleet, shown, file.source)?);
                 }
             }
             for path in container::sealed(&type_dir)? {
-                all.push(Secret {
-                    shown: path.strip_prefix(&fleet.dir)?.display().to_string(),
-                    source: Source::Etc(path),
-                    readers: vec![target.text.clone()],
-                });
+                let shown = path.strip_prefix(&fleet.dir)?.display().to_string();
+                all.push(secret(fleet, shown, path)?);
             }
         }
-        Scope::User(home) => {
+        Reader::Home(home) => {
             let source = home.source(&fleet.dir);
             for rel in walk::files(&source)? {
                 if let Some(shown) = home_secret(&rel) {
-                    let path = source.join(&rel);
-                    let readers = homes::owners(&fleet.dir, &path)?
-                        .iter()
-                        .map(Home::to_string)
-                        .collect();
-                    all.push(Secret {
-                        shown,
-                        source: Source::Home(path),
-                        readers,
-                    });
+                    all.push(secret(fleet, shown, source.join(&rel))?);
                 }
             }
         }

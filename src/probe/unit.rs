@@ -1,7 +1,7 @@
 use super::state::State;
 use crate::{
     cmd,
-    container::Action,
+    container::{self, Action},
     file,
     fleet::{Fleet, checked},
     host,
@@ -38,6 +38,7 @@ pub fn known() -> Vec<PathBuf> {
     vec![
         key_path(SIGNING),
         key_path(SSH),
+        key_path(LOGINS),
         PathBuf::from(SERVICE),
         PathBuf::from(TIMER),
     ]
@@ -45,11 +46,15 @@ pub fn known() -> Vec<PathBuf> {
 
 fn service(fleet: &Fleet) -> Result<String> {
     let mut credentials = String::new();
-    for name in [SIGNING, SSH, GITHUB_TOKEN, LOGINS] {
+    for name in [SIGNING, SSH, GITHUB_TOKEN] {
         let path = key_path(name);
         if path.exists() {
             credentials.push_str(&format!("LoadCredential={name}:{}\n", path.display()));
         }
+    }
+    if container::token_path(fleet).exists() {
+        let path = key_path(LOGINS);
+        credentials.push_str(&format!("LoadCredential={LOGINS}:{}\n", path.display()));
     }
     let origin = checked::origin(fleet.admin())?;
     Ok(format!(
@@ -92,8 +97,11 @@ pub fn items(fleet: &Fleet) -> Result<Vec<Item>> {
                     .because("`sudo mothership key` creates them"),
             );
         } else {
+            let logins_current = !fleet.etc_open()
+                || file::read(&key_path(LOGINS))? == container::docker_config(fleet)?;
             let current = written(SERVICE)?.as_deref() == Some(service(fleet)?.as_str())
                 && written(TIMER)?.as_deref() == Some(TIMER_TEXT)
+                && logins_current
                 && Path::new("/etc/systemd/system/timers.target.wants")
                     .join(TIMER_NAME)
                     .exists();
@@ -152,6 +160,10 @@ pub fn install(fleet: &Fleet) -> Result<()> {
              systemd for it: the type must list nss-systemd (libnss-systemd on Debian)"
         );
     }
+    match container::docker_config(fleet)? {
+        Some(bytes) => file::write(&key_path(LOGINS), &bytes, 0o600)?,
+        None => drop(file::remove_if_found(&key_path(LOGINS))?),
+    }
     file::write(Path::new(SERVICE), service(fleet)?.as_bytes(), 0o644)?;
     file::write(Path::new(TIMER), TIMER_TEXT.as_bytes(), 0o644)?;
     cmd::root("systemctl", &["daemon-reload"])?;
@@ -160,6 +172,7 @@ pub fn install(fleet: &Fleet) -> Result<()> {
 
 pub fn remove() -> Result<()> {
     cmd::root("systemctl", &["disable", "--now", "--", TIMER_NAME])?;
+    file::remove_if_found(&key_path(LOGINS))?;
     file::remove_if_found(Path::new(SERVICE))?;
     file::remove_if_found(Path::new(TIMER))?;
     cmd::root("systemctl", &["daemon-reload"])

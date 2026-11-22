@@ -55,7 +55,7 @@ From the Arch ISO, install also partitions and encrypts the disk:
 ```text
 mothership.toml           the recovery key, and the mothership release every machine runs
 signers.txt               the keys whose commits machines apply, each with the folders it may change
-shared/                   files and secrets several homes get, linked from each home
+shared/                   files and secrets several homes get, linked from each home or root's secrets
 types/workstation/
 ├── system.toml           packages, services, hardware and options
 ├── etc/                  files copied into /etc
@@ -71,7 +71,7 @@ types/workstation/
     └── ignore.txt
 ```
 
-A home links each shared file it wants, one link per file, and only the homes linking a file get it: scan lists who gets each one. A template reads a secret with `{{ include ".secrets/api-key.age" | decrypt }}`, and can read `.profile` (the type) and `.user`. With `ssh_from = ["workstation", "server/dev"]` in `user.toml`, `.authorized_keys` lists the SSH keys of every workstation user and of dev on every server, for an `authorized_keys.tmpl` to write.
+A home links each shared file it wants, one link per file, and only the homes linking a file get it: scan lists who gets each one. An encrypted file in a type's `etc/` or `services/` can link a shared secret too, which root then opens. A template reads a secret with `{{ include ".secrets/api-key.age" | decrypt }}`, and can read `.profile` (the type) and `.user`. With `ssh_from = ["workstation", "server/dev"]` in `user.toml`, `.authorized_keys` lists the SSH keys of every workstation user and of dev on every server, for an `authorized_keys.tmpl` to write.
 
 ```toml
 packages = ["base", "linux", "git"]
@@ -91,7 +91,7 @@ Each line of `ignore.txt` is a kind and a pattern, such as `home ~/.cache` or `p
 
 ## Services
 
-On a server, the account `services` runs each service with its own rootless Docker, and keeps its data in `/srv/<name>/`. A service folder holds a `compose.yaml` without `image:` lines, the files it mounts, `*.tmpl` templates that read `{{ secret "name" }}`, and `secrets/*.age`, encrypted for the type's `recipients.txt`, which containers read in `/run/secrets/`. `service.toml` pins each container's image:
+On a server, the account `services` runs each service with its own rootless Docker, and keeps its data in `/srv/<name>/`. A service folder holds a `compose.yaml` without `image:` lines, the files it mounts, `*.tmpl` templates that read `{{ secret "name" }}`, and `secrets/*.age`, encrypted for the type's `recipients.txt`, which containers read in `/run/secrets/`. Private images on ghcr.io need `services/ghcr-token.age`, a classic token with only `read:packages`, from which mothership writes Docker's login file. `service.toml` pins each container's image:
 
 ```toml
 [images.app]

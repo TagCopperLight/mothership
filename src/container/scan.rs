@@ -113,12 +113,12 @@ fn service_items(
     service: &Service,
     entry: Option<&Deployed>,
 ) -> Result<Vec<Item>> {
-    let sealed = !service.secret_files()?.is_empty() || super::logins_path(fleet).exists();
+    let sealed = !service.secret_files()?.is_empty() || super::token_path(fleet).exists();
     if sealed && !fleet.etc_open() {
         return Ok(vec![Item::locked(Kind::Container, &service.name)]);
     }
     let rendered = service.render(fleet.root_keys())?;
-    let fingerprint = deploy::fingerprint(service, &rendered, super::logins(fleet)?.as_deref());
+    let fingerprint = deploy::fingerprint(service, &rendered, super::token(fleet)?.as_deref());
     let pins = service.pins();
     let Some(entry) = entry else {
         return Ok(vec![fleet_item(
