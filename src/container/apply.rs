@@ -47,9 +47,11 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
             _ => {}
         }
     }
-    if actions
-        .iter()
-        .all(|a| matches!(a, Action::Setup | Action::Probe | Action::Unprobe))
+    let set_up = actions.iter().any(|a| matches!(a, Action::Setup));
+    if !set_up
+        && actions
+            .iter()
+            .all(|a| matches!(a, Action::Probe | Action::Unprobe))
     {
         return Ok(());
     }
@@ -82,7 +84,7 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
         })
         .collect();
     let env = |name: &str| start::fleet_env(fleet, name);
-    let wanted = |name: &str| !busy.contains(&name) && bind.contains(&name);
+    let wanted = |name: &str| !busy.contains(&name) && (set_up || bind.contains(&name));
     failed.extend(start::services(
         &docker, &places, &state, None, &wanted, &env,
     ));

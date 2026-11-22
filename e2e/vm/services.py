@@ -495,6 +495,12 @@ sudo sysctl --quiet --system
     expect(apply(), "app's images.app and extra's images.extra both publish 80/tcp on public", code=1)
     commit("Give port 80 back", f"git checkout HEAD~1 -- {extra}/service.toml")
     expect(apply(), "Nothing to apply.")
+    commit("Publish 8443/tcp", "sed -i 's/\"443\\/udp\"/\"443\\/udp\", \"8443\\/tcp\"/' "
+           "types/server/services/app/service.toml")
+    expect(apply(), "Updated app")
+    assert running(vm, "extra"), "apply starts a service without a restart policy after Docker restarts"
+    commit("Stop publishing 8443/tcp", "git checkout HEAD~1 -- types/server/services/app/service.toml")
+    expect(apply(), "Updated app")
 
     commit("Drop extra", "git rm -q -r types/server/services/extra")
     expect(apply(), "Removed extra, keeping /srv/extra")
@@ -547,6 +553,7 @@ def interface(vm: VM, apply) -> None:
     vm.run(f"sudo ip link del {STAND_IN} && sudo systemctl restart mothership-services && sleep 5")
     expect(vm.run("sudo mothership scan"), "stand0 has no address yet")
     expect(apply(), "app: it waits for stand0 to have an address", code=1)
+    assert running(vm, "extra"), "Docker's start starts every service, restart policy or not"
     assert not running(vm, "app"), "app waits for stand0"
     vm.run(f"sudo ip link add {STAND_IN} type dummy && sleep 3 && "
            f"sudo ip address add 10.99.0.2/24 dev {STAND_IN} && sudo ip link set {STAND_IN} up")
