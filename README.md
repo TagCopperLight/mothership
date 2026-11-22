@@ -23,6 +23,7 @@ All of them run with `sudo`.
 | `recovery` | Gives a new fleet its recovery key, which opens every secret, or replaces it and encrypts every secret again. |
 | `trust <host> <type> <name>=<key>...` | Lets a new machine's keys open their lists' secrets and sign for the fleet, and prints the code to type on it. |
 | `retire <host>` | Removes a machine's keys, and prints the secrets you should change. |
+| `secret <service> <name>` | Reads a value and encrypts it into the service's secrets, for the type's root list and the recovery key. `<service>` may be `<type>/<service>`. |
 | `install` | Sets up a new machine from the fleet. |
 
 A machine applies only commits signed by a key `signers.txt` lists, or by the recovery key, and only what is committed. Every command that changes the fleet shows the commit and asks before it signs and pushes.

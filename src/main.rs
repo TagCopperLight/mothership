@@ -61,6 +61,7 @@ enum Command {
     Trust,
     Retire,
     Install,
+    Secret,
 }
 
 impl Command {
@@ -75,6 +76,7 @@ impl Command {
             "trust" => Command::Trust,
             "retire" => Command::Retire,
             "install" => Command::Install,
+            "secret" => Command::Secret,
             _ => return None,
         })
     }
@@ -207,6 +209,15 @@ fn run(args: &[String]) -> anyhow::Result<()> {
                 Outcome::Declined => Ok(()),
                 Outcome::Unchanged | Outcome::Pushed(_) => github::remove(&fleet::admin()?, host),
             }
+        }
+        (Command::Secret, [service, name]) => {
+            let machine = fleet::Machine::load()?;
+            let wanted = edit::secret::Wanted::parse(service, name, &machine.device_type)?;
+            let message = format!("Set {} of {}", wanted.name, wanted.shown());
+            edit_fleet(&message, |fleet, prompt| {
+                edit::secret::set(fleet, &wanted, prompt)
+            })
+            .map(drop)
         }
         _ => bail!("usage: {}", usage::of(name)),
     }

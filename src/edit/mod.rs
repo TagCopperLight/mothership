@@ -1,6 +1,7 @@
 mod doc;
 mod etc;
 mod home;
+pub mod secret;
 
 use doc::{declare, edit_toml, tool_entry, undeclare};
 
