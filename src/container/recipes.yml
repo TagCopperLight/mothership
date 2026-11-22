@@ -1,0 +1,74 @@
+name: Recipes, written by mothership
+
+on:
+  push:
+    branches: [main]
+    paths: ["types/*/services/*/Dockerfile"]
+  repository_dispatch:
+    types: [rebuild]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency: recipes
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Build the recipes
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SERVICE: ${{ github.event.client_payload.service }}
+        run: |
+          python3 - <<'EOF'
+          import os, re, subprocess, tomllib
+          from pathlib import Path
+
+          VERSION = re.compile(
+              r'^\s*LABEL\s+org\.opencontainers\.image\.version\s*=\s*"?([^"\s]+)"?\s*$', re.M
+          )
+          event = os.environ["EVENT"]
+          commit = os.environ["GITHUB_SHA"]
+          source = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+
+
+          def changed(dockerfile):
+              before = os.environ.get("BEFORE", "")
+              if event != "push" or not before.strip("0"):
+                  return True
+              diff = ["git", "diff", "--quiet", before, commit, "--", str(dockerfile)]
+              return subprocess.run(diff).returncode != 0
+
+
+          built = 0
+          for dockerfile in sorted(Path("types").glob("*/services/*/Dockerfile")):
+              service = f"{dockerfile.parts[1]}/{dockerfile.parts[3]}"
+              if event == "repository_dispatch" and service != os.environ.get("SERVICE"):
+                  continue
+              if not changed(dockerfile):
+                  continue
+              pinned = tomllib.loads((dockerfile.parent / "service.toml").read_text())
+              [image] = [i["image"] for i in pinned["images"].values() if i.get("recipe")]
+              [version] = VERSION.findall(dockerfile.read_text())
+              tag = f"{image}:{version}"
+              print(f"Building {service} as {tag}", flush=True)
+              build = ["docker", "build", "--pull", "--tag", tag,
+                       "--label", f"org.opencontainers.image.revision={commit}",
+                       "--label", f"org.opencontainers.image.source={source}", "-"]
+              with dockerfile.open("rb") as recipe:
+                  subprocess.run(build, stdin=recipe, check=True)
+              subprocess.run(["docker", "push", tag], check=True)
+              built += 1
+          print(f"Built {built} recipes")
+          EOF

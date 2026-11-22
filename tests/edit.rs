@@ -574,3 +574,13 @@ fn listing_a_user_gives_them_an_empty_folder_in_the_type() {
     let error = checkout.try_apply(Add::ListUser("dev".into()), "y");
     assert!(error.unwrap_err().to_string().contains("is there already"));
 }
+
+#[test]
+fn review_writes_mothership_s_recipes_workflow_into_the_fleet() {
+    let checkout = Checkout::new();
+    assert!(checkout.apply(Add::WriteWorkflow, ""));
+    assert_eq!(
+        checkout.read(crate::container::WORKFLOW_PATH),
+        crate::container::WORKFLOW
+    );
+}

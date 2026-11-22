@@ -202,6 +202,9 @@ pub fn deploy(
 ) -> Result<(Deployed, Outcome)> {
     let service = wanted.service;
     let name = &service.name;
+    if service.unbuilt() {
+        bail!("{name} waits for the fleet's CI to build its recipe");
+    }
     let pins = service.pins();
     let mut entry = before.cloned().unwrap_or_default();
     let blocked = describe(&entry.failed_in(&pins));

@@ -1,10 +1,12 @@
 use super::{
-    Action, Service, account,
+    Action, Service, WORKFLOW, WORKFLOW_PATH, account,
     deploy::{self, Places},
     docker::Docker,
     state::{Deployed, State},
 };
 use crate::{
+    edit::Add,
+    file,
     fleet::Fleet,
     item::{Change, Item, Section},
     kind::Kind,
@@ -12,10 +14,14 @@ use crate::{
     probe, walk,
 };
 use anyhow::Result;
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
     let mut items = probe::unit::items(fleet)?;
+    items.extend(workflow(&fleet.dir)?);
     let state = State::load()?;
     let account = account::user()?;
     if fleet.services.is_empty() && account.is_none() {
@@ -83,6 +89,22 @@ pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
     Ok(items)
 }
 
+pub fn workflow(fleet_dir: &Path) -> Result<Option<Item>> {
+    if !super::holds_recipes(fleet_dir)? {
+        return Ok(None);
+    }
+    let detail = match file::read_if_any(&fleet_dir.join(WORKFLOW_PATH))? {
+        Some(text) if text == WORKFLOW => return Ok(None),
+        Some(_) => "outdated",
+        None => "missing",
+    };
+    Ok(Some(
+        Item::new(Kind::Container, Change::Edited, WORKFLOW_PATH, detail)
+            .noting("the fleet holds recipes, and this is the workflow that builds them")
+            .with(Add::WriteWorkflow),
+    ))
+}
+
 fn unowned(places: &Places, owned: &BTreeSet<&str>) -> Result<Vec<PathBuf>> {
     let mut left = Vec::new();
     for dir in [&places.data, &places.projects] {
@@ -116,6 +138,18 @@ fn service_items(
     let sealed = !service.secret_files()?.is_empty() || super::token_path(fleet).exists();
     if sealed && !fleet.etc_open() {
         return Ok(vec![Item::locked(Kind::Container, &service.name)]);
+    }
+    if service.unbuilt() {
+        return Ok(vec![
+            Item::new(
+                Kind::Container,
+                Change::Unreadable,
+                &service.name,
+                "not built yet",
+            )
+            .noting("the fleet's CI builds its recipe, and the probe then pins it")
+            .because("check the fleet's Recipes workflow if this lasts"),
+        ]);
     }
     let rendered = service.render(fleet.root_keys())?;
     let fingerprint = deploy::fingerprint(service, &rendered, super::token(fleet)?.as_deref());

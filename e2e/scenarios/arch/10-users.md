@@ -300,7 +300,7 @@ $ cd /var/lib/mothership/fleet && touch shared/dot_unused && echo y | sudo mothe
 $ sudo mothership scan | head -4
 Needs attention · 1
   Shared files
-    + dot_unused  linked by no home  link it from a home, or delete it
+    + dot_unused  linked by nothing  link it from a home or a root secret, or delete it
 
 $ printf 'i\ny\n' | sudo mothership review | tail -3
   M types/workstation/ignore.txt

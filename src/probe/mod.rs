@@ -12,6 +12,7 @@ use crate::{
     sign,
 };
 use anyhow::{Context, Result, bail};
+use container::Pin;
 use plan::{Update, Watched};
 use state::State;
 use std::{
@@ -87,7 +88,8 @@ fn round(setting: &Setting, state: &mut State) -> Result<()> {
     let registry = Client::new(Box::new(Curl), credential(unit::LOGINS)?.as_deref())?;
     let now = now()?;
     let round = plan::Round::at(state, now);
-    let found = plan::plan(&watched, &registry, state, now, round);
+    let verify = |item: &Watched, pin: &Pin| built_from_accepted(&git, &tip, &registry, item, pin);
+    let found = plan::plan(&watched, &registry, state, now, round, &verify);
     for notice in state.notices.values() {
         println!("{notice}");
     }
@@ -99,9 +101,10 @@ fn round(setting: &Setting, state: &mut State) -> Result<()> {
             http: &Curl,
             token: String::from_utf8(token)?.trim().to_owned(),
         };
-        let done = rebuild::ask(&github, &registry, &watched, state);
+        let fleet_repo = github::repo(&setting.fleet);
+        let done = rebuild::ask(&github, &registry, &watched, fleet_repo.as_deref(), state);
         for asked in done.asked {
-            println!("Asked {asked} to rebuild, since a base image changed");
+            println!("Asked to rebuild {asked}, since a base image changed");
         }
         failures.extend(done.failures);
     }
@@ -148,6 +151,49 @@ fn known_hosts(setting: &Setting) -> Result<PathBuf> {
     Ok(path)
 }
 
+fn recipe_path(service: &str) -> String {
+    let (type_name, name) = service.split_once('/').expect("service_of names both");
+    format!(
+        "types/{type_name}/{}/{name}/{}",
+        container::SERVICES,
+        container::DOCKERFILE
+    )
+}
+
+fn built_from_accepted(
+    git: &Git,
+    tip: &str,
+    registry: &Client,
+    item: &Watched,
+    pin: &Pin,
+) -> Result<()> {
+    if !item.image.recipe {
+        return Ok(());
+    }
+    let shown = format!("{}:{}", item.image.image, pin.version);
+    let labels = registry.labels(&item.image.image, &pin.digest)?;
+    let commit = labels
+        .get(container::REVISION_LABEL)
+        .with_context(|| format!("{shown} names no {}", container::REVISION_LABEL))?;
+    if commit.len() != 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("{shown} names {commit} as its commit, which isn't one");
+    }
+    if !git.is_ancestor(commit, tip)? {
+        bail!(
+            "{shown} was built from {}, which isn't on the fleet's main as machines accept it",
+            checked::short(commit)
+        );
+    }
+    let path = recipe_path(&item.service);
+    if git.blob(commit, &path)? != git.blob(tip, &path)? {
+        bail!(
+            "{shown} was built from {}, whose {path} isn't the current one",
+            checked::short(commit)
+        );
+    }
+    Ok(())
+}
+
 fn root_checked() -> Result<String> {
     let git = Path::new(GIT_DIR);
     if let Some(text) = file::read_if_any(&git.join(ROOT_CHECKED))? {
@@ -179,10 +225,15 @@ fn watched(git: &Git, commit: &str) -> Result<Vec<Watched>> {
         let text = git.blob(commit, path)?.context("ls-tree listed it")?;
         let images = container::parse(&text).with_context(|| format!("parsing {path}"))?;
         for (name, image) in images {
+            let dockerfile = match image.recipe {
+                true => git.blob(commit, &recipe_path(&service))?,
+                false => None,
+            };
             watched.push(Watched {
                 service: service.clone(),
                 name,
                 image,
+                dockerfile,
             });
         }
     }

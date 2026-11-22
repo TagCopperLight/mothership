@@ -6,7 +6,7 @@ pub mod secret;
 use doc::{declare, edit_toml, tool_entry, undeclare};
 
 use crate::{
-    file,
+    container, file,
     fleet::{self, Fleet, Manager, Member, Tool, homes},
     kind::Level,
     package::Distro,
@@ -106,6 +106,7 @@ pub enum Add {
         value: String,
     },
     ListUser(String),
+    WriteWorkflow,
 }
 
 impl Add {
@@ -156,6 +157,7 @@ impl Add {
             Add::RemoveEtc(_) => "remove it from the type's etc/".into(),
             Add::Pref { .. } => "write this machine's value into user.js".into(),
             Add::ListUser(_) => "list the user in the type, with an empty home".into(),
+            Add::WriteWorkflow => "write mothership's version into the fleet".into(),
         }
     }
 
@@ -231,6 +233,11 @@ impl Add {
                 }
                 list_user(fleet, name)?
             }
+            Add::WriteWorkflow => file::write(
+                &fleet.dir.join(container::WORKFLOW_PATH),
+                container::WORKFLOW.as_bytes(),
+                FILE_MODE,
+            )?,
         }
         Ok(true)
     }

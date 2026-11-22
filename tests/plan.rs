@@ -29,6 +29,10 @@ fn registry(tags: &[&str], digests: Arc<Mutex<BTreeMap<String, String>>>) -> Cli
     Client::new(http, None).unwrap()
 }
 
+fn trusted(_: &Watched, _: &Pin) -> Result<()> {
+    Ok(())
+}
+
 fn watched(version: &str, repo: Option<&str>) -> Watched {
     Watched {
         service: "server/db".into(),
@@ -38,7 +42,9 @@ fn watched(version: &str, repo: Option<&str>) -> Watched {
             version: version.into(),
             digest: digest(1),
             repo: repo.map(str::to_owned),
+            recipe: false,
         },
+        dockerfile: None,
     }
 }
 
@@ -68,6 +74,7 @@ fn a_public_release_waits_two_days_and_a_new_major_is_only_noticed() {
         &mut state,
         1000,
         Round::Everything,
+        &trusted,
     );
     assert!(found.updates.is_empty());
     assert_eq!(
@@ -81,6 +88,7 @@ fn a_public_release_waits_two_days_and_a_new_major_is_only_noticed() {
         &mut state,
         1000 + PUBLIC_WAIT,
         Round::Everything,
+        &trusted,
     );
     assert_eq!(
         found.updates,
@@ -113,6 +121,7 @@ fn my_image_is_taken_at_once_and_a_new_digest_for_the_same_version_too() {
         &mut state,
         0,
         Round::Mine,
+        &trusted,
     );
     assert_eq!(
         found.updates[0].to,
@@ -128,6 +137,7 @@ fn my_image_is_taken_at_once_and_a_new_digest_for_the_same_version_too() {
         &mut state,
         0,
         Round::Mine,
+        &trusted,
     );
     assert!(found.updates.is_empty());
 }
@@ -142,14 +152,28 @@ fn public_images_wait_for_the_hourly_round_and_mine_come_every_round() {
     ])));
     let client = registry(&["1.0", "1.1"], digests);
     let items = [watched("1.0", None), watched("1.0", Some("me/db"))];
-    let found = plan(&items, &client, &mut state, PUBLIC_EVERY, Round::Everything);
+    let found = plan(
+        &items,
+        &client,
+        &mut state,
+        PUBLIC_EVERY,
+        Round::Everything,
+        &trusted,
+    );
     assert_eq!(found.updates.len(), 1, "mine at once, the public one waits");
     assert_eq!(state.public_checked, PUBLIC_EVERY);
     assert_eq!(Round::at(&state, PUBLIC_EVERY + 300), Round::Mine);
     assert_eq!(Round::at(&state, 2 * PUBLIC_EVERY), Round::Everything);
     let public = &items[..1];
     assert!(!Round::Mine.covers(&public[0]));
-    let found = plan(public, &client, &mut state, PUBLIC_EVERY + 300, Round::Mine);
+    let found = plan(
+        public,
+        &client,
+        &mut state,
+        PUBLIC_EVERY + 300,
+        Round::Mine,
+        &trusted,
+    );
     assert!(found.updates.is_empty() && found.failures.is_empty());
     assert_eq!(state.public_checked, PUBLIC_EVERY);
 }
@@ -165,6 +189,7 @@ fn a_notice_stays_between_rounds_until_its_image_goes() {
         &mut state,
         PUBLIC_EVERY,
         Round::Everything,
+        &trusted,
     );
     assert_eq!(state.notices.len(), 1);
     plan(
@@ -173,8 +198,16 @@ fn a_notice_stays_between_rounds_until_its_image_goes() {
         &mut state,
         PUBLIC_EVERY + 300,
         Round::Mine,
+        &trusted,
     );
     assert_eq!(state.notices.len(), 1);
-    plan(&[], &client, &mut state, PUBLIC_EVERY + 600, Round::Mine);
+    plan(
+        &[],
+        &client,
+        &mut state,
+        PUBLIC_EVERY + 600,
+        Round::Mine,
+        &trusted,
+    );
     assert!(state.notices.is_empty());
 }

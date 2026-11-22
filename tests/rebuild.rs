@@ -71,22 +71,24 @@ fn a_base_with_a_new_digest_asks_the_project_to_rebuild_its_version() {
             version: "1.2.0".into(),
             digest: format!("sha256:{}", "1".repeat(64)),
             repo: Some("me/app".into()),
+            recipe: false,
         },
+        dockerfile: None,
     }];
     let mut state = State::default();
     assert!(
-        ask(&github, &registry, &watched, &mut state)
+        ask(&github, &registry, &watched, None, &mut state)
             .asked
             .is_empty()
     );
     assert!(
-        ask(&github, &registry, &watched, &mut state)
+        ask(&github, &registry, &watched, None, &mut state)
             .asked
             .is_empty()
     );
     *base.lock().unwrap() = format!("sha256:{}", "b".repeat(64));
     assert_eq!(
-        ask(&github, &registry, &watched, &mut state).asked,
+        ask(&github, &registry, &watched, None, &mut state).asked,
         ["me/app 1.2.0"]
     );
     let sent = sent.lock().unwrap();
@@ -127,5 +129,66 @@ fn a_release_tag_may_leave_out_the_v() {
     assert!(
         err.contains("no Dockerfile at a tag v1.2.0 or 1.2.0"),
         "{err}"
+    );
+}
+
+#[test]
+fn a_recipe_whose_base_changes_asks_the_fleet_to_rebuild_it() {
+    let base = Arc::new(Mutex::new(format!("sha256:{}", "a".repeat(64))));
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let fake = Fake {
+        sent: sent.clone(),
+        answer: Box::new(|_, _, _| response(204, &[], "")),
+    };
+    let registry = Client::new(
+        Box::new(Fake {
+            sent: Arc::default(),
+            answer: Box::new({
+                let base = base.clone();
+                move |_, _, _| {
+                    response(200, &[("Docker-Content-Digest", &base.lock().unwrap())], "")
+                }
+            }),
+        }),
+        None,
+    )
+    .unwrap();
+    let github = GitHub {
+        http: &fake,
+        token: "t".into(),
+    };
+    let watched = [Watched {
+        service: "server/caddy".into(),
+        name: "caddy".into(),
+        image: Image {
+            image: "ghcr.io/me/caddy".into(),
+            version: "2.8.4".into(),
+            digest: format!("sha256:{}", "1".repeat(64)),
+            repo: None,
+            recipe: true,
+        },
+        dockerfile: Some("FROM caddy:2.8.4-builder\n".into()),
+    }];
+    let mut state = State::default();
+    let fleet = Some("me/fleet");
+    assert!(
+        ask(&github, &registry, &watched, fleet, &mut state)
+            .asked
+            .is_empty()
+    );
+    *base.lock().unwrap() = format!("sha256:{}", "b".repeat(64));
+    assert_eq!(
+        ask(&github, &registry, &watched, fleet, &mut state).asked,
+        ["the fleet's recipe server/caddy"]
+    );
+    let sent = sent.lock().unwrap();
+    assert_eq!(
+        sent.len(),
+        1,
+        "the recipe is read from the fleet, not GitHub"
+    );
+    assert_eq!(
+        sent[0].1,
+        "https://api.github.com/repos/me/fleet/dispatches"
     );
 }

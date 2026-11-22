@@ -42,10 +42,9 @@ impl GitHub<'_> {
         bail!("{repo} has no Dockerfile at a tag v{number} or {number}")
     }
 
-    fn dispatch(&self, repo: &str, version: &str) -> Result<()> {
+    fn dispatch(&self, repo: &str, payload: serde_json::Value) -> Result<()> {
         let url = format!("{API}/repos/{repo}/dispatches");
-        let body =
-            serde_json::json!({ "event_type": EVENT, "client_payload": { "version": version } });
+        let body = serde_json::json!({ "event_type": EVENT, "client_payload": payload });
         self.http
             .send(&Request {
                 method: "POST",
@@ -103,19 +102,52 @@ pub struct Asked {
     pub failures: Vec<String>,
 }
 
-pub fn ask(github: &GitHub, registry: &Client, watched: &[Watched], state: &mut State) -> Asked {
+struct Rebuild<'a> {
+    repo: &'a str,
+    key: String,
+    shown: String,
+    payload: serde_json::Value,
+}
+
+pub fn ask(
+    github: &GitHub,
+    registry: &Client,
+    watched: &[Watched],
+    fleet_repo: Option<&str>,
+    state: &mut State,
+) -> Asked {
     let mut done = Asked {
         asked: Vec::new(),
         failures: Vec::new(),
     };
     for item in watched {
-        let Some(repo) = &item.image.repo else {
-            continue;
+        let version = &item.image.version;
+        let (rebuild, dockerfile) = match (&item.dockerfile, &item.image.repo, fleet_repo) {
+            (Some(dockerfile), _, Some(fleet)) => (
+                Rebuild {
+                    repo: fleet,
+                    key: format!("{fleet}:{}", item.service),
+                    shown: format!("the fleet's recipe {}", item.service),
+                    payload: serde_json::json!({ "service": item.service }),
+                },
+                Ok(dockerfile.clone()),
+            ),
+            (None, Some(repo), _) => (
+                Rebuild {
+                    repo,
+                    key: format!("{repo}@{version}"),
+                    shown: format!("{repo} {version}"),
+                    payload: serde_json::json!({ "version": version }),
+                },
+                github.dockerfile(repo, version),
+            ),
+            _ => continue,
         };
-        match ask_one(github, registry, repo, &item.image.version, state) {
-            Ok(true) => done.asked.push(format!("{repo} {}", item.image.version)),
+        let result = dockerfile.and_then(|text| ask_one(github, registry, &text, &rebuild, state));
+        match result {
+            Ok(true) => done.asked.push(rebuild.shown),
             Ok(false) => {}
-            Err(e) => done.failures.push(format!("{repo}: {e:#}")),
+            Err(e) => done.failures.push(format!("{}: {e:#}", rebuild.shown)),
         }
     }
     done
@@ -124,21 +156,22 @@ pub fn ask(github: &GitHub, registry: &Client, watched: &[Watched], state: &mut 
 fn ask_one(
     github: &GitHub,
     registry: &Client,
-    repo: &str,
-    version: &str,
+    dockerfile: &str,
+    rebuild: &Rebuild,
     state: &mut State,
 ) -> Result<bool> {
-    let dockerfile = github.dockerfile(repo, version)?;
     let mut now = std::collections::BTreeMap::new();
-    for (image, tag) in bases(&dockerfile) {
+    for (image, tag) in bases(dockerfile) {
         now.insert(format!("{image}:{tag}"), registry.digest(&image, &tag)?);
     }
-    let key = format!("{repo}@{version}");
-    let changed = state.bases.get(&key).is_some_and(|before| *before != now);
+    let changed = state
+        .bases
+        .get(&rebuild.key)
+        .is_some_and(|before| *before != now);
     if changed {
-        github.dispatch(repo, version)?;
+        github.dispatch(rebuild.repo, rebuild.payload.clone())?;
     }
-    state.bases.insert(key, now);
+    state.bases.insert(rebuild.key.clone(), now);
     Ok(changed)
 }
 

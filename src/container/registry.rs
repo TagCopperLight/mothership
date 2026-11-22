@@ -119,6 +119,63 @@ impl Client {
         }))
     }
 
+    pub fn labels(&self, image: &str, digest: &str) -> Result<BTreeMap<String, String>> {
+        let name = name(image);
+        let mut manifest = self.manifest(&name, image, digest)?;
+        if let Some(list) = manifest["manifests"].as_array() {
+            let entry = list
+                .iter()
+                .find(|entry| entry["platform"]["os"].as_str() != Some("unknown"))
+                .with_context(|| format!("{image}@{digest} lists no image"))?;
+            let inner = entry["digest"]
+                .as_str()
+                .with_context(|| format!("{image}@{digest} lists an image without a digest"))?;
+            manifest = self.manifest(&name, image, inner)?;
+        }
+        let config = manifest["config"]["digest"]
+            .as_str()
+            .with_context(|| format!("{image}@{digest} names no config"))?;
+        let bytes = self.blob(&name, image, config)?;
+        let config: serde_json::Value =
+            serde_json::from_slice(&bytes).with_context(|| format!("reading {image}'s config"))?;
+        Ok(config["config"]["Labels"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+            .collect())
+    }
+
+    fn manifest(&self, name: &Name, image: &str, digest: &str) -> Result<serde_json::Value> {
+        super::check_digest(digest)?;
+        let url = format!("https://{}/v2/{}/manifests/{digest}", name.api(), name.path);
+        let response = self.get(name, "GET", &url, &[ACCEPT.to_owned()])?;
+        let body = verified(response.ok(&format!("{image}@{digest}"))?.body, digest)?;
+        serde_json::from_slice(&body).with_context(|| format!("reading {image}@{digest}"))
+    }
+
+    fn blob(&self, name: &Name, image: &str, digest: &str) -> Result<Vec<u8>> {
+        super::check_digest(digest)?;
+        let url = format!("https://{}/v2/{}/blobs/{digest}", name.api(), name.path);
+        let mut response = self.get(name, "GET", &url, &[])?;
+        if (300..400).contains(&response.status) {
+            let location = response
+                .header("location")
+                .with_context(|| format!("{image}'s registry moved {digest} without saying where"))?
+                .to_owned();
+            if !location.starts_with("https://") {
+                bail!("{image}'s registry moved {digest} to {location}, which isn't https");
+            }
+            response = self.http.send(&Request {
+                method: "GET",
+                url: &location,
+                headers: Vec::new(),
+                body: None,
+            })?;
+        }
+        verified(response.ok(&format!("{image}@{digest}"))?.body, digest)
+    }
+
     pub fn tags(&self, image: &str) -> Result<Vec<String>> {
         let name = name(image);
         let mut url = format!(
@@ -215,6 +272,14 @@ impl Client {
             .or(token.access_token)
             .context("the registry gave no token")
     }
+}
+
+fn verified(bytes: Vec<u8>, digest: &str) -> Result<Vec<u8>> {
+    let found = format!("sha256:{}", crate::hash::sha256(&bytes));
+    if found != digest {
+        bail!("the registry sent {found} when asked for {digest}");
+    }
+    Ok(bytes)
 }
 
 fn parse_params(text: &str) -> Vec<(String, String)> {

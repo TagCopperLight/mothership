@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# dependencies = ["pyrage"]
+# dependencies = ["pyrage", "pyyaml"]
 # ///
 
 import hashlib
@@ -15,10 +15,12 @@ import tarfile
 import tempfile
 import threading
 import time
+import uuid
 from functools import partial
 from pathlib import Path
 
 import pyrage
+import yaml
 from pyrage import x25519
 
 HERE = Path(__file__).resolve().parent
@@ -84,64 +86,127 @@ class Registry:
     def __init__(self, tmp: Path):
         self.blobs = tmp / "blobs"
         self.blobs.mkdir()
-        self.tags: dict[str, tuple[str, str]] = {}
-        self.built: dict[str, tuple[str, str]] = {}
+        self.tags: dict[tuple[str, str], str] = {}
+        self.media: dict[str, str] = {}
+        self.uploads: dict[str, bytearray] = {}
+        self.built: dict[str, str] = {}
         for version in VERSIONS:
-            self.built[version] = build(tmp, version, self.blobs)
+            digest, media = build(tmp, version, self.blobs)
+            self.built[version] = digest
+            self.media[digest] = media
         for version in VERSIONS[:3]:
             self.publish(version)
 
     def publish(self, version: str) -> None:
-        self.tags[version] = self.built[version]
+        self.tags[("app", version)] = self.built[version]
 
     def digest(self, version: str) -> str:
-        return self.built[version][0]
+        return self.built[version]
+
+    def store(self, data: bytes) -> str:
+        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        (self.blobs / digest.split(":")[1]).write_bytes(data)
+        return digest
 
     def handler(self):
         registry = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
             def log_message(self, *args) -> None:
                 pass
 
             def do_HEAD(self) -> None:
-                self.answer(body=False)
+                self.answer("HEAD")
 
             def do_GET(self) -> None:
-                self.answer(body=True)
+                self.answer("GET")
 
-            def answer(self, body: bool) -> None:
-                parts = self.path.split("?")[0].strip("/").split("/")
+            def do_POST(self) -> None:
+                self.answer("POST")
+
+            def do_PATCH(self) -> None:
+                self.answer("PATCH")
+
+            def do_PUT(self) -> None:
+                self.answer("PUT")
+
+            def read_body(self) -> bytes:
+                if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+                    data = bytearray()
+                    while size := int(self.rfile.readline().split(b";")[0].strip(), 16):
+                        data += self.rfile.read(size)
+                        self.rfile.readline()
+                    self.rfile.readline()
+                    return bytes(data)
+                return self.rfile.read(int(self.headers.get("Content-Length") or 0))
+
+            def answer(self, method: str) -> None:
+                path, _, query = self.path.partition("?")
+                params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+                body = self.read_body() if method in ("POST", "PATCH", "PUT") else b""
+                parts = path.strip("/").split("/")
                 if parts == ["v2"]:
-                    return self.send(200, b"{}", "application/json", body)
-                if parts[:2] == ["v2", "app"] and parts[2:] == ["tags", "list"]:
-                    tags = json.dumps({"name": "app", "tags": sorted(registry.tags)}).encode()
-                    return self.send(200, tags, "application/json", body)
-                if parts[:3] == ["v2", "app", "manifests"] and len(parts) == 4:
-                    reference = parts[3]
-                    found = registry.tags.get(reference)
-                    if found is None and reference.startswith("sha256:"):
-                        found = next((t for t in registry.built.values() if t[0] == reference), None)
-                    if found is None:
-                        return self.send(404, b"{}", "application/json", body)
-                    digest, media = found
-                    blob = (registry.blobs / digest.split(":")[1]).read_bytes()
-                    return self.send(200, blob, media, body, digest)
-                if parts[:3] == ["v2", "app", "blobs"] and len(parts) == 4:
-                    path = registry.blobs / parts[3].split(":")[-1]
-                    if path.exists():
-                        return self.send(200, path.read_bytes(), "application/octet-stream", body,
-                                         parts[3])
-                self.send(404, b"{}", "application/json", body)
+                    return self.send(200, b"{}", "application/json", method)
+                kind = next((i for i, p in enumerate(parts) if i > 1 and p in
+                             ("manifests", "blobs", "tags")), None)
+                if kind is None:
+                    return self.send(404, b"{}", "application/json", method)
+                name, rest = "/".join(parts[1:kind]), parts[kind:]
+                if rest == ["tags", "list"]:
+                    tags = sorted(tag for (repo, tag) in registry.tags if repo == name)
+                    data = json.dumps({"name": name, "tags": tags}).encode()
+                    return self.send(200, data, "application/json", method)
+                if rest[0] == "manifests" and len(rest) == 2:
+                    reference = rest[1]
+                    if method == "PUT":
+                        digest = registry.store(body)
+                        registry.media[digest] = self.headers["Content-Type"]
+                        if not reference.startswith("sha256:"):
+                            registry.tags[(name, reference)] = digest
+                        return self.send(201, b"", "text/plain", method, digest)
+                    digest = registry.tags.get((name, reference), reference)
+                    if digest not in registry.media:
+                        return self.send(404, b"{}", "application/json", method)
+                    data = (registry.blobs / digest.split(":")[1]).read_bytes()
+                    return self.send(200, data, registry.media[digest], method, digest)
+                if rest[:2] == ["blobs", "uploads"]:
+                    if method == "POST":
+                        upload = uuid.uuid4().hex
+                        registry.uploads[upload] = bytearray(body)
+                    else:
+                        upload = rest[2]
+                        registry.uploads[upload] += body
+                    if method == "PUT":
+                        data = bytes(registry.uploads.pop(upload))
+                        digest = registry.store(data)
+                        assert digest == params["digest"].replace("%3A", ":"), digest
+                        return self.send(201, b"", "text/plain", method, digest,
+                                         f"/v2/{name}/blobs/{digest}")
+                    size = len(registry.uploads[upload])
+                    return self.send(202, b"", "text/plain", method, None,
+                                     f"/v2/{name}/blobs/uploads/{upload}", f"0-{max(size - 1, 0)}")
+                if rest[0] == "blobs" and len(rest) == 2:
+                    blob = registry.blobs / rest[1].split(":")[-1]
+                    if blob.exists():
+                        return self.send(200, blob.read_bytes(), "application/octet-stream",
+                                         method, rest[1])
+                self.send(404, b"{}", "application/json", method)
 
-            def send(self, status, data, media, body, digest=None) -> None:
+            def send(self, status, data, media, method, digest=None, location=None,
+                     range=None) -> None:
                 self.send_response(status)
                 self.send_header("Content-Type", media)
                 self.send_header("Content-Length", str(len(data)))
                 if digest:
                     self.send_header("Docker-Content-Digest", digest)
+                if location:
+                    self.send_header("Location", location)
+                if range:
+                    self.send_header("Range", range)
                 self.end_headers()
-                if body:
+                if method != "HEAD":
                     self.wfile.write(data)
 
         return Handler
@@ -317,9 +382,11 @@ def fleet(tmp: Path, image: str, registry: Registry, root: x25519.Identity) -> P
     recovery = x25519.Recipient.from_str(manifest.split('age = "')[1].split('"')[0])
     server = work / "types/server"
     (server / "recipients.txt").write_text(f"# minipc\n{root.to_public()}\n")
-    (server / "services/app/secrets").mkdir()
-    (server / "services/app/secrets/token.age").write_bytes(
+    (work / "shared/.secrets").mkdir(parents=True)
+    (work / "shared/.secrets/token.age").write_bytes(
         pyrage.encrypt(f"{TOKEN}\n".encode(), [root.to_public(), recovery]))
+    (server / "services/app/secrets").mkdir()
+    (server / "services/app/secrets/token.age").symlink_to("../../../../../shared/.secrets/token.age")
     (server / "services/app/service.toml").write_text(pinned(image, registry, "1.0.0", mine=True))
     (server / "services/extra/service.toml").write_text(
         pinned(image, registry, "1.0.0", mine=False).replace("[images.app]", "[images.extra]"))
@@ -331,7 +398,8 @@ def fleet(tmp: Path, image: str, registry: Registry, root: x25519.Identity) -> P
 
 def pinned(image: str, registry: Registry, version: str, mine: bool) -> str:
     repo = 'repo = "me/app"\n' if mine else ""
-    return (f'[images.app]\nimage = "{image}"\nversion = "{version}"\n'
+    snapshot = 'snapshot = ["precious"]\n\n' if mine else ""
+    return (f'{snapshot}[images.app]\nimage = "{image}"\nversion = "{version}"\n'
             f'digest = "{registry.digest(version)}"\n{repo}')
 
 
@@ -394,10 +462,19 @@ sudo sh /tmp/anchor.sh
         text = pinned(image, registry, version, mine=True)
         return f"cat > types/server/services/app/service.toml <<'EOF'\n{text}EOF"
 
+    expect(vm.run("sudo mothership secret app token", input="n3w-token\ny\n"), "Committed")
+    link = vm.run(f"readlink {FLEET}/types/server/services/app/secrets/token.age").stdout
+    assert link.strip() == "../../../../../shared/.secrets/token.age", link
+    expect(apply(), "Updated app")
+    assert data("app", "token") == "n3w-token", "the secret command reaches the container"
+    assert data("app", "conf") == "token = n3w-token\n"
+
     commit("Update app", pin("1.0.1"))
     expect(apply(), "Updated app")
     assert data("app", "version") == "1.0.1"
-    assert vm.run("sudo cat /var/lib/services/snapshots/app/version").stdout == "1.0.0"
+    assert vm.run("sudo cat /var/lib/services/snapshots/app/precious").stdout == "kept"
+    snapshot = vm.run("sudo ls /var/lib/services/snapshots/app").stdout.split()
+    assert snapshot == ["precious"], f"the snapshot covers only what the service names: {snapshot}"
 
     commit("Drop extra", "git rm -q -r types/server/services/extra")
     expect(apply(), "Removed extra, keeping /srv/extra")
@@ -405,7 +482,8 @@ sudo sh /tmp/anchor.sh
     containers = vm.run("sudo -u services env DOCKER_HOST=unix:///run/user/$(id -u services)/docker.sock "
                         "docker ps --all --format '{{.Names}}'").stdout
     assert "extra" not in containers and "app" in containers, containers
-    expect(vm.run("sudo mothership scan"), "/srv/extra")
+    vm.run("sudo mkdir /srv/stray")
+    expect(vm.run("sudo mothership scan"), "/srv/extra", "/srv/stray")
 
     commit("Break app", pin("1.0.2"))
     expect(apply(), "app failed its health check", "these services need attention", code=1)
@@ -429,6 +507,69 @@ sudo sh /tmp/anchor.sh
     assert data("app", "version") == "1.0.3"
     log = vm.run(f"git -C {FLEET} log -1 --format='%an %s'").stdout
     assert log.startswith("minipc/probe Update 1 image"), log
+
+    recipes(vm, image, commit, apply)
+
+
+WORKFLOW = HERE.parent.parent / "src/container/recipes.yml"
+
+
+def recipes(vm: VM, image: str, commit, apply) -> None:
+    tool = image.replace("/app", "/tool")
+    folder = "types/server/services/tool"
+
+    def dockerfile(version: str) -> str:
+        return f'FROM {image}:1.0.1\nLABEL org.opencontainers.image.version="{version}"\n'
+
+    commit("Add tool", f"""mkdir -p {folder}
+cat > {folder}/Dockerfile <<'END'
+{dockerfile("2.0.0")}END
+cat > {folder}/service.toml <<'END'
+[images.tool]
+image = "{tool}"
+version = "2.0.0"
+recipe = true
+END
+cat > {folder}/compose.yaml <<'END'
+services:
+  tool:
+    restart: unless-stopped
+    volumes:
+      - /srv/tool:/data
+END""")
+    expect(vm.run("sudo mothership scan"), "not built yet", "mothership-recipes.yml")
+    workflow = WORKFLOW.read_text()
+    vm.run(f"mkdir -p {FLEET}/.github/workflows && "
+           f"cat > {FLEET}/.github/workflows/mothership-recipes.yml", input=workflow)
+    expect(vm.run("sudo mothership commit 'Add the recipes workflow'", input="y\n"), "Committed")
+    assert "mothership-recipes.yml" not in vm.run("sudo mothership scan").stdout
+    steps = yaml.safe_load(workflow)["jobs"]["build"]["steps"]
+    script = next(step["run"] for step in steps if step.get("name") == "Build the recipes")
+
+    vm.run("sudo systemctl restart docker")
+    head = vm.run(f"git -C {FLEET} rev-parse HEAD").stdout.strip()
+
+    def build(sha: str) -> subprocess.CompletedProcess:
+        return vm.run(f"cd {FLEET} && sudo env EVENT=workflow_dispatch GITHUB_SHA={sha} "
+                      "GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=me/fleet bash -s",
+                      input=script)
+
+    expect(build(head), f"Building server/tool as {tool}:2.0.0", "Built 1 recipes")
+    vm.run("sudo systemctl start mothership-probe.service", check=False, timeout=600)
+    expect(vm.run(f"git -C {FLEET} fetch -q origin && git -C {FLEET} log -1 --format=%B origin/main"),
+           "server/tool tool: 2.0.0 with a new digest")
+    expect(apply(), "Started tool")
+    assert vm.run("sudo cat /srv/tool/version").stdout == "1.0.1", "the recipe's base runs"
+
+    vm.run(f"cd {FLEET} && cat > {folder}/Dockerfile <<'END'\n{dockerfile('2.0.1')}END")
+    expect(build("f" * 40), f"{tool}:2.0.1")
+    vm.run(f"git -C {FLEET} checkout -- {folder}/Dockerfile")
+    vm.run("sudo systemctl start mothership-probe.service", check=False, timeout=600)
+    expect(vm.run("sudo journalctl -u mothership-probe --no-pager"),
+           "was built from ffffffffffff, which isn't on the fleet's main")
+    pinned = vm.run(f"git -C {FLEET} fetch -q origin && "
+                    f"git -C {FLEET} show origin/main:{folder}/service.toml").stdout
+    assert 'version = "2.0.0"' in pinned, pinned
 
 
 if __name__ == "__main__":

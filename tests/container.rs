@@ -109,3 +109,95 @@ fn the_login_file_holds_the_token_for_ghcr() {
     );
     assert!(client.is_ok());
 }
+
+fn recipe(dir: &Path, digest: &str, dockerfile: Option<&str>) -> Result<Vec<Service>> {
+    let svc = dir.join("services/caddy");
+    fs::create_dir_all(&svc).unwrap();
+    let digest = match digest {
+        "" => String::new(),
+        digest => format!("digest = \"{digest}\"\n"),
+    };
+    fs::write(
+        svc.join(SERVICE_TOML),
+        format!("[images.caddy]\nimage = \"ghcr.io/me/caddy\"\nversion = \"2.8.4\"\n{digest}recipe = true\n"),
+    )
+    .unwrap();
+    fs::write(svc.join(COMPOSE), "services: {caddy: {}}\n").unwrap();
+    if let Some(text) = dockerfile {
+        fs::write(svc.join(DOCKERFILE), text).unwrap();
+    }
+    load(dir)
+}
+
+const RECIPE: &str = "FROM caddy:2.8.4-builder\nLABEL org.opencontainers.image.version=\"2.8.4\"\n";
+
+#[test]
+fn a_recipe_has_its_dockerfile_and_waits_for_its_first_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let services = recipe(dir.path(), "", Some(RECIPE)).unwrap();
+    assert!(services[0].unbuilt());
+    let rendered = services[0].render(&Keys::default()).unwrap();
+    assert!(!rendered.files.contains_key(Path::new(DOCKERFILE)));
+    let built = recipe(dir.path(), DIGEST, Some(RECIPE)).unwrap();
+    assert!(!built[0].unbuilt() && built[0].images["caddy"].mine());
+}
+
+#[test]
+fn a_recipe_and_its_dockerfile_come_together() {
+    let err = |digest: &str, dockerfile: Option<&str>| {
+        let dir = tempfile::tempdir().unwrap();
+        format!(
+            "{:#}",
+            recipe(dir.path(), digest, dockerfile).err().unwrap()
+        )
+    };
+    assert!(err(DIGEST, None).contains("has no Dockerfile"));
+    assert!(err(DIGEST, Some("FROM caddy:2\n")).contains("names its version once"));
+    let dir = tempfile::tempdir().unwrap();
+    service(&dir.path().join("services/app"));
+    fs::write(dir.path().join("services/app").join(DOCKERFILE), RECIPE).unwrap();
+    let error = format!("{:#}", load(dir.path()).err().unwrap());
+    assert!(
+        error.contains("no image in it says recipe = true"),
+        "{error}"
+    );
+    let bare = toml("1.0.0").replace(&format!("digest = \"{DIGEST}\"\n"), "");
+    assert!(format!("{:#}", parse(&bare).unwrap_err()).contains("isn't a digest"));
+    let both = format!("{}repo = \"me/caddy\"\nrecipe = true\n", toml("1.0.0"));
+    assert!(format!("{:#}", parse(&both).unwrap_err()).contains("either from a recipe"));
+}
+
+#[test]
+fn the_probe_gives_a_recipe_its_first_digest_and_never_takes_it_away() {
+    let unbuilt =
+        "[images.caddy]\nimage = \"ghcr.io/me/caddy\"\nversion = \"2.8.4\"\nrecipe = true\n";
+    let built = unbuilt.replace("recipe", &format!("digest = \"{DIGEST}\"\nrecipe"));
+    versions_only(unbuilt, &built).unwrap();
+    let err = format!("{:#}", versions_only(&built, unbuilt).unwrap_err());
+    assert!(err.contains("isn't a digest"), "{err}");
+    let err = format!(
+        "{:#}",
+        versions_only(&built, &built.replace("recipe = true\n", "")).unwrap_err()
+    );
+    assert!(err.contains("beyond its version and digest"), "{err}");
+}
+
+#[test]
+fn a_recipe_names_its_version_in_a_label() {
+    assert_eq!(recipe_version(RECIPE).unwrap(), "2.8.4");
+    assert_eq!(
+        recipe_version("LABEL org.opencontainers.image.version=v1.2\n").unwrap(),
+        "v1.2"
+    );
+    assert!(recipe_version("LABEL org.opencontainers.image.version=\"latest\"\n").is_err());
+}
+
+#[test]
+fn the_fleet_holds_recipes_when_a_service_has_a_dockerfile() {
+    let dir = tempfile::tempdir().unwrap();
+    let services = dir.path().join("types/server/services/caddy");
+    fs::create_dir_all(&services).unwrap();
+    assert!(!holds_recipes(dir.path()).unwrap());
+    fs::write(services.join(DOCKERFILE), RECIPE).unwrap();
+    assert!(holds_recipes(dir.path()).unwrap());
+}

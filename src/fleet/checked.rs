@@ -90,7 +90,7 @@ impl Git {
         })
     }
 
-    fn is_ancestor(&self, older: &str, newer: &str) -> Result<bool> {
+    pub fn is_ancestor(&self, older: &str, newer: &str) -> Result<bool> {
         self.succeeds(&["merge-base", "--is-ancestor", older, newer])
     }
 

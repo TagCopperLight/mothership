@@ -41,9 +41,12 @@ pub struct ServiceToml {
 pub struct Image {
     pub image: String,
     pub version: String,
+    #[serde(default)]
     pub digest: String,
     #[serde(default)]
     pub repo: Option<String>,
+    #[serde(default)]
+    pub recipe: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, PartialOrd, Ord)]
@@ -81,14 +84,65 @@ impl Image {
         }
         version::Version::parse(&self.version)
             .with_context(|| format!("{}: the fleet runs only images with versions", self.image))?;
-        check_digest(&self.digest)?;
+        if !self.unbuilt() {
+            check_digest(&self.digest)?;
+        }
         if let Some(repo) = &self.repo
             && repo.split('/').count() != 2
         {
             bail!("{repo} isn't a GitHub repository like owner/name");
         }
+        if self.recipe && self.repo.is_some() {
+            bail!("{} comes either from a recipe or from a repo", self.image);
+        }
         Ok(())
     }
+
+    pub fn mine(&self) -> bool {
+        self.recipe || self.repo.is_some()
+    }
+
+    pub fn unbuilt(&self) -> bool {
+        self.recipe && self.digest.is_empty()
+    }
+}
+
+pub const DOCKERFILE: &str = "Dockerfile";
+pub const VERSION_LABEL: &str = "org.opencontainers.image.version";
+pub const REVISION_LABEL: &str = "org.opencontainers.image.revision";
+pub const WORKFLOW: &str = include_str!("recipes.yml");
+pub const WORKFLOW_PATH: &str = ".github/workflows/mothership-recipes.yml";
+
+pub fn recipe_version(dockerfile: &str) -> Result<String> {
+    let versions: Vec<&str> = dockerfile
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("LABEL")?.trim_start();
+            let value = rest
+                .strip_prefix(VERSION_LABEL)?
+                .trim_start()
+                .strip_prefix('=')?;
+            Some(value.trim().trim_matches('"'))
+        })
+        .collect();
+    let [version] = versions[..] else {
+        bail!("a recipe names its version once, as LABEL {VERSION_LABEL}=\"1.2.3\"");
+    };
+    version::Version::parse(version)?;
+    Ok(version.to_owned())
+}
+
+pub fn holds_recipes(fleet_dir: &Path) -> Result<bool> {
+    for type_name in crate::fleet::types(fleet_dir)? {
+        let dir = crate::fleet::type_dir(fleet_dir, &type_name).join(SERVICES);
+        if walk::children(&dir)?
+            .iter()
+            .any(|service| service.join(DOCKERFILE).is_file())
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub fn check_digest(digest: &str) -> Result<()> {
@@ -214,6 +268,9 @@ pub fn versions_only(before: &str, after: &str) -> Result<()> {
     }
     for (name, old) in &old {
         let new = &new[name];
+        if old.pin() != new.pin() {
+            check_digest(&new.digest).with_context(|| format!("images.{name}"))?;
+        }
         let repinned = Image {
             version: old.version.clone(),
             digest: old.digest.clone(),
@@ -267,6 +324,7 @@ pub fn load(type_dir: &Path) -> Result<Vec<Service>> {
         if !dir.join(COMPOSE).is_file() {
             bail!("{} has no {COMPOSE}", dir.display());
         }
+        check_recipe(&dir, &images)?;
         services.push(Service {
             name,
             dir,
@@ -275,6 +333,29 @@ pub fn load(type_dir: &Path) -> Result<Vec<Service>> {
         });
     }
     Ok(services)
+}
+
+fn check_recipe(dir: &Path, images: &BTreeMap<String, Image>) -> Result<()> {
+    let recipes = images.values().filter(|image| image.recipe).count();
+    let dockerfile = dir.join(DOCKERFILE);
+    match (recipes, dockerfile.is_file()) {
+        (0, false) => Ok(()),
+        (1, true) => {
+            let text = fs::read_to_string(&dockerfile)
+                .with_context(|| format!("reading {}", dockerfile.display()))?;
+            recipe_version(&text).with_context(|| format!("reading {}", dockerfile.display()))?;
+            Ok(())
+        }
+        (0, true) => bail!(
+            "{} has a {DOCKERFILE}, and no image in it says recipe = true",
+            dir.display()
+        ),
+        (_, false) => bail!("{} pins a recipe, and has no {DOCKERFILE}", dir.display()),
+        (_, true) => bail!(
+            "{} holds one {DOCKERFILE}, for one recipe image",
+            dir.display()
+        ),
+    }
 }
 
 #[derive(Debug)]
@@ -289,6 +370,10 @@ impl Service {
             .iter()
             .map(|(name, image)| (name.clone(), image.pin()))
             .collect()
+    }
+
+    pub fn unbuilt(&self) -> bool {
+        self.images.values().any(Image::unbuilt)
     }
 
     pub fn secret_files(&self) -> Result<Vec<PathBuf>> {
@@ -311,7 +396,10 @@ impl Service {
         }
         let mut files = BTreeMap::new();
         for rel in walk::files(&self.dir)? {
-            if rel == Path::new(SERVICE_TOML) || rel.starts_with(SECRETS) {
+            if rel == Path::new(SERVICE_TOML)
+                || rel == Path::new(DOCKERFILE)
+                || rel.starts_with(SECRETS)
+            {
                 continue;
             }
             let path = self.dir.join(&rel);

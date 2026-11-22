@@ -9,11 +9,14 @@ pub struct Watched {
     pub service: String,
     pub name: String,
     pub image: Image,
+    pub dockerfile: Option<String>,
 }
+
+pub type Verify<'a> = &'a dyn Fn(&Watched, &Pin) -> Result<()>;
 
 impl Watched {
     pub fn mine(&self) -> bool {
-        self.image.repo.is_some()
+        self.image.mine()
     }
 
     fn key(&self) -> String {
@@ -59,6 +62,7 @@ pub fn plan(
     state: &mut State,
     now: u64,
     round: Round,
+    verify: Verify,
 ) -> Found {
     let mut found = Found {
         updates: Vec::new(),
@@ -70,7 +74,7 @@ pub fn plan(
         state.public_checked = now;
     }
     for item in watched.iter().filter(|item| round.covers(item)) {
-        if let Err(e) = watch(item, registry, state, now, &mut found) {
+        if let Err(e) = watch(item, registry, state, now, verify, &mut found) {
             found
                 .failures
                 .push(format!("{} in {}: {e:#}", item.image.image, item.service));
@@ -84,6 +88,7 @@ fn watch(
     registry: &Client,
     state: &mut State,
     now: u64,
+    verify: Verify,
     found: &mut Found,
 ) -> Result<()> {
     let image = &item.image;
@@ -145,6 +150,7 @@ fn watch(
             break;
         }
         if ripe {
+            verify(item, &to)?;
             found.updates.push(Update {
                 service: item.service.clone(),
                 name: item.name.clone(),

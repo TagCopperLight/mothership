@@ -102,4 +102,6 @@ digest = "sha256:…"
 repo = "me/app"
 ```
 
+A small image of your own, such as Caddy with a plugin, can be a recipe: a `Dockerfile` in the service's folder that names its version with `LABEL org.opencontainers.image.version="2.8.4"`, and an image with `recipe = true` and no digest yet. Review then writes the workflow that builds recipes into the fleet, and the probe pins each build made from a commit the machines accepted.
+
 When an update fails its health check, the machine restores the data it copied before the update and starts the versions and files that ran then. A service with bulky data that updates never change names the part to copy, such as `snapshot = ["db"]`. `[probe] host = "minipc"` in `mothership.toml` makes that machine follow new patches and minors of every image, waiting 2 days for public ones, and push them as commits that only change versions and digests. `trust` gives the probe's key that right. A machine runs a pin the probe set only once the registry agrees with it, and install asks you when the publisher has moved that tag since.
