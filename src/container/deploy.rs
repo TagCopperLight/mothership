@@ -1,5 +1,5 @@
 use super::{
-    COMPOSE, Rendered, SECRETS, Service, compose,
+    COMPOSE, Published, Rendered, SECRETS, Service, compose,
     confirm::Unconfirmed,
     docker::{Engine, Health, Project},
     port::{self, Bound},
@@ -7,8 +7,9 @@ use super::{
 };
 use crate::{file, hash};
 use anyhow::{Context, Result, bail};
+use serde_json::Value;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -183,16 +184,70 @@ fn write_override(
         services.insert(name.clone(), entry);
         published.insert(name.clone(), serde_json::to_value(&image.ports)?);
     }
-    let text = serde_json::to_string_pretty(&serde_json::json!({
+    let config = serde_json::json!({
         "services": services,
         OWN: { "ports": published },
-    }))?;
-    write_override_text(places, &service.name, &text)?;
+    });
+    write_config(places, &service.name, &config)?;
     Ok(images)
 }
 
-pub fn write_override_text(places: &Places, name: &str, text: &str) -> Result<()> {
+pub fn write_config(places: &Places, name: &str, config: &serde_json::Value) -> Result<()> {
+    let text = serde_json::to_string_pretty(config)?;
     file::write(&places.project(name).join(OVERRIDE), text.as_bytes(), 0o644)
+}
+
+pub enum Binding {
+    Current,
+    Stale(Value),
+    Waiting(String),
+}
+
+pub struct Bindings {
+    pub binding: Binding,
+    pub interfaces: BTreeSet<String>,
+}
+
+pub fn binding(places: &Places, name: &str) -> Result<Bindings> {
+    let path = places.project(name).join(OVERRIDE);
+    let text = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let mut config: Value =
+        serde_json::from_slice(&text).with_context(|| format!("reading {}", path.display()))?;
+    let declared: BTreeMap<String, Vec<Published>> = match config.get(OWN) {
+        None => BTreeMap::new(),
+        Some(own) => serde_json::from_value(own["ports"].clone())
+            .with_context(|| format!("reading {OWN} in {}", path.display()))?,
+    };
+    let interfaces = declared
+        .values()
+        .flatten()
+        .filter_map(|p| p.network.interface().map(str::to_owned))
+        .collect();
+    let mut stale = false;
+    for (service, ports) in &declared {
+        let entries = match port::bind(ports, &places.lookup)? {
+            Bound::Ready(entries) => Value::from(entries),
+            Bound::Waiting(interface) => {
+                return Ok(Bindings {
+                    binding: Binding::Waiting(interface),
+                    interfaces,
+                });
+            }
+        };
+        let current = &mut config["services"][service]["ports"];
+        let current_entries = current.as_array().map_or(&[][..], Vec::as_slice);
+        if current_entries != entries.as_array().expect("built as an array").as_slice() {
+            *current = entries;
+            stale = true;
+        }
+    }
+    Ok(Bindings {
+        binding: match stale {
+            true => Binding::Stale(config),
+            false => Binding::Current,
+        },
+        interfaces,
+    })
 }
 
 fn data_dir(places: &Places, name: &str) -> Result<PathBuf> {
@@ -308,6 +363,7 @@ pub fn deploy(
         Some(why) if update => {
             let after = roll_back(
                 engine,
+                places,
                 &project,
                 &data,
                 &previous,
@@ -400,6 +456,7 @@ fn put_back(dir: &Path, copy: &Path) -> Result<()> {
 
 fn roll_back(
     engine: &dyn Engine,
+    places: &Places,
     project: &Project,
     data: &Path,
     previous: &Path,
@@ -410,6 +467,9 @@ fn roll_back(
         engine.restore(project.name, data, parts)?;
     }
     put_back(&project.dir, previous)?;
+    if let Binding::Stale(config) = binding(places, project.name)?.binding {
+        write_config(places, project.name, &config)?;
+    }
     engine.up(project)?;
     engine.health(project.name)
 }

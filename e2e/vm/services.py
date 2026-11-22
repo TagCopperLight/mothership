@@ -549,7 +549,8 @@ sudo sysctl --quiet --system
 
 def last_service(vm: VM, commit, apply) -> None:
     uid = vm.run("id -u services").stdout.strip()
-    commit("Drop every service", "git rm -q -r types/server/services")
+    commit("Drop every service and Docker", "git rm -q -r types/server/services && sed -i "
+           "'/\"docker-compose\"\\|\"docker.io\"\\|\"rootlesskit\"/d' types/server/system.toml")
     expect(vm.run("sudo mothership scan"), "the type runs no service")
     expect(apply(), "Removed app", "Removed tool", "Removed the services account")
     expect(vm.run("id services", check=False), "no such user", code=1)
@@ -584,6 +585,10 @@ def interface(vm: VM, apply) -> None:
     expect(vm.run("sudo mothership scan"), "other addresses")
     expect(apply(), "app")
     assert reach(vm, "udp", 53, "10.99.0.3") == "1.0.0", "apply binds app to stand0's new address"
+    vm.run(f"{AS_SERVICES} stop extra-extra-1")
+    expect(vm.run("sudo mothership scan"), "extra", "start it")
+    apply()
+    assert running(vm, "extra"), "apply starts a service whose containers all stopped"
 
 
 def old_firewall(vm: VM) -> None:

@@ -260,10 +260,7 @@ pub fn setup(services: &[Service]) -> Result<()> {
     cmd::root("systemctl", &["daemon-reload"])?;
     drop_firewall()?;
     let wanted = wanted_instances(services);
-    for link in enabled_instances()?.difference(&wanted) {
-        let name = link.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        cmd::root("systemctl", &["disable", "--", name])?;
-    }
+    disable_instances(enabled_instances()?.difference(&wanted))?;
     let mut units = vec![UNIT_NAME.to_owned(), START_NAME.to_owned()];
     units.extend(super::interfaces(services).into_iter().map(instance));
     cmd::root(
@@ -312,11 +309,19 @@ pub fn leftovers() -> Result<bool> {
         || !enabled_instances()?.is_empty())
 }
 
-pub fn teardown() -> Result<()> {
-    for link in enabled_instances()? {
-        let name = link.file_name().and_then(|n| n.to_str()).unwrap_or("");
+fn disable_instances<'a>(links: impl IntoIterator<Item = &'a PathBuf>) -> Result<()> {
+    for link in links {
+        let name = link
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("enabled_instances keeps only named links")?;
         cmd::root("systemctl", &["disable", "--", name])?;
     }
+    Ok(())
+}
+
+pub fn teardown() -> Result<()> {
+    disable_instances(&enabled_instances()?)?;
     for (path, name) in [(UNIT, UNIT_NAME), (START, START_NAME)] {
         if Path::new(path).exists() {
             cmd::root("systemctl", &["disable", "--now", "--", name])?;

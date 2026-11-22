@@ -1,8 +1,8 @@
 use super::{
     Action, Service, WORKFLOW, WORKFLOW_PATH, account,
+    deploy::Binding,
     deploy::{self, Places},
     docker::Docker,
-    start::{self, Binding},
     state::{Deployed, State},
 };
 use crate::{
@@ -102,7 +102,9 @@ pub fn scan(
         );
     }
     match docker {
-        Some(docker) if docker.answers() => items.extend(containers(fleet, &state, docker)?),
+        Some(docker) if docker.answers() => {
+            items.extend(containers(fleet, &state, &places, docker)?)
+        }
         Some(_) if missing.is_empty() && !fleet.services.is_empty() => items.push(
             Item::new(
                 Kind::Container,
@@ -153,7 +155,7 @@ fn unowned(places: &Places, owned: &BTreeSet<&str>) -> Result<Vec<PathBuf>> {
 }
 
 fn binding_item(places: &Places, name: &str) -> Result<Option<Item>> {
-    Ok(match start::binding(places, name)?.binding {
+    Ok(match deploy::binding(places, name)?.binding {
         Binding::Current => None,
         Binding::Waiting(interface) => Some(
             Item::new(Kind::Container, Change::Unreadable, name, "waiting")
@@ -163,7 +165,7 @@ fn binding_item(places: &Places, name: &str) -> Result<Option<Item>> {
         Binding::Stale(_) => Some(fleet_item(
             Item::new(Kind::Container, Change::Edited, name, "other addresses")
                 .noting("an interface it faces has other addresses than the ones it listens on")
-                .reverting(Action::Bind(name.to_owned())),
+                .reverting(Action::Start(name.to_owned())),
         )),
     })
 }
@@ -258,7 +260,7 @@ fn edited(places: &Places, name: &str, entry: &Deployed) -> Result<Vec<Item>> {
         .collect())
 }
 
-fn containers(fleet: &Fleet, state: &State, docker: &Docker) -> Result<Vec<Item>> {
+fn containers(fleet: &Fleet, state: &State, places: &Places, docker: &Docker) -> Result<Vec<Item>> {
     let known: BTreeSet<&str> = fleet
         .services
         .iter()
@@ -266,7 +268,11 @@ fn containers(fleet: &Fleet, state: &State, docker: &Docker) -> Result<Vec<Item>
         .chain(state.services.keys().map(String::as_str))
         .collect();
     let mut items = Vec::new();
+    let mut up = BTreeSet::new();
     for container in docker.containers()? {
+        if ["running", "restarting"].contains(&container.state.status.as_str()) {
+            up.extend(container.project().map(str::to_owned));
+        }
         let shown = container.shown().to_owned();
         let project = container.project().filter(|p| known.contains(p));
         let Some(project) = project else {
@@ -302,6 +308,25 @@ fn containers(fleet: &Fleet, state: &State, docker: &Docker) -> Result<Vec<Item>
                     .reverting(Action::Deploy(project.to_owned()))
                     .because("the probe or a fleet commit changes what a service runs"),
             );
+        }
+    }
+    for (name, entry) in &state.services {
+        let current = || -> Result<bool> {
+            Ok(matches!(
+                deploy::binding(places, name)?.binding,
+                Binding::Current
+            ))
+        };
+        if !entry.running.is_empty()
+            && !up.contains(name)
+            && fleet.services.iter().any(|s| &s.name == name)
+            && current()?
+        {
+            items.push(fleet_item(
+                Item::new(Kind::Container, Change::Removed, name, "stopped")
+                    .noting("none of its containers runs")
+                    .reverting(Action::Start(name.clone())),
+            ));
         }
     }
     Ok(items)

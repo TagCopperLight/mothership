@@ -1,73 +1,19 @@
 use super::{
-    Published,
-    deploy::{self, OVERRIDE, OWN, Places},
+    deploy::{self, Binding, Bindings, Places, binding},
     docker::{Docker, Engine, Project},
-    port::{self, Bound},
-    registry,
+    port, registry,
     state::State,
 };
 use crate::{fleet::Fleet, http::Curl};
 use anyhow::{Context, Result, bail};
-use serde_json::Value;
 use std::{
-    collections::{BTreeMap, BTreeSet},
     thread,
     time::{Duration, Instant},
 };
 
 const ADDRESS_WAIT: Duration = Duration::from_secs(30);
 
-pub enum Binding {
-    Current,
-    Stale(Value),
-    Waiting(String),
-}
-
-pub struct Bindings {
-    pub binding: Binding,
-    pub interfaces: BTreeSet<String>,
-}
-
 pub type Env<'a> = &'a dyn Fn(&str) -> Result<Vec<(String, String)>>;
-
-pub fn binding(places: &Places, name: &str) -> Result<Bindings> {
-    let path = places.project(name).join(OVERRIDE);
-    let text = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
-    let mut config: Value =
-        serde_json::from_slice(&text).with_context(|| format!("reading {}", path.display()))?;
-    let declared: BTreeMap<String, Vec<Published>> =
-        serde_json::from_value(config[OWN]["ports"].clone()).unwrap_or_default();
-    let interfaces = declared
-        .values()
-        .flatten()
-        .filter_map(|p| p.network.interface().map(str::to_owned))
-        .collect();
-    let mut stale = false;
-    for (service, ports) in &declared {
-        let entries = match port::bind(ports, &places.lookup)? {
-            Bound::Ready(entries) => Value::from(entries),
-            Bound::Waiting(interface) => {
-                return Ok(Bindings {
-                    binding: Binding::Waiting(interface),
-                    interfaces,
-                });
-            }
-        };
-        let current = &mut config["services"][service]["ports"];
-        let current_entries = current.as_array().map_or(&[][..], Vec::as_slice);
-        if current_entries != entries.as_array().expect("built as an array").as_slice() {
-            *current = entries;
-            stale = true;
-        }
-    }
-    Ok(Bindings {
-        binding: match stale {
-            true => Binding::Stale(config),
-            false => Binding::Current,
-        },
-        interfaces,
-    })
-}
 
 pub fn services(
     engine: &dyn Engine,
@@ -108,7 +54,7 @@ fn one(
         Binding::Current => engine.start(name),
         Binding::Stale(config) => {
             let env = env(name)?;
-            deploy::write_override_text(places, name, &serde_json::to_string_pretty(&config)?)?;
+            deploy::write_config(places, name, &config)?;
             engine.up(&Project {
                 name,
                 dir: places.project(name),
@@ -127,14 +73,16 @@ pub fn fleet_env(fleet: &Fleet, name: &str) -> Result<Vec<(String, String)>> {
     Ok(deploy::env(&service.render(fleet.root_keys())?))
 }
 
+pub fn wait_for_address(interface: &str) -> Result<()> {
+    let start = Instant::now();
+    while port::addresses(interface)?.is_empty() && start.elapsed() < ADDRESS_WAIT {
+        thread::sleep(Duration::from_secs(1));
+    }
+    Ok(())
+}
+
 pub fn command(interface: Option<&str>) -> Result<()> {
     let places = Places::here()?;
-    if let Some(interface) = interface {
-        let start = Instant::now();
-        while (places.lookup)(interface)?.is_empty() && start.elapsed() < ADDRESS_WAIT {
-            thread::sleep(Duration::from_secs(1));
-        }
-    }
     let client = registry::Client::new(Box::new(Curl), None)?;
     let Some(docker) = Docker::find(client)? else {
         return Ok(());

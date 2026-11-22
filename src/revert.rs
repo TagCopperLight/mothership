@@ -188,6 +188,12 @@ fn run_machine(fleet: &Fleet, changes: &[&Machine]) -> Result<()> {
     if !install.is_empty() {
         distro.install(&fleet.aur(), &install)?;
     }
+    let (removals, containers): (Vec<&container::Action>, Vec<&container::Action>) = containers
+        .into_iter()
+        .partition(|action| action.takes_away());
+    if !removals.is_empty() {
+        container::run(fleet, &removals)?;
+    }
     if !uninstall.is_empty() {
         distro.uninstall(&fleet.listed_packages(), &uninstall)?;
     }

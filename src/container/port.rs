@@ -37,6 +37,7 @@ pub enum Bound {
 
 const PUBLIC: &str = "public";
 const LOCAL: &str = "local";
+const LOOPBACK_INTERFACE: &str = "lo";
 const LOOPBACK: [&str; 2] = ["127.0.0.1", "::1"];
 const INTERFACES: &str = "/sys/class/net";
 const NAME_LIMIT: usize = 15;
@@ -105,6 +106,7 @@ impl TryFrom<String> for Network {
         Ok(match name.as_str() {
             PUBLIC => Network::Public,
             LOCAL => Network::Local,
+            LOOPBACK_INTERFACE => bail!("{name} is the machine itself: name it {LOCAL}"),
             _ => {
                 let plain = !name.is_empty()
                     && name.len() <= NAME_LIMIT

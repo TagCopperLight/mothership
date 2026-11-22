@@ -15,7 +15,7 @@ pub enum Action {
     Teardown,
     Deploy(String),
     Remove(String),
-    Bind(String),
+    Start(String),
     RemoveContainer(String),
     Overwrite { service: String, file: PathBuf },
     Probe,
@@ -23,13 +23,20 @@ pub enum Action {
 }
 
 impl Action {
+    pub fn takes_away(&self) -> bool {
+        matches!(
+            self,
+            Action::Teardown | Action::Remove(_) | Action::RemoveContainer(_)
+        )
+    }
+
     pub fn describe(&self) -> &'static str {
         match self {
             Action::Setup => "set it up",
             Action::Teardown => "remove it and everything it runs",
             Action::Deploy(_) => "start the fleet's versions",
             Action::Remove(_) => "stop it and remove its containers, keeping its data",
-            Action::Bind(_) => "start it on its interfaces' addresses",
+            Action::Start(_) => "start it",
             Action::RemoveContainer(_) => "remove it",
             Action::Overwrite { .. } => "write the fleet's version",
             Action::Probe => "install and start it",
@@ -84,7 +91,7 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     let bind: Vec<&str> = actions
         .iter()
         .filter_map(|action| match action {
-            Action::Bind(name) => Some(name.as_str()),
+            Action::Start(name) => Some(name.as_str()),
             _ => None,
         })
         .collect();
@@ -101,7 +108,7 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
             | Action::Teardown
             | Action::Probe
             | Action::Unprobe
-            | Action::Bind(_) => {}
+            | Action::Start(_) => {}
             Action::RemoveContainer(id) => docker.remove_container(id)?,
             Action::Remove(name) => {
                 let entry = state
@@ -203,7 +210,7 @@ pub fn problems() -> Result<Vec<String>> {
         if entry.running.is_empty() {
             continue;
         }
-        if let start::Binding::Waiting(interface) = start::binding(&places, name)?.binding {
+        if let deploy::Binding::Waiting(interface) = deploy::binding(&places, name)?.binding {
             problems.push(format!(
                 "{name}: it waits for {interface} to have an address"
             ));

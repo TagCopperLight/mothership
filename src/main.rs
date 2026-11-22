@@ -244,10 +244,22 @@ fn start_services(interface: Option<&str>) -> anyhow::Result<()> {
     if !user::is_root() {
         bail!("mothership start runs as root, from services' units");
     }
+    if let Some(interface) = interface
+        && container::Network::try_from(interface.to_owned())?
+            .interface()
+            .is_none()
+    {
+        bail!("{interface} isn't a network interface");
+    }
+    if let Some(interface) = interface {
+        container::start::wait_for_address(interface)?;
+    }
     match lock()? {
         Some(_lock) => container::start::command(interface),
         None => {
-            println!("Another mothership command is running, and it starts the services.");
+            println!(
+                "Another mothership command is running: scan shows a service this leaves stopped"
+            );
             Ok(())
         }
     }
