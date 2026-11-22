@@ -3,7 +3,7 @@ use super::{
     confirm::Unconfirmed,
     deploy::{self, Outcome, Places, Wanted},
     docker::Docker,
-    docker_config, registry, start,
+    docker_config, link, registry, start,
     state::State,
 };
 use crate::{file, fleet::Fleet, http::Curl, probe};
@@ -17,6 +17,7 @@ pub enum Action {
     Remove(String),
     Start(String),
     RemoveContainer(String),
+    RemoveLink(String),
     Overwrite { service: String, file: PathBuf },
     Probe,
     Unprobe,
@@ -26,7 +27,10 @@ impl Action {
     pub fn takes_away(&self) -> bool {
         matches!(
             self,
-            Action::Teardown | Action::Remove(_) | Action::RemoveContainer(_)
+            Action::Teardown
+                | Action::Remove(_)
+                | Action::RemoveContainer(_)
+                | Action::RemoveLink(_)
         )
     }
 
@@ -38,6 +42,7 @@ impl Action {
             Action::Remove(_) => "stop it and remove its containers, keeping its data",
             Action::Start(_) => "start it",
             Action::RemoveContainer(_) => "remove it",
+            Action::RemoveLink(_) => "disconnect its containers and remove it",
             Action::Overwrite { .. } => "write the fleet's version",
             Action::Probe => "install and start it",
             Action::Unprobe => "stop and remove it",
@@ -107,6 +112,7 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
             | Action::Unprobe
             | Action::Start(_) => {}
             Action::RemoveContainer(id) => docker.remove_container(id)?,
+            Action::RemoveLink(network) => docker.remove_link(network)?,
             Action::Remove(name) => {
                 let entry = state
                     .services
@@ -154,6 +160,9 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
         }
         state.save()?;
         unconfirmed.save()?;
+    }
+    if let Err(e) = docker.drop_unused_links(&link::networks(&fleet.services)) {
+        failed.push(format!("removing links no service declares: {e:#}"));
     }
     if !failed.is_empty() {
         bail!("couldn't apply {}", failed.join("\n"));

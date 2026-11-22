@@ -40,10 +40,15 @@ fn one(engine: &dyn Engine, places: &Places, name: &str, facing: Option<&str>) -
     if facing.is_some_and(|interface| !interfaces.contains(interface)) {
         return Ok(());
     }
-    match binding {
-        Binding::Waiting(_) => Ok(()),
-        Binding::Current => engine.start(name),
-        Binding::Stale(config) => {
+    let stale = match binding {
+        Binding::Waiting(_) => return Ok(()),
+        Binding::Current => None,
+        Binding::Stale(config) => Some(config),
+    };
+    deploy::join_links(engine, places, name)?;
+    match stale {
+        None => engine.start(name),
+        Some(config) => {
             let env = deploy::written_env(places, name)?;
             deploy::write_config(places, name, &config)?;
             engine.up(&Project {

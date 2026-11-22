@@ -1,3 +1,4 @@
+use super::link;
 use crate::file;
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
@@ -8,6 +9,7 @@ use std::{
 
 pub fn check(
     config: &Value,
+    name: &str,
     project: &Path,
     data: &Path,
     images: &BTreeMap<String, String>,
@@ -29,10 +31,38 @@ pub fn check(
             data.display()
         );
     }
+    for (key, network) in config["networks"].as_object().into_iter().flatten() {
+        if key.starts_with(link::PREFIX) {
+            bail!(
+                "compose.yaml names a network {key}: names starting with {} are mothership's links",
+                link::PREFIX
+            );
+        }
+        if network["external"].as_bool() == Some(true)
+            || network["name"].as_str() != Some(&format!("{name}_{key}"))
+        {
+            bail!(
+                "compose.yaml uses the network {key} from outside the service: another service \
+                 calls it through callers in service.toml"
+            );
+        }
+    }
     let inside = |source: &Path| {
         file::plain_within(project, source).is_some() || file::plain_within(data, source).is_some()
     };
     for (name, service) in services {
+        if service.get("network_mode").is_some() {
+            bail!("{name} sets network_mode: a container stays on its service's networks");
+        }
+        if service["external_links"]
+            .as_array()
+            .is_some_and(|l| !l.is_empty())
+        {
+            bail!(
+                "{name} links containers outside the service: another service calls it through \
+                 callers in service.toml"
+            );
+        }
         if service.get("build").is_some() {
             bail!("{name} builds its image: the fleet runs only pinned images");
         }

@@ -4,6 +4,7 @@ mod compose;
 pub mod confirm;
 pub mod deploy;
 pub mod docker;
+pub mod link;
 mod port;
 pub mod registry;
 pub mod scan;
@@ -52,6 +53,8 @@ pub struct Image {
     pub recipe: bool,
     #[serde(default, deserialize_with = "port::by_network")]
     pub ports: Vec<Published>,
+    #[serde(default)]
+    pub callers: BTreeSet<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, PartialOrd, Ord)]
@@ -180,6 +183,7 @@ pub fn parse_toml(text: &str) -> Result<ServiceToml> {
     }
     for (name, image) in &parsed.images {
         image.check().with_context(|| format!("images.{name}"))?;
+        link::check_callers(name, &image.callers).with_context(|| format!("images.{name}"))?;
     }
     for part in &parsed.snapshot {
         let plain = part
@@ -322,6 +326,7 @@ pub struct Service {
     pub dir: PathBuf,
     pub images: BTreeMap<String, Image>,
     pub snapshot: Vec<PathBuf>,
+    pub links: Vec<link::Link>,
 }
 
 pub fn load(type_dir: &Path) -> Result<Vec<Service>> {
@@ -350,9 +355,18 @@ pub fn load(type_dir: &Path) -> Result<Vec<Service>> {
             dir,
             images,
             snapshot,
+            links: Vec::new(),
         });
     }
     published(&services)?;
+    let links = link::between(&services)?;
+    for service in &mut services {
+        service.links = links
+            .iter()
+            .filter(|link| link.service == service.name || link.caller == service.name)
+            .cloned()
+            .collect();
+    }
     Ok(services)
 }
 

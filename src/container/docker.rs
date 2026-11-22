@@ -1,4 +1,4 @@
-use super::{Image, Pin, account, registry};
+use super::{Image, Pin, account, link, registry};
 use crate::{
     cmd::{self, As},
     user::User,
@@ -7,6 +7,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
+    collections::BTreeSet,
     ffi::OsString,
     path::{Path, PathBuf},
     process::Command,
@@ -44,6 +45,7 @@ pub trait Engine {
     fn snapshot(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()>;
     fn restore(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()>;
     fn confirm(&self, image: &Image, pin: &Pin) -> Result<Option<String>>;
+    fn link(&self, network: &str) -> Result<()>;
 }
 
 #[derive(Deserialize)]
@@ -158,6 +160,40 @@ impl Docker {
     pub fn remove_container(&self, name: &str) -> Result<()> {
         self.query(&["rm", "--force", "--volumes", "--", name])
             .map(drop)
+    }
+
+    pub fn links(&self) -> Result<Vec<String>> {
+        let out = self.query(&["network", "ls", "--format", "{{.Name}}"])?;
+        Ok(String::from_utf8(out)?
+            .lines()
+            .filter(|name| name.starts_with(link::PREFIX))
+            .map(str::to_owned)
+            .collect())
+    }
+
+    fn attached(&self, network: &str) -> Result<Vec<String>> {
+        let format = "{{range $id, $_ := .Containers}}{{$id}} {{end}}";
+        let out = self.query(&["network", "inspect", "--format", format, "--", network])?;
+        Ok(String::from_utf8(out)?
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect())
+    }
+
+    pub fn remove_link(&self, network: &str) -> Result<()> {
+        for container in self.attached(network)? {
+            self.query(&["network", "disconnect", "--force", network, &container])?;
+        }
+        self.query(&["network", "rm", "--", network]).map(drop)
+    }
+
+    pub fn drop_unused_links(&self, wanted: &BTreeSet<String>) -> Result<()> {
+        for network in self.links()? {
+            if !wanted.contains(&network) && self.attached(&network)?.is_empty() {
+                self.query(&["network", "rm", "--", &network])?;
+            }
+        }
+        Ok(())
     }
 
     fn of(&self, name: &str) -> Result<Vec<Container>> {
@@ -281,6 +317,14 @@ impl Engine for Docker {
 
     fn confirm(&self, image: &Image, pin: &Pin) -> Result<Option<String>> {
         self.registry.contradicts(image, pin)
+    }
+
+    fn link(&self, network: &str) -> Result<()> {
+        if self.query(&["network", "inspect", "--", network]).is_ok() {
+            return Ok(());
+        }
+        self.query(&["network", "create", "--internal", "--", network])
+            .map(drop)
     }
 }
 

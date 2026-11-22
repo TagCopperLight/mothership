@@ -36,7 +36,11 @@ impl Engine for Fake {
     fn config(&self, project: &Project) -> Result<serde_json::Value> {
         let text = fs::read_to_string(project.dir.join(OVERRIDE))?;
         self.log("config");
-        Ok(serde_json::from_str(&text)?)
+        let mut config: serde_json::Value = serde_json::from_str(&text)?;
+        for service in config["services"].as_object_mut().unwrap().values_mut() {
+            service["networks"] = serde_json::json!({ "default": null });
+        }
+        Ok(config)
     }
     fn pull(&self, _: &Project) -> Result<()> {
         self.log("pull");
@@ -78,6 +82,10 @@ impl Engine for Fake {
     }
     fn restore(&self, _: &str, _: &Path, parts: &[PathBuf]) -> Result<()> {
         self.log(with_parts("restore", parts));
+        Ok(())
+    }
+    fn link(&self, network: &str) -> Result<()> {
+        self.log(format!("link {network}"));
         Ok(())
     }
     fn confirm(&self, _: &Image, pin: &Pin) -> Result<Option<String>> {
@@ -430,4 +438,65 @@ fn a_service_facing_an_interface_follows_its_addresses_and_waits_without_one() {
     world.places.lookup = |_| Ok(Vec::new());
     assert!(start(&world, None).is_empty());
     assert_eq!(host(&world), "100.64.0.2");
+}
+
+#[test]
+fn a_link_puts_the_reached_container_and_every_caller_container_on_one_network() {
+    let mut world = World::new();
+    let engine = Fake::default();
+    world.pin("1.0.0", A);
+    let app = world.fleet.join("services/app");
+    let text = fs::read_to_string(app.join("service.toml")).unwrap();
+    fs::write(
+        app.join("service.toml"),
+        format!("{text}callers = [\"gate\"]\n"),
+    )
+    .unwrap();
+    let gate = world.fleet.join("services/gate");
+    fs::create_dir_all(&gate).unwrap();
+    fs::write(
+        gate.join("service.toml"),
+        text.replace("[images.app]", "[images.web]"),
+    )
+    .unwrap();
+    fs::write(gate.join(COMPOSE), "services: {web: {}}\n").unwrap();
+    let services = load(&world.fleet).unwrap();
+    let override_of = |world: &World, name: &str| -> serde_json::Value {
+        let text = fs::read_to_string(world.places.project(name).join(OVERRIDE)).unwrap();
+        serde_json::from_str(&text).unwrap()
+    };
+    let unlinked = world.pin("1.0.0", A);
+    let (before, _) = world.deploy(&engine, &unlinked, None);
+    assert!(override_of(&world, "app").get("networks").is_none());
+    engine.calls();
+
+    let network = "link.app.app.gate";
+    let (entry, outcome) = world.deploy(&engine, &services[0], Some(&before));
+    assert_eq!(outcome, Outcome::Updated);
+    assert_ne!(
+        entry.fleet, before.fleet,
+        "a new link redeploys the service"
+    );
+    let config = override_of(&world, "app");
+    assert_eq!(config["networks"][network]["external"], true);
+    assert_eq!(
+        config["services"]["app"]["networks"][network]["aliases"],
+        serde_json::json!(["app.app"])
+    );
+    let calls = engine.calls();
+    let link = calls
+        .iter()
+        .position(|c| *c == format!("link {network}"))
+        .unwrap();
+    let up = calls.iter().position(|c| c.starts_with("up")).unwrap();
+    assert!(
+        link < up,
+        "the network exists before the service starts: {calls:?}"
+    );
+
+    let mut state = crate::container::state::State::default();
+    state.services.insert("app".into(), entry);
+    let failed = crate::container::start::services(&engine, &world.places, &state, None, &|_| true);
+    assert!(failed.is_empty(), "{failed:?}");
+    assert_eq!(engine.calls(), [format!("link {network}"), "start".into()]);
 }

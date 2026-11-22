@@ -73,6 +73,7 @@ fn a_base_with_a_new_digest_asks_the_project_to_rebuild_its_version() {
             repo: Some("me/app".into()),
             recipe: false,
             ports: Vec::new(),
+            callers: Default::default(),
         },
         dockerfile: None,
     }];
@@ -168,6 +169,7 @@ fn a_recipe_whose_base_changes_asks_the_fleet_to_rebuild_it() {
             repo: None,
             recipe: true,
             ports: Vec::new(),
+            callers: Default::default(),
         },
         dockerfile: Some("FROM caddy:2.8.4-builder\n".into()),
     }];

@@ -310,6 +310,16 @@ fn containers(fleet: &Fleet, state: &State, places: &Places, docker: &Docker) ->
             );
         }
     }
+    let declared = super::link::networks(&fleet.services);
+    for network in docker.links()? {
+        if !declared.contains(&network) {
+            items.push(fleet_item(
+                Item::new(Kind::Container, Change::Added, &network, "no link")
+                    .noting("no service's callers in the fleet declare this link")
+                    .reverting(Action::RemoveLink(network.clone())),
+            ));
+        }
+    }
     for (name, entry) in &state.services {
         let current = || -> Result<bool> {
             Ok(matches!(

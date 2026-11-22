@@ -44,6 +44,7 @@ fn watched(version: &str, repo: Option<&str>) -> Watched {
             repo: repo.map(str::to_owned),
             recipe: false,
             ports: Vec::new(),
+            callers: Default::default(),
         },
         dockerfile: None,
     }

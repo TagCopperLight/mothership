@@ -2,6 +2,7 @@ use super::{
     COMPOSE, Published, Rendered, SECRETS, Service, compose,
     confirm::Unconfirmed,
     docker::{Engine, Health, Project},
+    link,
     port::{self, Bound},
     state::{Deployed, Pins, Problem},
 };
@@ -72,6 +73,9 @@ pub fn fingerprint(service: &Service, rendered: &Rendered, token: Option<&[u8]>)
         for published in &image.ports {
             fields.add(published.to_string().as_bytes());
         }
+    }
+    for link in &service.links {
+        fields.add(link.network().as_bytes());
     }
     for (rel, bytes) in &rendered.files {
         fields.add(rel.as_os_str().as_encoded_bytes());
@@ -150,9 +154,9 @@ fn private_dir(dir: &Path, gid: u32) -> Result<()> {
 }
 
 #[derive(Clone, Copy)]
-enum Stage {
+enum Stage<'a> {
     Checked,
-    Published,
+    Published(&'a Value),
 }
 
 fn write_override(
@@ -163,6 +167,10 @@ fn write_override(
 ) -> Result<BTreeMap<String, String>> {
     let mut images = BTreeMap::new();
     let mut services = serde_json::Map::new();
+    let (mut joined, declared) = match stage {
+        Stage::Checked => Default::default(),
+        Stage::Published(checked) => link::join(service, checked)?,
+    };
     let mut published = serde_json::Map::new();
     for (name, pin) in pins {
         let image = service
@@ -170,7 +178,10 @@ fn write_override(
             .get(name)
             .with_context(|| format!("{} no longer pins images.{name}", service.name))?;
         let mut entry = serde_json::json!({ "image": image.reference(pin) });
-        if let Stage::Published = stage {
+        if let Some(networks) = joined.remove(name) {
+            entry["networks"] = networks;
+        }
+        if let Stage::Published(_) = stage {
             entry["ports"] = match port::bind(&image.ports, &places.lookup)? {
                 Bound::Ready(entries) => entries.into(),
                 Bound::Waiting(interface) => bail!(
@@ -184,10 +195,13 @@ fn write_override(
         services.insert(name.clone(), entry);
         published.insert(name.clone(), serde_json::to_value(&image.ports)?);
     }
-    let config = serde_json::json!({
+    let mut config = serde_json::json!({
         "services": services,
         OWN: { "ports": published },
     });
+    if !declared.is_empty() {
+        config["networks"] = declared.into();
+    }
     write_config(places, &service.name, &config)?;
     Ok(images)
 }
@@ -373,6 +387,7 @@ pub fn deploy(
             engine.snapshot(name, &data, &service.snapshot)?;
             snapshotted = true;
         }
+        join_links(engine, places, name)?;
         engine.up(&project)?;
         engine.health(name)
     })();
@@ -448,9 +463,10 @@ fn prepare(
     let files = write_files(places, wanted, entry)?;
     let images = write_override(places, service, &service.pins(), Stage::Checked)?;
     let data = data_dir(places, &service.name)?;
-    compose::check(&engine.config(project)?, &project.dir, &data, &images)
+    let checked = engine.config(project)?;
+    compose::check(&checked, &service.name, &project.dir, &data, &images)
         .with_context(|| format!("checking {}/{COMPOSE}", service.dir.display()))?;
-    write_override(places, service, &service.pins(), Stage::Published)?;
+    write_override(places, service, &service.pins(), Stage::Published(&checked))?;
     engine.pull(project)?;
     Ok((files, data))
 }
@@ -493,12 +509,29 @@ fn roll_back(
     if let Binding::Stale(config) = binding(places, project.name)?.binding {
         write_config(places, project.name, &config)?;
     }
+    join_links(engine, places, project.name)?;
     engine.up(&Project {
         name: project.name,
         dir: project.dir.clone(),
         env: written_env(places, project.name)?,
     })?;
     engine.health(project.name)
+}
+
+pub fn join_links(engine: &dyn Engine, places: &Places, name: &str) -> Result<()> {
+    let path = places.project(name).join(OVERRIDE);
+    let text = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let config: Value =
+        serde_json::from_slice(&text).with_context(|| format!("reading {}", path.display()))?;
+    for network in config["networks"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(n, _)| n)
+    {
+        engine.link(network)?;
+    }
+    Ok(())
 }
 
 pub fn describe(pins: &[(&String, &super::Pin)]) -> String {

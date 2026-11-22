@@ -12,7 +12,7 @@ fn err(config: Value) -> String {
     );
     format!(
         "{:#}",
-        check(&config, project, data, &images()).unwrap_err()
+        check(&config, "app", project, data, &images()).unwrap_err()
     )
 }
 
@@ -27,7 +27,7 @@ fn a_service_mounts_only_its_data_and_its_own_files() {
         Path::new("/var/lib/mothership/services/app"),
         Path::new("/srv/app"),
     );
-    check(&config, project, data, &images()).unwrap();
+    check(&config, "app", project, data, &images()).unwrap();
 
     let bind = |source: &str| {
         json!({"services": {"app": {"image": "app:1@sha256:1", "volumes": [
@@ -80,5 +80,53 @@ fn every_container_runs_its_pinned_image() {
             {"mode": "ingress", "target": 80, "published": "80", "protocol": "tcp"}]}}})
         ),
         "app publishes ports in compose.yaml: declare them in service.toml"
+    );
+}
+
+#[test]
+fn a_service_stays_on_its_own_networks() {
+    let app = |extra: Value| {
+        let mut service = json!({"image": "app:1@sha256:1", "networks": {"back": null}});
+        service
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        service
+    };
+    let with = |networks: Value, extra: Value| json!({"services": {"app": app(extra)}, "networks": networks});
+    let (project, data) = (
+        Path::new("/var/lib/mothership/services/app"),
+        Path::new("/srv/app"),
+    );
+    let own = json!({"back": {"name": "app_back"}, "default": {"name": "app_default"}});
+    check(&with(own, json!({})), "app", project, data, &images()).unwrap();
+
+    let outside = "compose.yaml uses the network back from outside the service: another service \
+                   calls it through callers in service.toml";
+    assert_eq!(
+        err(with(json!({"back": {"name": "other_default"}}), json!({}))),
+        outside
+    );
+    assert_eq!(
+        err(with(
+            json!({"back": {"name": "app_back", "external": true}}),
+            json!({})
+        )),
+        outside
+    );
+    assert!(
+        err(with(
+            json!({"link.a.b.c": {"name": "app_link.a.b.c"}}),
+            json!({})
+        ))
+        .contains("names starting with link. are mothership's links")
+    );
+    assert_eq!(
+        err(with(json!({}), json!({"network_mode": "host"}))),
+        "app sets network_mode: a container stays on its service's networks"
+    );
+    assert!(
+        err(with(json!({}), json!({"external_links": ["other-db-1"]})))
+            .starts_with("app links containers outside the service")
     );
 }

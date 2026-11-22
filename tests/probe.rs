@@ -83,6 +83,7 @@ fn caddy() -> Watched {
             repo: None,
             recipe: true,
             ports: Vec::new(),
+            callers: Default::default(),
         },
         dockerfile: None,
     }
