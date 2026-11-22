@@ -9,7 +9,7 @@ use std::{
 const VERSION: &str = env!("APP_VERSION");
 const BROKEN: &str = "1.0.2";
 const TCP: [u16; 2] = [80, 5432];
-const UDP: u16 = 443;
+const UDP: [u16; 2] = [443, 53];
 
 fn main() {
     if env::args().nth(1).as_deref() == Some("health") {
@@ -44,17 +44,19 @@ fn main() {
             Err(e) => bound.push_str(&format!("{port}/tcp {e}\n")),
         }
     }
-    match UdpSocket::bind(("0.0.0.0", UDP)) {
-        Ok(socket) => {
-            bound.push_str(&format!("{UDP}/udp ok\n"));
-            thread::spawn(move || {
-                let mut buffer = [0; 64];
-                while let Ok((_, from)) = socket.recv_from(&mut buffer) {
-                    let _ = socket.send_to(VERSION.as_bytes(), from);
-                }
-            });
+    for port in UDP {
+        match UdpSocket::bind(("0.0.0.0", port)) {
+            Ok(socket) => {
+                bound.push_str(&format!("{port}/udp ok\n"));
+                thread::spawn(move || {
+                    let mut buffer = [0; 64];
+                    while let Ok((_, from)) = socket.recv_from(&mut buffer) {
+                        let _ = socket.send_to(VERSION.as_bytes(), from);
+                    }
+                });
+            }
+            Err(e) => bound.push_str(&format!("{port}/udp {e}\n")),
         }
-        Err(e) => bound.push_str(&format!("{UDP}/udp {e}\n")),
     }
     fs::write("/data/ports", bound).unwrap();
     loop {

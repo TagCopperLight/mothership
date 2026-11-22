@@ -52,6 +52,10 @@ impl Engine for Fake {
         self.log("stop");
         Ok(())
     }
+    fn start(&self, _: &str) -> Result<()> {
+        self.log("start");
+        Ok(())
+    }
     fn down(&self, _: &str) -> Result<()> {
         self.log("down");
         Ok(())
@@ -99,6 +103,7 @@ impl World {
             projects: dir.path().join("projects"),
             data: dir.path().join("srv"),
             owner: (meta.uid(), meta.gid()),
+            lookup: |_| Ok(Vec::new()),
         };
         World {
             _dir: dir,
@@ -346,4 +351,67 @@ fn overwriting_an_edited_file_writes_the_fleets_version() {
     )
     .unwrap();
     assert_eq!(fs::read_to_string(&conf).unwrap(), "version 1.0.0\n");
+}
+
+#[test]
+fn a_service_facing_an_interface_follows_its_addresses_and_waits_without_one() {
+    let mut world = World::new();
+    let engine = Fake::default();
+    world.pin("1.0.0", A);
+    let toml = world.fleet.join("services/app/service.toml");
+    let text = fs::read_to_string(&toml).unwrap();
+    fs::write(&toml, format!("{text}ports.wg0 = [\"53/udp\"]\n")).unwrap();
+    let service = load(&world.fleet).unwrap().remove(0);
+    let rendered = service.render(&Keys::default()).unwrap();
+    let wanted = Wanted {
+        service: &service,
+        key: "server/app".into(),
+        fleet: fingerprint(&service, &rendered, None),
+        rendered: &rendered,
+        overwrite: Vec::new(),
+    };
+    let err = deploy(
+        &engine,
+        &world.places,
+        &wanted,
+        None,
+        &mut world.unconfirmed,
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("publishes on wg0, which has no address yet"));
+    engine.calls();
+
+    world.places.lookup = |_| Ok(vec!["100.64.0.1".parse()?]);
+    let (entry, _) = world.deploy(&engine, &service, None);
+    let host = |world: &World| {
+        let text = fs::read_to_string(world.places.project("app").join(OVERRIDE)).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&text).unwrap();
+        config["services"]["app"]["ports"][0]["host_ip"].clone()
+    };
+    assert_eq!(host(&world), "100.64.0.1");
+    let mut state = crate::container::state::State::default();
+    state.services.insert("app".into(), entry);
+    let start = |world: &World, facing: Option<&str>| {
+        engine.calls();
+        let failed = crate::container::start::services(
+            &engine,
+            &world.places,
+            &state,
+            facing,
+            &|_| true,
+            &|_| Ok(Vec::new()),
+        );
+        assert!(failed.is_empty(), "{failed:?}");
+        engine.calls()
+    };
+    assert_eq!(start(&world, None), ["start"]);
+    assert!(start(&world, Some("eth0")).is_empty());
+
+    world.places.lookup = |_| Ok(vec!["100.64.0.2".parse()?]);
+    assert_eq!(start(&world, Some("wg0")), ["up app:1.0.0"]);
+    assert_eq!(host(&world), "100.64.0.2");
+
+    world.places.lookup = |_| Ok(Vec::new());
+    assert!(start(&world, None).is_empty());
+    assert_eq!(host(&world), "100.64.0.2");
 }

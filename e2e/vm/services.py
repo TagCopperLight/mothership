@@ -42,6 +42,7 @@ PACKAGES = ["chezmoi", "curl", "dbus-user-session", "docker-compose", "docker.io
 VERSIONS = ["1.0.0", "1.0.1", "1.0.2", "1.0.3"]
 TOKEN = "s3cret-token"
 FLEET = "/var/lib/mothership/fleet"
+STAND_IN = "stand0"
 
 
 def main() -> int:
@@ -397,7 +398,8 @@ def fleet(tmp: Path, image: str, registry: Registry, root: x25519.Identity) -> P
 
 
 def pinned(image: str, registry: Registry, version: str, mine: bool) -> str:
-    repo = 'repo = "me/app"\nports = ["80/tcp", "443/udp"]\n' if mine else ""
+    repo = ('repo = "me/app"\nports.public = ["80/tcp", "443/udp"]\nports.local = ["5432/tcp"]\n'
+            f'ports.{STAND_IN} = ["53/udp"]\n' if mine else "")
     snapshot = 'snapshot = ["precious"]\n\n' if mine else ""
     return (f'{snapshot}[images.app]\nimage = "{image}"\nversion = "{version}"\n'
             f'digest = "{registry.digest(version)}"\n{repo}')
@@ -438,6 +440,9 @@ git -c user.name=Me -c user.email=me@example.com commit -q -m 'The fleet'
 git remote add origin ssh://me@localhost/home/me/origin.git
 git push -q -u origin main
 sudo sh /tmp/anchor.sh
+sudo ip link add {STAND_IN} type dummy
+sudo ip address add 10.99.0.1/24 dev {STAND_IN}
+sudo ip link set {STAND_IN} up
 echo 'net.ipv4.ip_unprivileged_port_start = 80' | sudo tee /etc/sysctl.d/60-mothership-services.conf > /dev/null
 sudo sysctl --quiet --system
 """)
@@ -452,11 +457,12 @@ sudo sysctl --quiet --system
     expect(vm.run("stat -c '%U %a' /srv/app /var/lib/mothership/services/app"),
            "services 700", "root 750")
     ports(vm, image, registry)
-    old_firewall(vm)
     expect(apply(), "probe  install and start it")
     expect(apply(), "Nothing to apply.")
     scan = vm.run("sudo mothership scan").stdout
     assert "Containers" not in scan, scan
+    old_firewall(vm)
+    interface(vm, apply)
 
     def commit(message: str, change: str) -> None:
         vm.run(f"cd {FLEET} && {change}")
@@ -485,8 +491,8 @@ sudo sysctl --quiet --system
     expect(apply(), "extra publishes ports in compose.yaml: declare them in service.toml", code=1)
     commit("Publish nothing from compose", f"git checkout HEAD~1 -- {extra}/compose.yaml")
     expect(apply(), "Nothing to apply.")
-    commit("Take port 80", f"echo 'ports = [\"80/tcp\"]' >> {extra}/service.toml")
-    expect(apply(), "app's images.app and extra's images.extra both publish 80/tcp", code=1)
+    commit("Take port 80", f"echo 'ports.public = [\"80/tcp\"]' >> {extra}/service.toml")
+    expect(apply(), "app's images.app and extra's images.extra both publish 80/tcp on public", code=1)
     commit("Give port 80 back", f"git checkout HEAD~1 -- {extra}/service.toml")
     expect(apply(), "Nothing to apply.")
 
@@ -527,7 +533,7 @@ sudo sysctl --quiet --system
     assert reach(vm, "tcp", 80) == "1.0.3"
     assert reach(vm, "udp", 443) == "", "a port the fleet no longer declares is closed"
     allowed = vm.run("systemctl show -p SocketBindAllow mothership-services").stdout
-    assert allowed == "SocketBindAllow=tcp80\n", allowed
+    assert "udp443" not in allowed and "tcp80" in allowed, allowed
     refused(vm, f"{image}:1.0.3@{registry.digest('1.0.3')}", "443:443/udp")
 
     recipes(vm, image, commit, apply)
@@ -535,6 +541,25 @@ sudo sysctl --quiet --system
 
 
 FIREWALL = "mothership-services-firewall.service"
+
+
+def interface(vm: VM, apply) -> None:
+    vm.run(f"sudo ip link del {STAND_IN} && sudo systemctl restart mothership-services && sleep 5")
+    expect(vm.run("sudo mothership scan"), "stand0 has no address yet")
+    expect(apply(), "app: it waits for stand0 to have an address", code=1)
+    assert not running(vm, "app"), "app waits for stand0"
+    vm.run(f"sudo ip link add {STAND_IN} type dummy && sleep 3 && "
+           f"sudo ip address add 10.99.0.2/24 dev {STAND_IN} && sudo ip link set {STAND_IN} up")
+    deadline = time.time() + 90
+    while reach(vm, "udp", 53, "10.99.0.2") != "1.0.0":
+        if time.time() > deadline:
+            sys.exit(f"app didn't start when {STAND_IN} came up: see {LOG}")
+        time.sleep(3)
+    vm.run(f"sudo ip address replace 10.99.0.3/24 dev {STAND_IN} && "
+           f"sudo ip address del 10.99.0.2/24 dev {STAND_IN}")
+    expect(vm.run("sudo mothership scan"), "other addresses")
+    expect(apply(), "app")
+    assert reach(vm, "udp", 53, "10.99.0.3") == "1.0.0", "apply binds app to stand0's new address"
 
 
 def old_firewall(vm: VM) -> None:
@@ -573,14 +598,15 @@ def restart_manager(vm: VM) -> None:
 AS_SERVICES = "sudo -u services env DOCKER_HOST=unix:///run/user/$(id -u services)/docker.sock docker"
 
 
-def reach(vm: VM, protocol: str, port: int) -> str:
+def reach(vm: VM, protocol: str, port: int, host: str = "127.0.0.1") -> str:
     kind = "SOCK_STREAM" if protocol == "tcp" else "SOCK_DGRAM"
+    family = "AF_INET6" if ":" in host else "AF_INET"
     return vm.run(f"""python3 -c '
 import socket
-s = socket.socket(socket.AF_INET, socket.{kind})
+s = socket.socket(socket.{family}, socket.{kind})
 s.settimeout(3)
 try:
-    s.connect(("127.0.0.1", {port}))
+    s.connect(("{host}", {port}))
     s.send(b"hi")
     print(s.recv(64).decode(), end="")
 except OSError:
@@ -589,10 +615,18 @@ except OSError:
 
 
 def ports(vm: VM, image: str, registry: Registry) -> None:
-    assert data_of(vm, "app", "ports") == "80/tcp ok\n5432/tcp ok\n443/udp ok\n", \
+    assert data_of(vm, "app", "ports") == "80/tcp ok\n5432/tcp ok\n443/udp ok\n53/udp ok\n", \
         "a container opens any port inside its own network"
+    lan = vm.run("ip -4 -o route get 1.1.1.1").stdout.split(" src ")[1].split()[0]
     assert reach(vm, "tcp", 80) == "1.0.0", "a declared low TCP port works"
+    assert reach(vm, "tcp", 80, lan) == "1.0.0", "a public port answers on the LAN"
     assert reach(vm, "udp", 443) == "1.0.0", "a declared low UDP port works"
+    assert reach(vm, "tcp", 5432) == reach(vm, "tcp", 5432, "::1") == "1.0.0", "a local port answers"
+    assert reach(vm, "tcp", 5432, lan) == "", "a local port doesn't answer on the LAN"
+    assert reach(vm, "udp", 53, "10.99.0.1") == "1.0.0", "a port facing an interface answers there"
+    for host in [lan, "127.0.0.1"]:
+        assert reach(vm, "udp", 53, host) == "", f"a port facing an interface is closed on {host}"
+    expect(vm.run("sudo ss -ulnp"), "127.0.0.53%lo:53", "10.99.0.1:53")
     expect(vm.run("cat /proc/sys/net/ipv4/ip_unprivileged_port_start; "
                   "ls /etc/sysctl.d/60-mothership-services.conf", check=False),
            "1024", "No such file", code=2)
@@ -610,6 +644,12 @@ def refused(vm: VM, reference: str, published: str) -> None:
                  check=False)
     vm.run(f"{AS_SERVICES} rm --force stray", check=False)
     expect(out, "bind: operation not permitted", code=125)
+
+
+def running(vm: VM, service: str) -> bool:
+    states = vm.run(f"{AS_SERVICES} ps --all --filter label=com.docker.compose.project={service} "
+                    "--format '{{.State}}'").stdout.split()
+    return bool(states) and all(state == "running" for state in states)
 
 
 def data_of(vm: VM, service: str, name: str) -> str:

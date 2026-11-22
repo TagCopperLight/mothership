@@ -8,6 +8,7 @@ fn lists_every_folder_no_service_owns() {
         projects: tmp.path().join("services"),
         data: tmp.path().join("srv"),
         owner: (0, 0),
+        lookup: |_| Ok(Vec::new()),
     };
     for dir in [
         "srv/app",
@@ -35,6 +36,7 @@ fn a_machine_without_services_has_no_data_folders() {
         projects: tmp.path().join("services"),
         data: tmp.path().join("srv"),
         owner: (0, 0),
+        lookup: |_| Ok(Vec::new()),
     };
     assert!(unowned(&places, &BTreeSet::new()).unwrap().is_empty());
 }

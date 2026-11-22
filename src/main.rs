@@ -103,6 +103,9 @@ fn main() -> ExitCode {
     }
     let result = match &args[..] {
         [probe] if probe == "probe" => probe::run(),
+        [start, interface @ ..] if start == "start" && interface.len() <= 1 => {
+            start_services(interface.first().map(String::as_str))
+        }
         _ => run(&args),
     };
     match result {
@@ -235,6 +238,19 @@ fn edit_fleet(
     command(&fleet, &mut prompt)?;
     let outcome = stage.commit(fleet.admin(), message, &key, &mut prompt, Advance::Merge)?;
     Ok((outcome, base))
+}
+
+fn start_services(interface: Option<&str>) -> anyhow::Result<()> {
+    if !user::is_root() {
+        bail!("mothership start runs as root, from services' units");
+    }
+    match lock()? {
+        Some(_lock) => container::start::command(interface),
+        None => {
+            println!("Another mothership command is running, and it starts the services.");
+            Ok(())
+        }
+    }
 }
 
 fn lock() -> anyhow::Result<Option<std::fs::File>> {

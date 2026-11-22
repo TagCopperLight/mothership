@@ -226,21 +226,43 @@ fn published_service(dir: &Path, name: &str, ports: &str) {
     fs::create_dir_all(&svc).unwrap();
     fs::write(
         svc.join(SERVICE_TOML),
-        format!("{}ports = [{ports}]\n", toml("1.0.0")),
+        format!("{}{ports}\n", toml("1.0.0")),
     )
     .unwrap();
     fs::write(svc.join(COMPOSE), "services:\n  app: {}\n").unwrap();
 }
 
 #[test]
-fn an_image_declares_its_ports_with_their_protocol() {
+fn each_port_names_the_network_it_faces() {
     let images = parse(&format!(
-        "{}ports = [\"443/tcp\", \"443/udp\"]\n",
+        "{}ports.public = [\"443/tcp\", \"443/udp\"]\nports.tailscale0 = [\"53/udp\"]\n\
+         ports.local = [\"5432/tcp\"]\n",
         toml("1.0.0")
     ))
     .unwrap();
-    let shown: Vec<String> = images["app"].ports.iter().map(Port::to_string).collect();
-    assert_eq!(shown, ["443/tcp", "443/udp"]);
+    let shown: Vec<String> = images["app"]
+        .ports
+        .iter()
+        .map(Published::to_string)
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            "5432/tcp on local",
+            "443/tcp on public",
+            "443/udp on public",
+            "53/udp on tailscale0"
+        ]
+    );
+    let err = |ports: &str| {
+        format!(
+            "{:#}",
+            parse(&format!("{}{ports}\n", toml("1"))).unwrap_err()
+        )
+    };
+    assert!(err("ports = [\"443/tcp\"]").contains("name the network each port faces"));
+    assert!(err("ports.\"wg/0\" = [\"443/tcp\"]").contains("isn't a network"));
+    assert!(err("ports.averyverylongname = [\"443/tcp\"]").contains("isn't a network"));
     for bad in [
         "\"443\"",
         "\"0/tcp\"",
@@ -248,10 +270,7 @@ fn an_image_declares_its_ports_with_their_protocol() {
         "\"53/sctp\"",
         "443",
     ] {
-        let err = format!(
-            "{:#}",
-            parse(&format!("{}ports = [{bad}]\n", toml("1"))).unwrap_err()
-        );
+        let err = err(&format!("ports.public = [{bad}]"));
         assert!(
             err.contains("isn't a port like") || err.contains("invalid type"),
             "{bad}: {err}"
@@ -260,10 +279,61 @@ fn an_image_declares_its_ports_with_their_protocol() {
 }
 
 #[test]
-fn two_services_never_publish_the_same_port() {
+fn a_port_binds_to_the_addresses_of_the_network_it_faces() {
+    let images = parse(&format!(
+        "{}ports.public = [\"80/tcp\"]\nports.local = [\"5432/tcp\"]\n\
+         ports.wg-0 = [\"53/udp\"]\n",
+        toml("1.0.0")
+    ))
+    .unwrap();
+    let ports = &images["app"].ports;
+    let lookup = |name: &str| -> Result<Vec<std::net::IpAddr>> {
+        assert_eq!(name, "wg-0");
+        Ok(vec!["100.64.0.1".parse()?, "fd7a::1".parse()?])
+    };
+    let port::Bound::Ready(entries) = port::bind(ports, &lookup).unwrap() else {
+        panic!("wg-0 has addresses");
+    };
+    let hosts: Vec<String> = entries
+        .iter()
+        .map(|e| {
+            format!(
+                "{} {}",
+                e["host_ip"].as_str().unwrap_or("*"),
+                e["published"]
+            )
+        })
+        .collect();
+    assert_eq!(
+        hosts,
+        [
+            "127.0.0.1 \"5432\"",
+            "::1 \"5432\"",
+            "* \"80\"",
+            "100.64.0.1 \"53\"",
+            "fd7a::1 \"53\""
+        ]
+    );
+    let port::Bound::Waiting(interface) = port::bind(ports, &|_| Ok(Vec::new())).unwrap() else {
+        panic!("wg-0 has no address");
+    };
+    assert_eq!(interface, "wg-0");
+}
+
+#[test]
+fn two_services_never_publish_the_same_port_on_one_network() {
     let dir = tempfile::tempdir().unwrap();
-    published_service(dir.path(), "dns", "\"53/udp\", \"53/tcp\"");
-    published_service(dir.path(), "web", "\"443/tcp\", \"443/udp\"");
+    published_service(
+        dir.path(),
+        "dns",
+        "ports.tailscale0 = [\"53/udp\", \"53/tcp\"]",
+    );
+    published_service(
+        dir.path(),
+        "web",
+        "ports.public = [\"443/tcp\", \"443/udp\"]",
+    );
+    published_service(dir.path(), "local", "ports.local = [\"53/udp\"]");
     let services = load(dir.path()).unwrap();
     let rules: Vec<String> = published(&services)
         .unwrap()
@@ -271,20 +341,35 @@ fn two_services_never_publish_the_same_port() {
         .map(Port::bind_rule)
         .collect();
     assert_eq!(rules, ["tcp:53", "udp:53", "tcp:443", "udp:443"]);
-    published_service(dir.path(), "other", "\"53/udp\"");
+    assert_eq!(
+        interfaces(&services).into_iter().collect::<Vec<_>>(),
+        ["tailscale0"]
+    );
+    published_service(dir.path(), "other", "ports.tailscale0 = [\"53/udp\"]");
     let err = format!("{:#}", load(dir.path()).err().unwrap());
     assert_eq!(
         err,
-        "dns's images.app and other's images.app both publish 53/udp"
+        "dns's images.app and other's images.app both publish 53/udp on tailscale0"
+    );
+    published_service(dir.path(), "other", "ports.public = [\"53/tcp\"]");
+    let err = format!("{:#}", load(dir.path()).err().unwrap());
+    assert_eq!(
+        err,
+        "dns's images.app publishes 53/tcp on tailscale0, and other's images.app on public: \
+         public takes every address"
     );
 }
 
 #[test]
 fn a_versions_signer_leaves_the_ports_alone() {
-    let before = format!("{}ports = [\"443/tcp\"]\n", toml("1.2.3"));
-    let after = format!("{}ports = [\"22/tcp\"]\n", toml("1.2.4"));
-    let err = format!("{:#}", versions_only(&before, &after).unwrap_err());
-    assert!(err.contains("beyond its version and digest"), "{err}");
+    let before = format!("{}ports.public = [\"443/tcp\"]\n", toml("1.2.3"));
+    for after in [
+        format!("{}ports.public = [\"22/tcp\"]\n", toml("1.2.4")),
+        format!("{}ports.local = [\"443/tcp\"]\n", toml("1.2.4")),
+    ] {
+        let err = format!("{:#}", versions_only(&before, &after).unwrap_err());
+        assert!(err.contains("beyond its version and digest"), "{err}");
+    }
 }
 
 #[test]
@@ -296,8 +381,14 @@ fn services_docker_may_bind_only_the_declared_ports() {
         home: PathBuf::from("/var/lib/services"),
         shell: "/usr/sbin/nologin".into(),
     };
-    let ports = ["443/udp", "80/tcp"].map(|p| Port::try_from(p.to_owned()).unwrap());
-    let unit = account::unit("/usr/bin/dockerd-rootless.sh", &user, &ports.into());
+    let dir = tempfile::tempdir().unwrap();
+    published_service(
+        dir.path(),
+        "app",
+        "ports.public = [\"80/tcp\"]\nports.local = [\"443/udp\"]\nports.wg0 = [\"443/udp\"]",
+    );
+    let services = load(dir.path()).unwrap();
+    let unit = account::unit("/usr/bin/dockerd-rootless.sh", &user, &services).unwrap();
     let rules: Vec<&str> = unit
         .lines()
         .filter(|l| l.starts_with("SocketBind"))
@@ -315,4 +406,8 @@ fn services_docker_may_bind_only_the_declared_ports() {
     assert!(unit.contains("XDG_RUNTIME_DIR=/run/user/990\n"));
     assert!(unit.contains("BindsTo=user@990.service\nAfter=user@990.service "));
     assert!(unit.ends_with("WantedBy=user@990.service\n"));
+    let started = account::start_unit(true);
+    assert!(started.contains("ExecStart=/usr/local/bin/mothership start %I\n"));
+    assert!(started.ends_with("WantedBy=sys-subsystem-net-devices-%i.device\n"));
+    assert!(account::start_unit(false).ends_with("WantedBy=mothership-services.service\n"));
 }

@@ -38,6 +38,7 @@ pub trait Engine {
     fn pull(&self, project: &Project) -> Result<()>;
     fn up(&self, project: &Project) -> Result<()>;
     fn stop(&self, name: &str) -> Result<()>;
+    fn start(&self, name: &str) -> Result<()>;
     fn down(&self, name: &str) -> Result<()>;
     fn health(&self, name: &str) -> Result<Health>;
     fn snapshot(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()>;
@@ -220,6 +221,11 @@ impl Engine for Docker {
 
     fn stop(&self, name: &str) -> Result<()> {
         let args = ["compose", "--project-name", name, "stop"];
+        cmd::status_within(self.command(&args), "docker", &args, RUN_LIMIT)
+    }
+
+    fn start(&self, name: &str) -> Result<()> {
+        let args = ["compose", "--project-name", name, "start"];
         cmd::status_within(self.command(&args), "docker", &args, RUN_LIMIT)
     }
 

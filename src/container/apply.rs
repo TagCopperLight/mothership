@@ -3,7 +3,7 @@ use super::{
     confirm::Unconfirmed,
     deploy::{self, Outcome, Places, Wanted},
     docker::Docker,
-    docker_config, registry,
+    docker_config, registry, start,
     state::State,
 };
 use crate::{file, fleet::Fleet, http::Curl, probe};
@@ -14,6 +14,7 @@ pub enum Action {
     Setup,
     Deploy(String),
     Remove(String),
+    Bind(String),
     RemoveContainer(String),
     Overwrite { service: String, file: PathBuf },
     Probe,
@@ -26,6 +27,7 @@ impl Action {
             Action::Setup => "set it up",
             Action::Deploy(_) => "start the fleet's versions",
             Action::Remove(_) => "stop it and remove its containers, keeping its data",
+            Action::Bind(_) => "start it on its interfaces' addresses",
             Action::RemoveContainer(_) => "remove it",
             Action::Overwrite { .. } => "write the fleet's version",
             Action::Probe => "install and start it",
@@ -39,7 +41,7 @@ const DOCKER_CONFIG: &str = ".docker/config.json";
 pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     for action in actions {
         match action {
-            Action::Setup => account::setup(&super::published(&fleet.services)?)?,
+            Action::Setup => account::setup(&fleet.services)?,
             Action::Probe => probe::unit::install(fleet)?,
             Action::Unprobe => probe::unit::remove()?,
             _ => {}
@@ -63,11 +65,32 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     let places = Places::here()?;
     let mut state = State::load()?;
     let mut unconfirmed = Unconfirmed::load()?;
+    let mut failed = Vec::new();
+    let busy: Vec<&str> = actions
+        .iter()
+        .filter_map(|action| match action {
+            Action::Deploy(name) | Action::Remove(name) => Some(name.as_str()),
+            Action::Overwrite { service, .. } => Some(service.as_str()),
+            _ => None,
+        })
+        .collect();
+    let bind: Vec<&str> = actions
+        .iter()
+        .filter_map(|action| match action {
+            Action::Bind(name) => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let env = |name: &str| start::fleet_env(fleet, name);
+    let wanted = |name: &str| !busy.contains(&name) && bind.contains(&name);
+    failed.extend(start::services(
+        &docker, &places, &state, None, &wanted, &env,
+    ));
     let mut deploys: Vec<&str> = Vec::new();
     let mut overwrite: Vec<(&str, PathBuf)> = Vec::new();
     for action in actions {
         match action {
-            Action::Setup | Action::Probe | Action::Unprobe => {}
+            Action::Setup | Action::Probe | Action::Unprobe | Action::Bind(_) => {}
             Action::RemoveContainer(id) => docker.remove_container(id)?,
             Action::Remove(name) => {
                 let entry = state
@@ -88,7 +111,6 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     }
     deploys.sort();
     deploys.dedup();
-    let mut failed = Vec::new();
     for name in deploys {
         let service = fleet
             .services
@@ -140,9 +162,20 @@ fn said(name: &str, outcome: &Outcome) -> String {
 }
 
 pub fn problems() -> Result<Vec<String>> {
-    Ok(State::load()?
-        .services
-        .iter()
-        .filter_map(|(name, entry)| Some(format!("{name}: {}", entry.problem_for(&entry.fleet)?)))
-        .collect())
+    let places = Places::here()?;
+    let mut problems = Vec::new();
+    for (name, entry) in &State::load()?.services {
+        if let Some(why) = entry.problem_for(&entry.fleet) {
+            problems.push(format!("{name}: {why}"));
+        }
+        if entry.running.is_empty() {
+            continue;
+        }
+        if let start::Binding::Waiting(interface) = start::binding(&places, name)?.binding {
+            problems.push(format!(
+                "{name}: it waits for {interface} to have an address"
+            ));
+        }
+    }
+    Ok(problems)
 }

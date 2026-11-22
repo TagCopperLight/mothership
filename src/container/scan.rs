@@ -2,6 +2,7 @@ use super::{
     Action, Service, WORKFLOW, WORKFLOW_PATH, account,
     deploy::{self, Places},
     docker::Docker,
+    start::{self, Binding},
     state::{Deployed, State},
 };
 use crate::{
@@ -28,7 +29,7 @@ pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
         return Ok(items);
     }
     let places = Places::here()?;
-    let missing = account::missing(&super::published(&fleet.services)?)?;
+    let missing = account::missing(&fleet.services)?;
     if !fleet.services.is_empty() && !missing.is_empty() {
         items.push(fleet_item(
             Item::new(Kind::Container, Change::Removed, account::USER, "account")
@@ -45,6 +46,9 @@ pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
         )?);
     }
     for (name, entry) in &state.services {
+        if !entry.running.is_empty() {
+            items.extend(binding_item(&places, name)?);
+        }
         if fleet.services.iter().any(|s| &s.name == name) {
             continue;
         }
@@ -122,6 +126,22 @@ fn unowned(places: &Places, owned: &BTreeSet<&str>) -> Result<Vec<PathBuf>> {
         }
     }
     Ok(left)
+}
+
+fn binding_item(places: &Places, name: &str) -> Result<Option<Item>> {
+    Ok(match start::binding(places, name)?.binding {
+        Binding::Current => None,
+        Binding::Waiting(interface) => Some(
+            Item::new(Kind::Container, Change::Unreadable, name, "waiting")
+                .noting(format!("{interface} has no address yet"))
+                .because("it starts when the interface comes up"),
+        ),
+        Binding::Stale(_) => Some(fleet_item(
+            Item::new(Kind::Container, Change::Edited, name, "other addresses")
+                .noting("an interface it faces has other addresses than the ones it listens on")
+                .reverting(Action::Bind(name.to_owned())),
+        )),
+    })
 }
 
 fn fleet_item(mut item: Item) -> Item {

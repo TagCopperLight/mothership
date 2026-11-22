@@ -7,11 +7,12 @@ pub mod docker;
 mod port;
 pub mod registry;
 pub mod scan;
+pub mod start;
 pub mod state;
 pub mod version;
 
 pub use apply::{Action, problems, run};
-pub use port::Port;
+pub use port::{Network, Port, Published};
 
 use crate::{fleet::Fleet, host, secrets::Keys, walk};
 use anyhow::{Context, Result, bail};
@@ -49,8 +50,8 @@ pub struct Image {
     pub repo: Option<String>,
     #[serde(default)]
     pub recipe: bool,
-    #[serde(default)]
-    pub ports: Vec<Port>,
+    #[serde(default, deserialize_with = "port::by_network")]
+    pub ports: Vec<Published>,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, PartialOrd, Ord)]
@@ -356,18 +357,40 @@ pub fn load(type_dir: &Path) -> Result<Vec<Service>> {
 }
 
 pub fn published(services: &[Service]) -> Result<BTreeSet<Port>> {
-    let mut owners: BTreeMap<Port, String> = BTreeMap::new();
+    let mut owners: BTreeMap<Port, Vec<(&Network, String)>> = BTreeMap::new();
     for service in services {
         for (name, image) in &service.images {
             let owner = format!("{}'s images.{name}", service.name);
-            for port in &image.ports {
-                if let Some(first) = owners.insert(*port, owner.clone()) {
-                    bail!("{first} and {owner} both publish {port}");
+            for published in &image.ports {
+                let taken = owners.entry(published.port).or_default();
+                if let Some((network, first)) =
+                    taken.iter().find(|(n, _)| n.clashes(&published.network))
+                {
+                    match *network == &published.network {
+                        true => bail!("{first} and {owner} both publish {published}"),
+                        false => bail!(
+                            "{first} publishes {} on {network}, and {owner} on {}: {} takes \
+                             every address",
+                            published.port,
+                            published.network,
+                            Network::Public
+                        ),
+                    }
                 }
+                taken.push((&published.network, owner.clone()));
             }
         }
     }
     Ok(owners.into_keys().collect())
+}
+
+pub fn interfaces(services: &[Service]) -> BTreeSet<&str> {
+    services
+        .iter()
+        .flat_map(|service| service.images.values())
+        .flat_map(|image| &image.ports)
+        .filter_map(|published| published.network.interface())
+        .collect()
 }
 
 fn check_recipe(dir: &Path, images: &BTreeMap<String, Image>) -> Result<()> {

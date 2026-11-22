@@ -1,7 +1,8 @@
 use super::{
-    COMPOSE, Port, Rendered, SECRETS, Service, compose,
+    COMPOSE, Rendered, SECRETS, Service, compose,
     confirm::Unconfirmed,
     docker::{Engine, Health, Project},
+    port::{self, Bound},
     state::{Deployed, Pins, Problem},
 };
 use crate::{file, hash};
@@ -15,11 +16,15 @@ use std::{
 
 pub const PROJECTS: &str = "/var/lib/mothership/services";
 pub const OVERRIDE: &str = "mothership.json";
+pub const OWN: &str = "x-mothership";
+
+pub type Lookup = fn(&str) -> Result<Vec<std::net::IpAddr>>;
 
 pub struct Places {
     pub projects: PathBuf,
     pub data: PathBuf,
     pub owner: (u32, u32),
+    pub lookup: Lookup,
 }
 
 impl Places {
@@ -29,6 +34,7 @@ impl Places {
             projects: PathBuf::from(PROJECTS),
             data: PathBuf::from(super::DATA),
             owner,
+            lookup: port::addresses,
         })
     }
 
@@ -62,8 +68,8 @@ pub fn fingerprint(service: &Service, rendered: &Rendered, token: Option<&[u8]>)
         for part in [name, &image.version, &image.digest] {
             fields.add(part.as_bytes());
         }
-        for port in &image.ports {
-            fields.add(port.to_string().as_bytes());
+        for published in &image.ports {
+            fields.add(published.to_string().as_bytes());
         }
     }
     for (rel, bytes) in &rendered.files {
@@ -149,13 +155,14 @@ enum Stage {
 }
 
 fn write_override(
-    dir: &Path,
+    places: &Places,
     service: &Service,
     pins: &Pins,
     stage: Stage,
 ) -> Result<BTreeMap<String, String>> {
     let mut images = BTreeMap::new();
     let mut services = serde_json::Map::new();
+    let mut published = serde_json::Map::new();
     for (name, pin) in pins {
         let image = service
             .images
@@ -163,14 +170,29 @@ fn write_override(
             .with_context(|| format!("{} no longer pins images.{name}", service.name))?;
         let mut entry = serde_json::json!({ "image": image.reference(pin) });
         if let Stage::Published = stage {
-            entry["ports"] = image.ports.iter().map(Port::compose).collect();
+            entry["ports"] = match port::bind(&image.ports, &places.lookup)? {
+                Bound::Ready(entries) => entries.into(),
+                Bound::Waiting(interface) => bail!(
+                    "{} publishes on {interface}, which has no address yet: apply again once \
+                     it has one",
+                    service.name
+                ),
+            };
         }
         images.insert(name.clone(), image.reference(pin));
         services.insert(name.clone(), entry);
+        published.insert(name.clone(), serde_json::to_value(&image.ports)?);
     }
-    let text = serde_json::to_string_pretty(&serde_json::json!({ "services": services }))?;
-    file::write(&dir.join(OVERRIDE), text.as_bytes(), 0o644)?;
+    let text = serde_json::to_string_pretty(&serde_json::json!({
+        "services": services,
+        OWN: { "ports": published },
+    }))?;
+    write_override_text(places, &service.name, &text)?;
     Ok(images)
+}
+
+pub fn write_override_text(places: &Places, name: &str, text: &str) -> Result<()> {
+    file::write(&places.project(name).join(OVERRIDE), text.as_bytes(), 0o644)
 }
 
 fn data_dir(places: &Places, name: &str) -> Result<PathBuf> {
@@ -187,7 +209,7 @@ fn data_dir(places: &Places, name: &str) -> Result<PathBuf> {
     Ok(data)
 }
 
-fn env(rendered: &Rendered) -> Vec<(String, String)> {
+pub fn env(rendered: &Rendered) -> Vec<(String, String)> {
     rendered
         .secrets
         .iter()
@@ -345,11 +367,11 @@ fn prepare(
 ) -> Result<(BTreeMap<PathBuf, String>, PathBuf)> {
     let service = wanted.service;
     let files = write_files(places, wanted, entry)?;
-    let images = write_override(&project.dir, service, &service.pins(), Stage::Checked)?;
+    let images = write_override(places, service, &service.pins(), Stage::Checked)?;
     let data = data_dir(places, &service.name)?;
     compose::check(&engine.config(project)?, &project.dir, &data, &images)
         .with_context(|| format!("checking {}/{COMPOSE}", service.dir.display()))?;
-    write_override(&project.dir, service, &service.pins(), Stage::Published)?;
+    write_override(places, service, &service.pins(), Stage::Published)?;
     engine.pull(project)?;
     Ok((files, data))
 }

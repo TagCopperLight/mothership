@@ -1,8 +1,9 @@
-use super::Port;
+use super::Service;
 use crate::{
     cmd::{self, As},
-    file,
+    file, update,
     user::{self, User},
+    walk,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -22,8 +23,12 @@ pub const UNIT: &str = "/etc/systemd/system/mothership-services.service";
 const OLD_FIREWALL_NAME: &str = "mothership-services-firewall.service";
 const OLD_FIREWALL: &str = "/etc/systemd/system/mothership-services-firewall.service";
 const OLD_RULES: &str = "/etc/mothership/services.nft";
-pub const WRITTEN: [&str; 4] = [UNIT, SYSCTL, OLD_FIREWALL, OLD_RULES];
-pub const UNIT_NAMES: [&str; 2] = [UNIT_NAME, OLD_FIREWALL_NAME];
+const START_NAME: &str = "mothership-services-start.service";
+const START: &str = "/etc/systemd/system/mothership-services-start.service";
+const START_AT: &str = "/etc/systemd/system/mothership-services-start@.service";
+const START_PREFIX: &str = "mothership-services-start@";
+const DEVICE_PREFIX: &str = "sys-subsystem-net-devices-";
+pub const WRITTEN: [&str; 6] = [UNIT, START, START_AT, SYSCTL, OLD_FIREWALL, OLD_RULES];
 const LINGER: &str = "/var/lib/systemd/linger";
 const ROOTLESS: [&str; 2] = [
     "/usr/bin/dockerd-rootless.sh",
@@ -62,24 +67,105 @@ fn rootless() -> Result<&'static str> {
     )
 }
 
-fn stale(user: &User, ports: &BTreeSet<Port>) -> Result<Option<String>> {
-    let wanted = unit(rootless()?, user, ports);
-    Ok((file::read_if_any(Path::new(UNIT))?.as_ref() != Some(&wanted)).then_some(wanted))
+pub fn ours(unit: &str) -> bool {
+    [UNIT_NAME, START_NAME, OLD_FIREWALL_NAME].contains(&unit) || unit.starts_with(START_PREFIX)
 }
 
-fn link(user: &User) -> PathBuf {
+fn stale(user: &User, services: &[Service]) -> Result<Vec<(&'static str, String)>> {
+    let wanted = [
+        (UNIT, unit(rootless()?, user, services)?),
+        (START, start_unit(false)),
+        (START_AT, start_unit(true)),
+    ];
+    let mut stale = Vec::new();
+    for (path, text) in wanted {
+        if file::read_if_any(Path::new(path))?.as_ref() != Some(&text) {
+            stale.push((path, text));
+        }
+    }
+    Ok(stale)
+}
+
+fn system_dir() -> &'static Path {
     Path::new(crate::systemd::SYSTEM_DIRS[0])
-        .join(format!("user@{}.service.wants", user.uid))
-        .join(UNIT_NAME)
 }
 
-pub fn unit(rootless: &str, user: &User, ports: &BTreeSet<Port>) -> String {
+fn links(user: &User) -> [PathBuf; 2] {
+    [
+        system_dir()
+            .join(format!("user@{}.service.wants", user.uid))
+            .join(UNIT_NAME),
+        system_dir()
+            .join(format!("{UNIT_NAME}.wants"))
+            .join(START_NAME),
+    ]
+}
+
+fn escape(name: &str) -> String {
+    name.replace('-', "\\x2d")
+}
+
+fn instance(interface: &str) -> String {
+    format!("{START_PREFIX}{}.service", escape(interface))
+}
+
+fn device_wants(interface: &str) -> PathBuf {
+    system_dir()
+        .join(format!("{DEVICE_PREFIX}{}.device.wants", escape(interface)))
+        .join(instance(interface))
+}
+
+fn enabled_instances() -> Result<BTreeSet<PathBuf>> {
+    let mut found = BTreeSet::new();
+    for dir in walk::children(system_dir())? {
+        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !(name.starts_with(DEVICE_PREFIX) && name.ends_with(".device.wants")) {
+            continue;
+        }
+        for link in walk::children(&dir)? {
+            if link
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(START_PREFIX))
+            {
+                found.insert(link);
+            }
+        }
+    }
+    Ok(found)
+}
+
+fn wanted_instances(services: &[Service]) -> BTreeSet<PathBuf> {
+    super::interfaces(services)
+        .into_iter()
+        .map(device_wants)
+        .collect()
+}
+
+pub fn start_unit(per_interface: bool) -> String {
+    let (what, args, install) = match per_interface {
+        false => ("every service", "", UNIT_NAME.to_owned()),
+        true => (
+            "the services that face %I",
+            " %I",
+            format!("{DEVICE_PREFIX}%i.device"),
+        ),
+    };
+    format!(
+        "[Unit]\nDescription=Start {what} of the fleet\nAfter={UNIT_NAME}\n\n[Service]\n\
+         Type=oneshot\nExecStart={} start{args}\n\n[Install]\nWantedBy={install}\n",
+        update::BINARY
+    )
+}
+
+pub fn unit(rootless: &str, user: &User, services: &[Service]) -> Result<String> {
+    let ports = super::published(services)?;
     let (uid, run) = (user.uid, runtime(user));
     let allowed: String = ports
         .iter()
         .map(|port| format!("SocketBindAllow={}\n", port.bind_rule()))
         .collect();
-    format!(
+    Ok(format!(
         "[Unit]\nDescription=Docker for the fleet's services\n\
          BindsTo=user@{uid}.service\n\
          After=user@{uid}.service network-online.target\n\
@@ -94,10 +180,10 @@ pub fn unit(rootless: &str, user: &User, ports: &BTreeSet<Port>) -> String {
          KillMode=mixed\n\n[Install]\nWantedBy=user@{uid}.service\n",
         home = user.home.display(),
         run = run.display(),
-    )
+    ))
 }
 
-pub fn missing(ports: &BTreeSet<Port>) -> Result<Vec<String>> {
+pub fn missing(services: &[Service]) -> Result<Vec<String>> {
     let Some(user) = user()? else {
         return Ok(vec!["the account is missing".into()]);
     };
@@ -117,11 +203,16 @@ pub fn missing(ports: &BTreeSet<Port>) -> Result<Vec<String>> {
     if user.read(&user.home.join(OLD_UNIT))?.is_some() {
         missing.push("its Docker runs as its own unit".into());
     }
-    let enabled = std::fs::symlink_metadata(link(&user)).is_ok();
-    match stale(&user, ports) {
-        Ok(None) if enabled => {}
+    let enabled = links(&user)
+        .iter()
+        .all(|link| std::fs::symlink_metadata(link).is_ok());
+    match stale(&user, services) {
+        Ok(stale) if stale.is_empty() && enabled => {}
         Ok(_) => missing.push("its Docker isn't set up as the fleet's ports ask".into()),
         Err(e) => missing.push(format!("{e:#}")),
+    }
+    if enabled_instances()? != wanted_instances(services) {
+        missing.push("its services don't start when the interfaces they face come up".into());
     }
     if [OLD_FIREWALL, OLD_RULES]
         .iter()
@@ -132,7 +223,7 @@ pub fn missing(ports: &BTreeSet<Port>) -> Result<Vec<String>> {
     Ok(missing)
 }
 
-pub fn setup(ports: &BTreeSet<Port>) -> Result<()> {
+pub fn setup(services: &[Service]) -> Result<()> {
     rootless()?;
     let user = match user()? {
         Some(user) => user,
@@ -161,21 +252,32 @@ pub fn setup(ports: &BTreeSet<Port>) -> Result<()> {
         &["start", &format!("user@{}.service", user.uid)],
     )?;
     drop_old_unit(&user)?;
-    if file::remove_if_found(Path::new(SYSCTL))? {
-        cmd::root(
-            "sysctl",
-            &["--quiet", "--write", &format!("{PORT_START}=1024")],
-        )?;
-        cmd::root("sysctl", &["--quiet", "--system"])?;
-    }
-    let stale = stale(&user, ports)?;
-    if let Some(text) = &stale {
-        file::write(Path::new(UNIT), text.as_bytes(), 0o644)?;
+    drop_sysctl()?;
+    let stale = stale(&user, services)?;
+    for (path, text) in &stale {
+        file::write(Path::new(path), text.as_bytes(), 0o644)?;
     }
     cmd::root("systemctl", &["daemon-reload"])?;
     drop_firewall()?;
-    cmd::root("systemctl", &["enable", "--", UNIT_NAME])?;
-    let verb = if stale.is_some() { "restart" } else { "start" };
+    let wanted = wanted_instances(services);
+    for link in enabled_instances()?.difference(&wanted) {
+        let name = link.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        cmd::root("systemctl", &["disable", "--", name])?;
+    }
+    let mut units = vec![UNIT_NAME.to_owned(), START_NAME.to_owned()];
+    units.extend(super::interfaces(services).into_iter().map(instance));
+    cmd::root(
+        "systemctl",
+        &[
+            &["enable", "--"][..],
+            &units.iter().map(String::as_str).collect::<Vec<_>>(),
+        ]
+        .concat(),
+    )?;
+    let verb = match stale.iter().any(|(path, _)| *path == UNIT) {
+        true => "restart",
+        false => "start",
+    };
     cmd::root("systemctl", &[verb, "--", UNIT_NAME])?;
     let start = Instant::now();
     let info = ["info", "--format", "{{.ServerVersion}}"];
@@ -190,6 +292,17 @@ pub fn setup(ports: &BTreeSet<Port>) -> Result<()> {
         }
         thread::sleep(Duration::from_secs(2));
     }
+}
+
+fn drop_sysctl() -> Result<()> {
+    if file::remove_if_found(Path::new(SYSCTL))? {
+        cmd::root(
+            "sysctl",
+            &["--quiet", "--write", &format!("{PORT_START}=1024")],
+        )?;
+        cmd::root("sysctl", &["--quiet", "--system"])?;
+    }
+    Ok(())
 }
 
 fn drop_firewall() -> Result<()> {
