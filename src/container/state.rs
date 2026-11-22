@@ -15,7 +15,6 @@ pub type Pins = BTreeMap<String, Pin>;
 #[serde(default, deny_unknown_fields)]
 pub struct State {
     pub services: BTreeMap<String, Deployed>,
-    pub dropped: BTreeSet<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]

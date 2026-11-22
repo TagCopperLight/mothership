@@ -75,7 +75,6 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
                     .with_context(|| format!("this machine runs no service {name}"))?;
                 deploy::remove(&docker, &places, name, entry)?;
                 state.services.remove(name);
-                state.dropped.insert(name.clone());
                 state.save()?;
                 println!("Removed {name}, keeping {}", places.data(name).display());
             }
@@ -112,17 +111,12 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
             Ok((entry, outcome)) => {
                 println!("{}", crate::style::clean(&said(name, &outcome)));
                 state.services.insert(name.to_owned(), entry);
-                state.dropped.remove(name);
             }
             Err(e) => failed.push(format!("{name}: {e:#}")),
         }
         state.save()?;
         unconfirmed.save()?;
     }
-    state
-        .dropped
-        .retain(|name| places.data(name).exists() || places.project(name).exists());
-    state.save()?;
     if !failed.is_empty() {
         bail!("couldn't apply {}", failed.join("\n"));
     }

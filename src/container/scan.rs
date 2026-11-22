@@ -9,15 +9,16 @@ use crate::{
     item::{Change, Item, Section},
     kind::Kind,
     preview::Preview,
-    probe,
+    probe, walk,
 };
 use anyhow::Result;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, path::PathBuf};
 
 pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
     let mut items = probe::unit::items(fleet)?;
     let state = State::load()?;
-    if fleet.services.is_empty() && state.services.is_empty() && state.dropped.is_empty() {
+    let account = account::user()?;
+    if fleet.services.is_empty() && account.is_none() {
         return Ok(items);
     }
     let places = Places::here()?;
@@ -48,20 +49,23 @@ pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
         ));
         items.extend(edited(&places, name, entry)?);
     }
-    for name in &state.dropped {
-        let (data, project) = (places.data(name), places.project(name));
-        for left in [data, project].into_iter().filter(|p| p.exists()) {
-            items.push(
-                Item::new(
-                    Kind::Data,
-                    Change::Added,
-                    left.display().to_string(),
-                    "left",
-                )
-                .noting(format!("{name} left it, and no service uses it"))
-                .because("it holds what the machine produced: delete it yourself once done"),
-            );
-        }
+    let owned: BTreeSet<&str> = fleet
+        .services
+        .iter()
+        .map(|s| s.name.as_str())
+        .chain(state.services.keys().map(String::as_str))
+        .collect();
+    for left in unowned(&places, &owned)? {
+        items.push(
+            Item::new(
+                Kind::Data,
+                Change::Added,
+                left.display().to_string(),
+                "no service",
+            )
+            .noting("no service of the fleet owns it")
+            .because("it holds what the machine produced: delete it yourself once done"),
+        );
     }
     match docker {
         Some(docker) if docker.answers() => items.extend(containers(fleet, &state, docker)?),
@@ -77,6 +81,25 @@ pub fn scan(fleet: &Fleet, docker: Option<&Docker>) -> Result<Vec<Item>> {
         _ => {}
     }
     Ok(items)
+}
+
+fn unowned(places: &Places, owned: &BTreeSet<&str>) -> Result<Vec<PathBuf>> {
+    let mut left = Vec::new();
+    for dir in [&places.data, &places.projects] {
+        for path in walk::children(dir)? {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+            let kept = name.as_deref().is_some_and(|name| {
+                owned.contains(name)
+                    || owned
+                        .iter()
+                        .any(|owner| places.previous(owner).file_name() == Some(name.as_ref()))
+            });
+            if !kept {
+                left.push(path);
+            }
+        }
+    }
+    Ok(left)
 }
 
 fn fleet_item(mut item: Item) -> Item {
@@ -205,3 +228,7 @@ fn containers(fleet: &Fleet, state: &State, docker: &Docker) -> Result<Vec<Item>
     }
     Ok(items)
 }
+
+#[cfg(test)]
+#[path = "../../tests/container_scan.rs"]
+mod tests;
