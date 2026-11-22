@@ -104,7 +104,6 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
     known.insert(PathBuf::from(fleet::MACHINE));
     known.insert(PathBuf::from(secrets::ROOT_KEY));
     known.insert(PathBuf::from(sign::KEY));
-    known.insert(PathBuf::from(container::account::SYSCTL));
     known.extend(container::account::WRITTEN.map(PathBuf::from));
     known.extend(crate::probe::unit::known());
     known.extend(services::global_defaults(db.distro)?);

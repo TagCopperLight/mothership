@@ -452,6 +452,7 @@ sudo sysctl --quiet --system
     expect(vm.run("stat -c '%U %a' /srv/app /var/lib/mothership/services/app"),
            "services 700", "root 750")
     ports(vm, image, registry)
+    old_firewall(vm)
     expect(apply(), "probe  install and start it")
     expect(apply(), "Nothing to apply.")
     scan = vm.run("sudo mothership scan").stdout
@@ -533,25 +534,35 @@ sudo sysctl --quiet --system
     restart_manager(vm)
 
 
-def stray_refused(vm: VM, port: int) -> None:
-    vm.run(f"sudo systemd-run --user -M services@ --unit stray python3 -m http.server {port} && sleep 2")
-    expect(vm.run("sudo ss -tlnp"), f":{port}")
-    expect(vm.run(f"curl -s --max-time 5 http://127.0.0.1:{port}/", check=False), code=7)
-    vm.run("sudo systemctl --user -M services@ stop stray")
+FIREWALL = "mothership-services-firewall.service"
+
+
+def old_firewall(vm: VM) -> None:
+    uid = vm.run("id -u services").stdout.strip()
+    rules = (f"table inet mothership\ndelete table inet mothership\ntable inet mothership {{\n"
+             f"\tchain input {{\n\t\ttype filter hook input priority filter; policy accept;\n"
+             f"\t\tct state != {{ established, related }} meta l4proto {{ tcp, udp }} socket cgroupv2 "
+             f"level 3 \"user.slice/user-{uid}.slice/user@{uid}.service\" reject\n\t}}\n}}\n")
+    unit = (f"[Unit]\nAfter=user@{uid}.service\nBindsTo=user@{uid}.service\n\n[Service]\n"
+            f"Type=oneshot\nRemainAfterExit=yes\nExecStart=/usr/sbin/nft -f /etc/mothership/services.nft\n"
+            f"ExecStop=/usr/sbin/nft delete table inet mothership\n\n[Install]\nWantedBy=user@{uid}.service\n")
+    vm.run("sudo tee /etc/mothership/services.nft > /dev/null", input=rules)
+    vm.run(f"sudo tee /etc/systemd/system/{FIREWALL} > /dev/null", input=unit)
+    vm.run(f"sudo systemctl daemon-reload && sudo systemctl enable --now {FIREWALL}")
+    expect(vm.run("sudo nft list table inet mothership"), "socket cgroupv2")
+    expect(vm.run("sudo mothership scan"), "its old firewall is still set up")
+    expect(vm.run("sudo mothership apply", input="y\n" * 6, check=False, timeout=1800), "services")
+    expect(vm.run("sudo nft list table inet mothership", check=False), code=1)
+    left = vm.run(f"ls /etc/mothership/services.nft /etc/systemd/system/{FIREWALL} "
+                  f"/etc/systemd/system/user@{uid}.service.wants/{FIREWALL}", check=False)
+    assert left.stdout == "", f"apply removes build 3's firewall: {left.stdout}"
+    assert reach(vm, "tcp", 80) == "1.0.0", "app keeps running"
 
 
 def restart_manager(vm: VM) -> None:
     uid = vm.run("id -u services").stdout.strip()
-    runs = lambda: vm.run(f"systemctl show -p InvocationID user@{uid} mothership-services-firewall").stdout
-    before = runs()
     vm.run(f"sudo systemctl kill --signal=SIGKILL user@{uid}.service; sleep 5")
-    expect(vm.run("systemctl is-active mothership-services-firewall", check=False), "inactive", code=3)
     vm.run(f"sudo systemctl start user@{uid}.service")
-    after = runs().split("\n\n")
-    assert all(run not in before for run in after), f"the manager and firewall start again: {before} {after}"
-    expect(vm.run("systemctl is-active mothership-services-firewall"), "active")
-    expect(vm.run("sudo nft list table inet mothership"), "socket cgroupv2 level 3")
-    stray_refused(vm, 8091)
     deadline = time.time() + 120
     while reach(vm, "tcp", 80) != "1.0.3":
         if time.time() > deadline:
@@ -590,7 +601,6 @@ def ports(vm: VM, image: str, registry: Registry) -> None:
     reference = f"{image}:1.0.0@{registry.digest('1.0.0')}"
     for published in ["8080:80", "444:80", "80:80/udp"]:
         refused(vm, reference, published)
-    stray_refused(vm, 8090)
     outside = image.split("/")[0]
     expect(vm.run(f"{AS_SERVICES} run --rm --entrypoint /app {reference} reach {outside}"), "reached")
 
