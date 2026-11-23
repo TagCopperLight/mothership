@@ -1,8 +1,8 @@
 use super::answers::Flags;
 use crate::{
-    cmd::{self, As},
-    file,
-    prompt::{Choice, Prompt},
+    util::cmd::{self, As},
+    util::file,
+    util::prompt::{Choice, Prompt},
 };
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -497,5 +497,5 @@ fn partition(disk: &str, number: u64) -> String {
 }
 
 #[cfg(test)]
-#[path = "../../tests/disk.rs"]
+#[path = "../../tests/install/disk.rs"]
 mod tests;

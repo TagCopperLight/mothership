@@ -1,7 +1,7 @@
 use crate::{
-    cmd::{self, As},
-    file,
-    user::User,
+    system::user::User,
+    util::cmd::{self, As},
+    util::file,
 };
 use anyhow::Result;
 use serde::Deserialize;

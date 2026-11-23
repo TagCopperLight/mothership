@@ -1,4 +1,4 @@
-use crate::{file, package::Distro, walk};
+use crate::{package::Distro, util::file, util::walk};
 use anyhow::{Context, Result, bail};
 use std::{
     net::{TcpStream, ToSocketAddrs},
@@ -200,5 +200,5 @@ pub fn retry<T>(what: &str, needs: &Needs, mut step: impl FnMut() -> Result<T>) 
 }
 
 #[cfg(test)]
-#[path = "../../tests/net.rs"]
+#[path = "../../tests/install/net.rs"]
 mod tests;

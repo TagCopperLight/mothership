@@ -1,8 +1,8 @@
 use super::{Backup, Db, Origin, dpkg::EXTENDED_STATES};
 use crate::{
-    cmd::{self, As},
-    file,
-    systemd::{self, SYSTEM_DIRS, USER_DIRS},
+    system::systemd::{self, SYSTEM_DIRS, USER_DIRS},
+    util::cmd::{self, As},
+    util::file,
 };
 use anyhow::{Context, Result};
 use std::{collections::BTreeSet, fs, path::Path};
@@ -73,7 +73,7 @@ fn remove(db: &Db, names: &BTreeSet<String>) -> Result<()> {
 fn unedited(backup: &Backup) -> Result<bool> {
     let bytes = file::if_found(fs::read(&backup.path))
         .with_context(|| format!("reading {}", backup.path.display()))?;
-    Ok(bytes.is_some_and(|bytes| crate::hash::md5(&bytes) == backup.md5))
+    Ok(bytes.is_some_and(|bytes| crate::util::hash::md5(&bytes) == backup.md5))
 }
 
 pub fn keep_only(
@@ -162,5 +162,5 @@ fn apt_get(args: &[&str]) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/apt.rs"]
+#[path = "../../tests/package/apt.rs"]
 mod tests;

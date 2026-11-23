@@ -3,12 +3,13 @@ use super::{
     net::{self, Needs, Remote, Scheme},
 };
 use crate::{
-    cmd::{self, As},
-    file, github,
     package::Distro,
-    prompt::Prompt,
-    ssh,
-    user::User,
+    system::user::User,
+    trust::github,
+    trust::ssh,
+    util::cmd::{self, As},
+    util::file,
+    util::prompt::Prompt,
 };
 use anyhow::{Context, Result, bail};
 use std::{fs, path::Path};
@@ -114,5 +115,5 @@ pub fn clone(
 }
 
 #[cfg(test)]
-#[path = "../../tests/repo.rs"]
+#[path = "../../tests/install/repo.rs"]
 mod tests;

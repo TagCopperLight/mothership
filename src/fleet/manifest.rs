@@ -1,4 +1,4 @@
-use crate::{file, secrets::Recipient, sign::Signer};
+use crate::{secrets::Recipient, trust::sign::Signer, util::file};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::Path};

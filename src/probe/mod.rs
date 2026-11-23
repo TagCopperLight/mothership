@@ -4,16 +4,16 @@ pub mod state;
 pub mod unit;
 
 use crate::{
-    container::{self, registry::Client},
-    file,
     fleet::checked::{self, GIT_DIR, Git},
-    github,
-    http::{Curl, Http, Request},
-    sign,
+    services::{self, registry::Client},
+    trust::github,
+    trust::sign,
+    util::file,
+    util::http::{Curl, Http, Request},
 };
 use anyhow::{Context, Result, bail};
-use container::Pin;
 use plan::{Update, Watched};
+use services::Pin;
 use state::State;
 use std::{
     collections::BTreeMap,
@@ -155,8 +155,8 @@ fn recipe_path(service: &str) -> String {
     let (type_name, name) = service.split_once('/').expect("service_of names both");
     format!(
         "types/{type_name}/{}/{name}/{}",
-        container::SERVICES,
-        container::DOCKERFILE
+        services::SERVICES,
+        services::DOCKERFILE
     )
 }
 
@@ -173,8 +173,8 @@ fn built_from_accepted(
     let shown = format!("{}:{}", item.image.image, pin.version);
     let labels = registry.labels(&item.image.image, &pin.digest)?;
     let commit = labels
-        .get(container::REVISION_LABEL)
-        .with_context(|| format!("{shown} names no {}", container::REVISION_LABEL))?;
+        .get(services::REVISION_LABEL)
+        .with_context(|| format!("{shown} names no {}", services::REVISION_LABEL))?;
     if commit.len() != 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
         bail!("{shown} names {commit} as its commit, which isn't one");
     }
@@ -219,11 +219,11 @@ fn watched(git: &Git, commit: &str) -> Result<Vec<Watched>> {
         .out(&["ls-tree", "-r", "--name-only", commit, "--", "types"])?
         .lines()
     {
-        let Some(service) = container::service_of(Path::new(path)) else {
+        let Some(service) = services::service_of(Path::new(path)) else {
             continue;
         };
         let text = git.blob(commit, path)?.context("ls-tree listed it")?;
-        let images = container::parse(&text).with_context(|| format!("parsing {path}"))?;
+        let images = services::parse(&text).with_context(|| format!("parsing {path}"))?;
         for (name, image) in images {
             let dockerfile = match image.recipe {
                 true => git.blob(commit, &recipe_path(&service))?,
@@ -256,8 +256,8 @@ fn commit(
             .expect("service_of names both");
         let path = format!(
             "types/{type_name}/{}/{name}/{}",
-            container::SERVICES,
-            container::SERVICE_TOML
+            services::SERVICES,
+            services::SERVICE_TOML
         );
         if !texts.contains_key(&path) {
             let text = git.blob(base, &path)?.context("the probe read it")?;
@@ -297,7 +297,7 @@ fn commit(
         .collect();
     let message = format!(
         "Update {}\n\n{}",
-        crate::style::count(lines.len(), "image"),
+        crate::util::style::count(lines.len(), "image"),
         lines.join("\n")
     );
     let who = format!("{host}/probe <probe@{host}>");
@@ -305,5 +305,5 @@ fn commit(
 }
 
 #[cfg(test)]
-#[path = "../../tests/probe.rs"]
+#[path = "../../tests/probe/mod.rs"]
 mod tests;

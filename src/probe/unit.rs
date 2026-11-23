@@ -1,13 +1,13 @@
 use super::state::State;
 use crate::{
-    cmd,
-    container::{self, Action},
-    file,
     fleet::{Fleet, checked},
-    host,
-    item::{Change, Item, Section},
-    kind::Kind,
-    update,
+    services::{self, Action},
+    sync::item::{Change, Item, Section},
+    sync::kind::Kind,
+    system::host,
+    trust::update,
+    util::cmd,
+    util::file,
 };
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -52,7 +52,7 @@ fn service(fleet: &Fleet) -> Result<String> {
             credentials.push_str(&format!("LoadCredential={name}:{}\n", path.display()));
         }
     }
-    if container::token_path(fleet).exists() {
+    if services::token_path(fleet).exists() {
         let path = key_path(LOGINS);
         credentials.push_str(&format!("LoadCredential={LOGINS}:{}\n", path.display()));
     }
@@ -98,7 +98,7 @@ pub fn items(fleet: &Fleet) -> Result<Vec<Item>> {
             );
         } else {
             let logins_current = !fleet.etc_open()
-                || file::read(&key_path(LOGINS))? == container::docker_config(fleet)?;
+                || file::read(&key_path(LOGINS))? == services::docker_config(fleet)?;
             let current = written(SERVICE)?.as_deref() == Some(service(fleet)?.as_str())
                 && written(TIMER)?.as_deref() == Some(TIMER_TEXT)
                 && logins_current
@@ -160,7 +160,7 @@ pub fn install(fleet: &Fleet) -> Result<()> {
              systemd for it: the type must list nss-systemd (libnss-systemd on Debian)"
         );
     }
-    match container::docker_config(fleet)? {
+    match services::docker_config(fleet)? {
         Some(bytes) => file::write(&key_path(LOGINS), &bytes, 0o600)?,
         None => drop(file::remove_if_found(&key_path(LOGINS))?),
     }

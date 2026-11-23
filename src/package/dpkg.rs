@@ -1,5 +1,5 @@
 use super::{Archive, Backup, Distro, Origin, Package};
-use crate::{file, parallel, walk};
+use crate::{util::file, util::parallel, util::walk};
 use anyhow::{Context, Result, bail};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -482,5 +482,5 @@ pub fn shipped(archive: &Path, member: &Path) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/dpkg.rs"]
+#[path = "../../tests/package/dpkg.rs"]
 mod tests;

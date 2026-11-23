@@ -1,5 +1,5 @@
 use super::state::{Seen, State};
-use crate::container::{Image, Pin, registry::Client, version::Version};
+use crate::services::{Image, Pin, registry::Client, version::Version};
 use anyhow::Result;
 
 pub const PUBLIC_WAIT: u64 = 2 * 24 * 60 * 60;
@@ -170,5 +170,5 @@ fn watch(
 }
 
 #[cfg(test)]
-#[path = "../../tests/plan.rs"]
+#[path = "../../tests/probe/plan.rs"]
 mod tests;

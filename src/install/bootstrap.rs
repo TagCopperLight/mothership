@@ -1,7 +1,7 @@
 use super::net::{self, Needs};
 use crate::{
-    cmd::{self, As},
     package::Distro,
+    util::cmd::{self, As},
 };
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};

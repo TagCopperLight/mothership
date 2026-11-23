@@ -8,14 +8,19 @@ mod repo;
 mod trust;
 
 use crate::{
-    apply::{self, ServiceManager},
-    cmd, container, file,
     fleet::{self, Fleet, Machine, Repo},
-    github, host,
     package::{self, Distro, aur},
-    prompt::Prompt,
-    revert, scan, ssh,
-    user::{self, User},
+    services,
+    sync::apply::{self, ServiceManager},
+    sync::revert,
+    sync::scan,
+    system::host,
+    system::user::{self, User},
+    trust::github,
+    trust::ssh,
+    util::cmd,
+    util::file,
+    util::prompt::Prompt,
 };
 use answers::Flags;
 use anyhow::{Context, Result, anyhow, bail};
@@ -80,7 +85,7 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
         _ => {}
     }
     net::retry("Checking the probe's pins", &Needs::mirror(distro)?, || {
-        container::ask_republished(&fleet, &mut |question| prompt.confirm(question))
+        services::ask_republished(&fleet, &mut |question| prompt.confirm(question))
     })?;
     net::retry("Applying the fleet", &Needs::mirror(distro)?, || {
         apply::unasked(match chroot {

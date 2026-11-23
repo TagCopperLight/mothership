@@ -5,14 +5,15 @@ use super::{
     net::{self, Needs},
     repo,
 };
-use crate::update::BINARY;
+use crate::trust::update::BINARY;
 use crate::{
-    cmd::{self, As},
-    file,
     fleet::{self, Repo, checked},
     package::Distro,
-    prompt::Prompt,
-    ssh, user,
+    system::user,
+    trust::ssh,
+    util::cmd::{self, As},
+    util::file,
+    util::prompt::Prompt,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -49,7 +50,7 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     let dir = Path::new(FLEET);
     fs::create_dir_all(dir)?;
     let root_user = user::by_name("root")?.context("the ISO has a root user")?;
-    let title = crate::github::title(&hostname, &admin);
+    let title = crate::trust::github::title(&hostname, &admin);
     repo::clone(&url, dir, &root_user, &title, Distro::Arch, prompt)?;
     let machine = answers::machine(flags, prompt, dir)?;
     let fleet = Repo::for_machine(dir.into(), &machine)?;

@@ -1,7 +1,7 @@
 use super::{plan::Watched, state::State};
 use crate::{
-    container::registry::Client,
-    http::{Http, Request},
+    services::registry::Client,
+    util::http::{Http, Request},
 };
 use anyhow::{Context, Result, bail};
 
@@ -129,7 +129,7 @@ pub fn ask(
                     key: format!(
                         "{fleet}:{}@{}",
                         item.service,
-                        crate::hash::sha256(dockerfile.as_bytes())
+                        crate::util::hash::sha256(dockerfile.as_bytes())
                     ),
                     shown: format!("the fleet's recipe {}", item.service),
                     payload: serde_json::json!({ "service": item.service }),
@@ -180,5 +180,5 @@ fn ask_one(
 }
 
 #[cfg(test)]
-#[path = "../../tests/rebuild.rs"]
+#[path = "../../tests/probe/rebuild.rs"]
 mod tests;

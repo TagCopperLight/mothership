@@ -1,9 +1,9 @@
 use super::disk;
-use crate::update::BINARY;
+use crate::trust::update::BINARY;
 use crate::{
-    cmd::{self, As},
-    file,
     fleet::Repo,
+    util::cmd::{self, As},
+    util::file,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -281,5 +281,5 @@ fn luks_device() -> Result<String> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/boot.rs"]
+#[path = "../../tests/install/boot.rs"]
 mod tests;

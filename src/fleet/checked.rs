@@ -3,12 +3,12 @@ use super::{
     homes::{self, Reader},
 };
 use crate::{
-    cmd::{self, As},
-    container::{self, confirm::Unconfirmed},
-    file,
-    prompt::Prompt,
-    sign::{self, Commit, Reach, SIGNERS, Signer},
-    user::User,
+    services::{self, confirm::Unconfirmed},
+    system::user::User,
+    trust::sign::{self, Commit, Reach, SIGNERS, Signer},
+    util::cmd::{self, As},
+    util::file,
+    util::prompt::Prompt,
 };
 use anyhow::{Context, Result, bail};
 use ssh_key::PrivateKey;
@@ -242,7 +242,7 @@ pub fn verify(git: &Git, parent: &str, commit: &str) -> Result<Option<Signer>> {
                     );
                 }
             }
-            container::versions_only(&old, &new)
+            services::versions_only(&old, &new)
                 .with_context(|| format!("{} can't sign this change to {text}", signer.name))?;
         }
     }
@@ -260,10 +260,10 @@ fn inherited(git: &Git, anchor: &str, unconfirmed: &mut Unconfirmed) -> Result<(
         .out(&["ls-tree", "-r", "--name-only", anchor, "--", super::TYPES])?
         .lines()
     {
-        let Some(service) = container::service_of(Path::new(path)) else {
+        let Some(service) = services::service_of(Path::new(path)) else {
             continue;
         };
-        let mut open = container::changed_pins(None, git.blob(anchor, path)?.as_deref());
+        let mut open = services::changed_pins(None, git.blob(anchor, path)?.as_deref());
         let history = git.out(&["rev-list", "--first-parent", anchor, "--", path])?;
         for commit in history.lines() {
             if open.is_empty() {
@@ -274,7 +274,7 @@ fn inherited(git: &Git, anchor: &str, unconfirmed: &mut Unconfirmed) -> Result<(
                 Some(parent) => git.blob(parent, path)?,
                 None => None,
             };
-            let set = container::changed_pins(old.as_deref(), git.blob(commit, path)?.as_deref());
+            let set = services::changed_pins(old.as_deref(), git.blob(commit, path)?.as_deref());
             let by_versions = match &parent {
                 Some(parent) => !matches!(
                     verify(git, parent, commit),
@@ -310,10 +310,10 @@ fn note_unconfirmed(git: &Git, steps: &[Step]) -> Result<()> {
             &step.commit,
         ])?;
         for path in changed.lines() {
-            let Some(service) = container::service_of(Path::new(path)) else {
+            let Some(service) = services::service_of(Path::new(path)) else {
                 continue;
             };
-            let pins = container::changed_pins(
+            let pins = services::changed_pins(
                 git.blob(&step.parent, path)?.as_deref(),
                 git.blob(&step.commit, path)?.as_deref(),
             );
@@ -877,5 +877,5 @@ fn advance_main(admin: &User, from: &str, to: &str) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/checked.rs"]
+#[path = "../../tests/fleet/checked.rs"]
 mod tests;

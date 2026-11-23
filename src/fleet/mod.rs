@@ -1,15 +1,15 @@
 use crate::{
-    chezmoi,
-    cmd::{self, As},
-    container,
-    hardware::{self, Hardware},
-    ignore::{Ignore, Paths},
-    kind::Level,
+    home::chezmoi,
     package::{self},
     secrets::{self, Keys, Recipient, Storage},
-    style,
-    user::{self, User},
-    walk,
+    services,
+    sync::ignore::{Ignore, Paths},
+    sync::kind::Level,
+    system::hardware::{self, Hardware},
+    system::user::{self, User},
+    util::cmd::{self, As},
+    util::style,
+    util::walk,
 };
 use anyhow::{Context, Result, bail};
 use serde::de;
@@ -23,6 +23,7 @@ use std::{
 
 pub mod checked;
 mod config;
+pub mod edit;
 pub mod homes;
 mod logins;
 mod manifest;
@@ -55,7 +56,7 @@ pub struct Repo {
     pub not_secret: Paths,
     pub profiles: Vec<Profile>,
     pub recovery: Recipient,
-    pub services: Vec<container::Service>,
+    pub services: Vec<services::Service>,
     pub probe_host: Option<String>,
 }
 
@@ -369,7 +370,7 @@ impl Repo {
         let ignore = Ignore::load(&type_dir.join(IGNORE), Level::Machine)?;
         let not_secret = Paths::load(&type_dir.join(NOT_SECRET))?;
         let profiles = profiles(&dir, &type_dir.join(USERS))?;
-        let services = container::load(&type_dir)?;
+        let services = services::load(&type_dir)?;
         Ok(Repo {
             dir,
             type_name: device_type.to_owned(),
@@ -629,5 +630,5 @@ impl Fleet {
 }
 
 #[cfg(test)]
-#[path = "../../tests/fleet.rs"]
+#[path = "../../tests/fleet/mod.rs"]
 mod tests;

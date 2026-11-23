@@ -1,8 +1,8 @@
 use super::disk::Layout;
 use crate::{
     fleet::{self, Machine, Repo},
-    host,
-    prompt::{Choice, Prompt},
+    system::host,
+    util::prompt::{Choice, Prompt},
 };
 use anyhow::{Result, anyhow, bail};
 use std::path::{Component, Path, PathBuf};
@@ -186,5 +186,5 @@ pub fn timezone(flags: &Flags, prompt: &mut Prompt) -> Result<String> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/install.rs"]
+#[path = "../../tests/install/answers.rs"]
 mod tests;

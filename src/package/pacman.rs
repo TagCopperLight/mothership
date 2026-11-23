@@ -1,7 +1,7 @@
 use super::{Archive, Aur, Backup, Distro, Origin, Package, aur};
 use crate::{
-    cmd::{self, As},
-    parallel,
+    util::cmd::{self, As},
+    util::parallel,
 };
 use anyhow::{Context, Result, bail};
 use std::{collections::BTreeSet, fs, path::Path};
@@ -206,5 +206,5 @@ fn remove_unneeded(names: &[&str]) -> Result<BTreeSet<String>> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/pacman.rs"]
+#[path = "../../tests/package/pacman.rs"]
 mod tests;

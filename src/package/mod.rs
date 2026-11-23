@@ -5,7 +5,7 @@ mod pacman;
 
 pub use apt::keep_only;
 
-use crate::user::User;
+use crate::system::user::User;
 use anyhow::{Context, Result, bail};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -280,5 +280,5 @@ impl Db {
 }
 
 #[cfg(test)]
-#[path = "../../tests/package.rs"]
+#[path = "../../tests/package/mod.rs"]
 mod tests;

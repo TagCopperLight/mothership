@@ -1,54 +1,26 @@
-mod apply;
-mod chezmoi;
-mod cmd;
-mod container;
-mod edit;
-mod file;
 mod fleet;
-mod github;
-mod hardware;
-mod hash;
-mod host;
-mod http;
-mod ignore;
+mod home;
 mod install;
-mod item;
-mod kind;
-mod later;
 mod package;
-mod parallel;
-mod pref;
-mod preview;
 mod probe;
-mod prompt;
-mod record;
-mod recovery;
-mod revert;
-mod review;
-mod scan;
 mod secrets;
-mod sign;
-mod snapshot;
-mod ssh;
-mod style;
+mod services;
 #[cfg(test)]
 #[path = "../tests/support.rs"]
 mod support;
-mod systemd;
-mod tools;
+mod sync;
+mod system;
 mod trust;
-mod update;
 mod usage;
-mod user;
-mod walk;
+mod util;
 
 use anyhow::bail;
 use fleet::{
     Fleet,
     checked::{self, Advance, Outcome, Remote},
 };
-use prompt::Prompt;
 use std::process::ExitCode;
+use util::prompt::Prompt;
 
 #[derive(Clone, Copy)]
 enum Command {
@@ -112,7 +84,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             let text = format!("{e:#}");
-            let lines: Vec<String> = text.lines().map(style::clean).collect();
+            let lines: Vec<String> = text.lines().map(util::style::clean).collect();
             eprintln!("Error: {}", lines.join("\n"));
             ExitCode::FAILURE
         }
@@ -124,7 +96,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     let Some(command) = Command::parse(name) else {
         bail!("mothership has no command {name}: `mothership --help` lists them");
     };
-    if !user::is_root() {
+    if !system::user::is_root() {
         bail!("mothership reads every user's home: run it with sudo");
     }
     let lock = lock()?;
@@ -166,20 +138,20 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         );
     }
     match (command, rest) {
-        (Command::Scan, []) => scan::run(refused),
-        (Command::Review, []) => review::run(),
-        (Command::Apply, []) => apply::run(),
+        (Command::Scan, []) => sync::scan::run(refused),
+        (Command::Review, []) => sync::review::run(),
+        (Command::Apply, []) => sync::apply::run(),
         (Command::Install, flags) => install::run(flags),
         (Command::Key, []) => trust::key(&Fleet::load()?),
         (Command::Recovery, []) => {
-            recovery::run(std::path::Path::new(fleet::DIR), &mut Prompt::new())
+            trust::recovery::run(std::path::Path::new(fleet::DIR), &mut Prompt::new())
         }
         (Command::Commit, [message]) => {
             let mut prompt = Prompt::new();
             let admin = fleet::admin()?;
             let stage = checked::stage()?;
             stage.take_checkout(&admin)?;
-            let key = sign::require_machine_key()?;
+            let key = trust::sign::require_machine_key()?;
             let outcome = stage.commit(&admin, message, &key, &mut prompt, Advance::KeepEdits)?;
             if let Outcome::Unchanged = outcome {
                 println!("Nothing to commit.");
@@ -187,7 +159,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             Ok(())
         }
         (Command::Trust, [host, type_name, keys @ ..]) if !keys.is_empty() => {
-            host::check(host)?;
+            system::host::check(host)?;
             let message = format!("Trust {host} as {type_name}");
             let mut uploads = Vec::new();
             let (outcome, base) = edit_fleet(&message, |fleet, prompt| {
@@ -199,26 +171,28 @@ fn run(args: &[String]) -> anyhow::Result<()> {
                 Outcome::Unchanged => base,
                 Outcome::Pushed(commit) => commit,
             };
-            github::add(&fleet::admin()?, &uploads)?;
+            trust::github::add(&fleet::admin()?, &uploads)?;
             println!("On {host}, type this code: {}", checked::short(&code));
             Ok(())
         }
         (Command::Retire, [host]) => {
-            host::check(host)?;
+            system::host::check(host)?;
             let (outcome, _) = edit_fleet(&format!("Retire {host}"), |fleet, prompt| {
                 trust::retire_host(fleet, host, prompt)
             })?;
             match outcome {
                 Outcome::Declined => Ok(()),
-                Outcome::Unchanged | Outcome::Pushed(_) => github::remove(&fleet::admin()?, host),
+                Outcome::Unchanged | Outcome::Pushed(_) => {
+                    trust::github::remove(&fleet::admin()?, host)
+                }
             }
         }
         (Command::Secret, [service, name]) => {
             let machine = fleet::Machine::load()?;
-            let wanted = edit::secret::Wanted::parse(service, name, &machine.device_type)?;
+            let wanted = fleet::edit::secret::Wanted::parse(service, name, &machine.device_type)?;
             let message = format!("Set {} of {}", wanted.name, wanted.shown());
             edit_fleet(&message, |fleet, prompt| {
-                edit::secret::set(fleet, &wanted, prompt)
+                fleet::edit::secret::set(fleet, &wanted, prompt)
             })
             .map(drop)
         }
@@ -230,7 +204,7 @@ fn edit_fleet(
     message: &str,
     command: impl FnOnce(&Fleet, &mut Prompt) -> anyhow::Result<()>,
 ) -> anyhow::Result<(Outcome, String)> {
-    let key = sign::require_machine_key()?;
+    let key = trust::sign::require_machine_key()?;
     let mut prompt = Prompt::new();
     let stage = checked::stage()?;
     let base = stage.base().to_owned();
@@ -241,21 +215,21 @@ fn edit_fleet(
 }
 
 fn start_services(interface: Option<&str>) -> anyhow::Result<()> {
-    if !user::is_root() {
+    if !system::user::is_root() {
         bail!("mothership start runs as root, from services' units");
     }
     if let Some(interface) = interface
-        && container::Network::try_from(interface.to_owned())?
+        && services::Network::try_from(interface.to_owned())?
             .interface()
             .is_none()
     {
         bail!("{interface} isn't a network interface");
     }
     if let Some(interface) = interface {
-        container::start::wait_for_address(interface)?;
+        services::start::wait_for_address(interface)?;
     }
     match lock()? {
-        Some(_lock) => container::start::command(interface),
+        Some(_lock) => services::start::command(interface),
         None => {
             println!(
                 "Another mothership command is running: scan shows a service this leaves stopped"

@@ -1,5 +1,5 @@
 use super::{ETC_DIR, TYPES, USERS, type_dir, types};
-use crate::{chezmoi, container, secrets, walk};
+use crate::{home::chezmoi, secrets, services, util::walk};
 use anyhow::{Context, Result, bail};
 use std::{
     collections::BTreeMap,
@@ -65,7 +65,7 @@ impl fmt::Display for Reader {
     }
 }
 
-const ROOT_PLACES: [&str; 2] = [ETC_DIR, container::SERVICES];
+const ROOT_PLACES: [&str; 2] = [ETC_DIR, services::SERVICES];
 
 pub struct Shared {
     pub rel: PathBuf,
@@ -226,5 +226,5 @@ pub fn owner(fleet_dir: &Path, source: &Path) -> Result<Reader> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/homes.rs"]
+#[path = "../../tests/fleet/homes.rs"]
 mod tests;

@@ -1,4 +1,4 @@
-use crate::{file, hardware::Hardware, package::aur, secrets::Storage};
+use crate::{package::aur, secrets::Storage, system::hardware::Hardware, util::file};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{

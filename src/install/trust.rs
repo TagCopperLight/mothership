@@ -3,9 +3,10 @@ use crate::{
         self, Fleet,
         checked::{self, Advance, Anchor, Outcome, Remote},
     },
-    github,
-    prompt::Prompt,
-    secrets, sign,
+    secrets,
+    trust::github,
+    trust::sign,
+    util::prompt::Prompt,
 };
 use anyhow::{Result, bail};
 use std::path::Path;

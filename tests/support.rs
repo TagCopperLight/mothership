@@ -1,7 +1,7 @@
 use crate::{
     fleet::{Fleet, MANIFEST, Repo, SYSTEM_TOML},
-    item::{Item, Section},
-    user::{self, User},
+    sync::item::{Item, Section},
+    system::user::{self, User},
 };
 use std::{fs, path::Path};
 
@@ -16,7 +16,7 @@ pub fn in_section(mut item: Item, section: Section) -> Item {
 
 pub fn name_recovery(dir: &Path) -> age::x25519::Identity {
     let key = age::x25519::Identity::generate();
-    let signing = crate::sign::public(&crate::sign::recovery_key(&key)).unwrap();
+    let signing = crate::trust::sign::public(&crate::trust::sign::recovery_key(&key)).unwrap();
     let text = format!(
         "[recovery]\nage = \"{}\"\nsigning = \"{signing}\"\n",
         key.to_public()

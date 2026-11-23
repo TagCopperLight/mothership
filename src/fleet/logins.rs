@@ -1,5 +1,5 @@
 use super::{USERS, type_dir, types};
-use crate::{secrets, ssh, walk};
+use crate::{secrets, trust::ssh, util::walk};
 use anyhow::{Result, bail};
 use std::path::Path;
 
@@ -46,5 +46,5 @@ pub fn resolve(fleet_dir: &Path, owner: &Path, ssh_from: &[String]) -> Result<Op
 }
 
 #[cfg(test)]
-#[path = "../../tests/logins.rs"]
+#[path = "../../tests/fleet/logins.rs"]
 mod tests;
