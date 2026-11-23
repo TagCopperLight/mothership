@@ -152,7 +152,7 @@ impl World {
         let wanted = Wanted {
             service,
             key: "server/app".into(),
-            fleet: fingerprint(service, &rendered, None),
+            fleet: fingerprint(service, &rendered),
             rendered: &rendered,
             overwrite: Vec::new(),
         };
@@ -378,7 +378,7 @@ fn overwriting_an_edited_file_writes_the_fleets_version() {
     let wanted = Wanted {
         service: &service,
         key: "server/app".into(),
-        fleet: fingerprint(&service, &rendered, None),
+        fleet: fingerprint(&service, &rendered),
         rendered: &rendered,
         overwrite: vec![PathBuf::from("app.conf")],
     };
@@ -406,7 +406,7 @@ fn a_service_facing_an_interface_follows_its_addresses_and_waits_without_one() {
     let wanted = Wanted {
         service: &service,
         key: "server/app".into(),
-        fleet: fingerprint(&service, &rendered, None),
+        fleet: fingerprint(&service, &rendered),
         rendered: &rendered,
         overwrite: Vec::new(),
     };

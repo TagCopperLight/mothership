@@ -41,6 +41,9 @@ pub fn scan(
                 .reverting(Action::Setup),
         ));
     }
+    if missing.is_empty() && !fleet.services.is_empty() && fleet.etc_open() {
+        items.extend(login_item(fleet)?);
+    }
     if fleet.services.is_empty() && account::leftovers()? {
         items.push(fleet_item(
             Item::new(
@@ -171,6 +174,20 @@ fn binding_item(places: &Places, name: &str) -> Result<Option<Item>> {
     })
 }
 
+fn login_item(fleet: &Fleet) -> Result<Option<Item>> {
+    let Some(user) = account::user()? else {
+        return Ok(None);
+    };
+    if user.read(&account::logins(&user))? == super::docker_config(fleet)? {
+        return Ok(None);
+    }
+    Ok(Some(fleet_item(
+        Item::new(Kind::Container, Change::Edited, "registry login", "changed")
+            .noting("the fleet's registry token differs from the one the services' Docker uses")
+            .reverting(Action::Login),
+    )))
+}
+
 fn fleet_item(mut item: Item) -> Item {
     item.section = Section::Fleet;
     item
@@ -199,7 +216,7 @@ fn service_items(
         ]);
     }
     let rendered = service.render(fleet.root_keys())?;
-    let fingerprint = deploy::fingerprint(service, &rendered, super::token(fleet)?.as_deref());
+    let fingerprint = deploy::fingerprint(service, &rendered);
     let pins = service.pins();
     let Some(entry) = entry else {
         return Ok(vec![fleet_item(

@@ -41,6 +41,10 @@ pub fn user() -> Result<Option<User>> {
     user::by_name(USER)
 }
 
+pub fn logins(user: &User) -> PathBuf {
+    user.home.join(".docker/config.json")
+}
+
 pub fn runtime(user: &User) -> PathBuf {
     PathBuf::from(format!("/run/user/{}", user.uid))
 }

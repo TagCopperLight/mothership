@@ -63,9 +63,8 @@ pub enum Outcome {
     Refused(String),
 }
 
-pub fn fingerprint(service: &Service, rendered: &Rendered, token: Option<&[u8]>) -> String {
+pub fn fingerprint(service: &Service, rendered: &Rendered) -> String {
     let mut fields = hash::Fields::new();
-    fields.add(token.unwrap_or_default());
     for (name, image) in &service.images {
         for part in [name, &image.version, &image.digest] {
             fields.add(part.as_bytes());

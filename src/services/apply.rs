@@ -21,6 +21,7 @@ pub enum Action {
     Overwrite { service: String, file: PathBuf },
     Probe,
     Unprobe,
+    Login,
 }
 
 impl Action {
@@ -46,11 +47,10 @@ impl Action {
             Action::Overwrite { .. } => "write the fleet's version",
             Action::Probe => "install and start it",
             Action::Unprobe => "stop and remove it",
+            Action::Login => "write the fleet's login",
         }
     }
 }
-
-const DOCKER_CONFIG: &str = ".docker/config.json";
 
 pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     for action in actions {
@@ -73,10 +73,9 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
         return Ok(());
     }
     let logins = docker_config(fleet)?;
-    let token = super::token(fleet)?;
     let client = registry::Client::new(Box::new(Curl), logins.as_deref())?;
     let docker = Docker::find(client)?.context("the services account is missing")?;
-    let config = docker.user.home.join(DOCKER_CONFIG);
+    let config = account::logins(&docker.user);
     docker.user.with_rights(|| match &logins {
         Some(bytes) => file::write(&config, bytes, 0o600),
         None => file::remove_if_found(&config).map(drop),
@@ -110,6 +109,7 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
             | Action::Teardown
             | Action::Probe
             | Action::Unprobe
+            | Action::Login
             | Action::Start(_) => {}
             Action::RemoveContainer(id) => docker.remove_container(id)?,
             Action::RemoveLink(network) => docker.remove_link(network)?,
@@ -142,7 +142,7 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
         let wanted = Wanted {
             service,
             key: super::key(&fleet.type_name, service),
-            fleet: deploy::fingerprint(service, &rendered, token.as_deref()),
+            fleet: deploy::fingerprint(service, &rendered),
             rendered: &rendered,
             overwrite: overwrite
                 .iter()
