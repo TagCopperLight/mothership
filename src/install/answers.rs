@@ -188,6 +188,21 @@ pub fn machine(flags: &Flags, prompt: &mut Prompt, dir: &Path) -> Result<Machine
     Ok(machine)
 }
 
+pub fn admin_name(flags: &Flags, prompt: &mut Prompt) -> Result<String> {
+    match &flags.admin {
+        Some(name) => Ok(name.clone()),
+        None => prompt.line("Admin, who commits and pushes the fleet:"),
+    }
+}
+
+pub fn check_admin(dir: &Path, machine: &Machine, admin: &str) -> Result<()> {
+    let fleet = Repo::for_machine(dir.into(), machine)?;
+    if !fleet.profiles.iter().any(|member| member.name == admin) {
+        bail!("{} has no user {admin}", machine.device_type);
+    }
+    Ok(())
+}
+
 pub fn admin_given(flags: &Flags, members: &[String]) -> Result<Option<String>> {
     match &flags.admin {
         Some(name) if !members.contains(name) => {

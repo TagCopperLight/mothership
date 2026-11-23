@@ -49,9 +49,17 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     if flags.remove_unlisted.is_some() && distro != Distro::Debian {
         bail!("--remove-unlisted only means something on Debian and Ubuntu");
     }
-    if !Path::new(fleet::MACHINE).exists() {
-        start_server(flags, prompt, distro)?;
-    }
+    let started;
+    let flags = match Path::new(fleet::MACHINE).exists() {
+        true => flags,
+        false => {
+            started = Flags {
+                admin: Some(start_server(flags, prompt, distro)?),
+                ..flags.clone()
+            };
+            &started
+        }
+    };
     let machine = Machine::load()?;
     let dir = Path::new(fleet::DIR);
     let members = Repo::for_machine(dir.into(), &machine)?.profiles;
@@ -100,33 +108,44 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     scan::run(None)
 }
 
-fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<()> {
-    let name = match &flags.admin {
-        Some(name) => name.clone(),
-        None => env::var("SUDO_USER").with_context(|| {
-            format!(
-                "name the account that will commit the fleet with {}, or run install with sudo \
-                 from it",
-                answers::ADMIN
-            )
-        })?,
-    };
-    let admin = user::by_name(&name)?.with_context(|| format!("there is no user {name}"))?;
-    fleet::require_sudo(&admin)?;
+fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<String> {
     bootstrap::git(distro)?;
     bootstrap::chezmoi(distro)?;
     let hostname = answers::hostname(flags, prompt)?;
+    let admin = answers::admin_name(flags, prompt)?;
     let dir = Path::new(fleet::DIR);
     if !dir.join(".git").exists() {
         let url = answers::fleet_url(flags, prompt)?;
+        let owner = match user::by_name(&admin)? {
+            Some(existing) => existing,
+            None => user::by_name("root")?.context("the system has a root user")?,
+        };
         fs::create_dir_all(dir.parent().expect("the fleet folder has a parent"))?;
-        admin.create_dir_all(dir)?;
-        let title = github::title(&hostname, &admin.name);
-        repo::clone(&url, dir, &admin, &title, distro, prompt)?;
+        owner.create_dir_all(dir)?;
+        let title = github::title(&hostname, &admin);
+        repo::clone(&url, dir, &owner, &title, distro, prompt)?;
+        if owner.uid == 0 {
+            hand_over_root_key(&owner)?;
+        }
     }
     let machine = answers::machine(flags, prompt, dir)?;
+    answers::check_admin(dir, &machine, &admin)?;
     host::rename(&hostname)?;
-    machine.save(Path::new("/"))
+    machine.save(Path::new("/"))?;
+    Ok(admin)
+}
+
+fn hand_over_root_key(root: &User) -> Result<()> {
+    let key = ssh::key_path(root);
+    let Some(bytes) = file::read(&key)? else {
+        return Ok(());
+    };
+    let carried = Path::new(CARRIED_KEY);
+    file::remove_if_found(carried)?;
+    fs::create_dir_all(carried.parent().expect("the carried key has a folder"))?;
+    file::create_private(carried, &bytes)?;
+    file::remove_if_found(&key)?;
+    file::remove_if_found(&ssh::public_path(root)).map(drop)
 }
 
 fn adopt(flags: &Flags, prompt: &mut Prompt, members: &[String], dir: &Path) -> Result<()> {

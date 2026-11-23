@@ -42,21 +42,16 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     }
     let url = answers::fleet_url(flags, prompt)?;
     let hostname = answers::hostname(flags, prompt)?;
-    let admin = match &flags.admin {
-        Some(name) => name.clone(),
-        None => prompt.line("Admin, who commits and pushes the fleet:")?,
-    };
+    let admin = answers::admin_name(flags, prompt)?;
     let dir = Path::new(FLEET);
     fs::create_dir_all(dir)?;
     let root_user = user::by_name("root")?.context("the ISO has a root user")?;
     let title = crate::trust::github::title(&hostname, &admin);
     repo::clone(&url, dir, &root_user, &title, Distro::Arch, prompt)?;
     let machine = answers::machine(flags, prompt, dir)?;
+    answers::check_admin(dir, &machine, &admin)?;
     let fleet = Repo::for_machine(dir.into(), &machine)?;
     boot::check_type(&fleet)?;
-    if !fleet.profiles.iter().any(|member| member.name == admin) {
-        bail!("{} has no user {admin}", machine.device_type);
-    }
     let timezone = answers::timezone(flags, prompt)?;
     Saved {
         fleet: url.clone(),

@@ -17,7 +17,7 @@ need.
 
 ```console
 $ printf 'r\n%s\ny\n\ny\ny\n' "$(grep AGE-SECRET ~/recovery.txt)" |
-> sudo mothership install --fleet /home/me/fleet.git --type server --hostname box
+> sudo mothership install --admin me --fleet /home/me/fleet.git --type server --hostname box
 ...
 Run this on a machine that signs for the fleet:
   sudo mothership trust box server root=age1[a-z0-9]+ me=age1[a-z0-9]+ 'signing=ssh-ed25519 [A-Za-z0-9+/]+' (re)
