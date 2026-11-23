@@ -3,11 +3,13 @@ use crate::{
     util::cmd::{self, As},
     util::parallel,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use std::{collections::BTreeSet, fs, path::Path};
 
 const LOCAL: &str = "/var/lib/pacman/local";
 const CACHE: &str = "/var/cache/pacman/pkg";
+const OLD_LISTS: &str = "If a download failed, this machine's package lists are older than the \
+                         mirrors: upgrade the system, then apply again.";
 
 pub fn load() -> Result<Vec<Package>> {
     let mut dirs = Vec::new();
@@ -141,7 +143,7 @@ pub fn install(aur: &Aur, names: &[&str]) -> Result<()> {
     }
     if !install.repo.is_empty() {
         let args = [&["-S", "--needed", "--noconfirm"], &install.repo[..]].concat();
-        cmd::root("pacman", &args)?;
+        cmd::root("pacman", &args).map_err(|e| anyhow!("{e:#}\n{OLD_LISTS}"))?;
     }
     if let Some((helper, names)) = &install.aur {
         let _sudo = aur::NoPassword::grant(aur.admin)?;
@@ -149,7 +151,8 @@ pub fn install(aur: &Aur, names: &[&str]) -> Result<()> {
             As::User(aur.admin),
             helper.command(),
             &[&["-S", "--needed", "--noconfirm"], &names[..]].concat(),
-        )?;
+        )
+        .map_err(|e| anyhow!("{e:#}\n{OLD_LISTS}"))?;
     }
     Ok(())
 }

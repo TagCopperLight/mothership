@@ -4,7 +4,7 @@ use crate::{
     util::cmd::{self, As},
     util::file,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::{collections::BTreeSet, fs, path::Path};
 
 const BOOT_FILES: [&str; 1] = ["/usr/bin/sudo"];
@@ -158,7 +158,12 @@ fn autoremovable(options: &[&str]) -> Result<BTreeSet<String>> {
 fn apt_get(args: &[&str]) -> Result<()> {
     let mut command = As::Root.command("apt-get", args);
     command.env("DEBIAN_FRONTEND", "noninteractive");
-    cmd::status(command, "apt-get", args)
+    cmd::status(command, "apt-get", args).map_err(|e| {
+        anyhow!(
+            "{e:#}\nIf another program holds apt's lock, such as unattended upgrades, apply again \
+             once it's done."
+        )
+    })
 }
 
 #[cfg(test)]
