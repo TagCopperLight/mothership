@@ -92,7 +92,7 @@ fn round(
     }
 
     let style = Style::stdout();
-    scan::print_section(&fleet, Section::Fleet, &todo, style, &|_| None);
+    scan::print_section(&fleet, Section::Fleet, &todo, style);
     if !skipped.is_empty() {
         println!(
             "{} left for the machine's first start, which runs a service manager",
@@ -106,7 +106,7 @@ fn round(
     ] {
         if !items.is_empty() {
             println!("Left alone, since {why}:");
-            scan::print_groups(&fleet, items, style, &|_| None);
+            scan::print_groups(&fleet, items, style);
         }
     }
     let review = left + edited.len() + locked.len() + unread.len();

@@ -1,5 +1,4 @@
 use crate::{
-    fleet::Fleet,
     fleet::edit::Add,
     sync::kind::Kind,
     sync::preview::{Preview, Seen},
@@ -193,13 +192,6 @@ impl Item {
 impl Item {
     pub fn ignore_line(&self) -> String {
         format!("{} {}", self.kind.name(), globset::escape(&self.subject))
-    }
-
-    pub fn key(&self, fleet: &Fleet) -> String {
-        match self.member {
-            None => self.ignore_line(),
-            Some(i) => format!("{}: {}", fleet.members[i].name, self.ignore_line()),
-        }
     }
 }
 

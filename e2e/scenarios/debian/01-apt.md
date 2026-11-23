@@ -60,13 +60,13 @@ $ printf 'a\na\nr\ny\n' | sudo mothership review
     + beta  installed  An app the fleet never lists
   a  add         add it to `packages` in system.toml
   r  revert      uninstall
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
 [2/3] Packages
     + omega  installed  An app built on this machine
   a  add         add it to `packages` in system.toml
   r  revert      uninstall
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
   It is in none of apt's sources.
   It goes into `built_packages`.
@@ -78,7 +78,7 @@ $ printf 'a\na\nr\ny\n' | sudo mothership review
   a  add         copy it into the type's etc/
   s  secret      copy it into the type's etc/, encrypted
   r  revert      restore the package's version
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › r
 2 added, 1 reverted
 Review on machine: 2 added:

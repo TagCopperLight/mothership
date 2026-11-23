@@ -72,7 +72,7 @@ pub fn owner(fleet: &Fleet, item: &Item) -> Option<usize> {
     item.member.filter(|_| fleet.members.len() > 1)
 }
 
-pub fn summary(report: &Report, style: Style, waiting: &dyn Fn(&Item) -> Option<u64>) {
+pub fn summary(report: &Report, style: Style) {
     let count = |section| {
         report
             .shown
@@ -80,15 +80,10 @@ pub fn summary(report: &Report, style: Style, waiting: &dyn Fn(&Item) -> Option<
             .filter(|item| item.section == section)
             .count()
     };
-    let put_off = report
-        .shown
-        .iter()
-        .filter(|item| item.section != Section::Fleet && waiting(item).is_some())
-        .count();
-    let review = count(Section::Attention) + count(Section::Machine) - put_off;
+    let review = count(Section::Attention) + count(Section::Machine);
     let apply = count(Section::Fleet);
     let bold = |n: usize| style.paint(n, &[Paint::Bold]);
-    if review + apply + put_off == 0 {
+    if review + apply == 0 {
         println!(
             "{} Nothing differs from the {} type",
             style.paint("✓", &[Paint::Green, Paint::Bold]),
@@ -101,33 +96,18 @@ pub fn summary(report: &Report, style: Style, waiting: &dyn Fn(&Item) -> Option<
     if apply > 0 {
         println!("{} to apply      {}", bold(apply), style.command("apply"));
     }
-    if put_off > 0 {
-        let later = format!("{put_off} put off for later");
-        println!("{}", style.paint(later, &[Paint::Blue]));
-    }
 }
 
-pub fn print_section(
-    fleet: &Fleet,
-    section: Section,
-    items: &[&Item],
-    style: Style,
-    waiting: &dyn Fn(&Item) -> Option<u64>,
-) {
+pub fn print_section(fleet: &Fleet, section: Section, items: &[&Item], style: Style) {
     if items.is_empty() {
         return;
     }
     let title = format!("{} · {}", section.title(), items.len());
     println!("{}", style.paint(title, &[Paint::Bold, section.paint()]));
-    print_groups(fleet, items, style, waiting);
+    print_groups(fleet, items, style);
 }
 
-pub fn print_groups(
-    fleet: &Fleet,
-    items: &[&Item],
-    style: Style,
-    waiting: &dyn Fn(&Item) -> Option<u64>,
-) {
+pub fn print_groups(fleet: &Fleet, items: &[&Item], style: Style) {
     let columns = Columns::of(items);
     for group in items.chunk_by(|a, b| heading(fleet, a) == heading(fleet, b)) {
         println!(
@@ -135,7 +115,7 @@ pub fn print_groups(
             style.paint(heading(fleet, group[0]), &[Paint::Bold])
         );
         for item in group {
-            println!("{}", line(item, style, columns, waiting(item)));
+            println!("{}", line(item, style, columns));
         }
     }
     println!();
@@ -159,7 +139,7 @@ impl Columns {
     }
 }
 
-pub fn line(item: &Item, style: Style, columns: Columns, waiting: Option<u64>) -> String {
+pub fn line(item: &Item, style: Style, columns: Columns) -> String {
     let (sign, paint) = item.sign();
     let verb_paint = match item.section {
         Section::Fleet => Paint::Cyan,
@@ -169,19 +149,10 @@ pub fn line(item: &Item, style: Style, columns: Columns, waiting: Option<u64>) -
     if matches!(item.secret, Secret::Guessed | Secret::Token | Secret::Fleet) {
         extras.push(style.paint("secret", &[Paint::Magenta, Paint::Bold]));
     }
-    if let Some(days) = waiting {
-        let left = format!("later, back in {}", style::count(days as usize, "day"));
-        extras.push(style.paint(left, &[Paint::Blue]));
-    }
     if !item.note.is_empty() {
         extras.push(style.paint(style::clean(&item.note), &[Paint::Dim]));
     }
     let subject = style::clean(&item.subject);
-    let subject = if waiting.is_some() {
-        style.paint(subject, &[Paint::Dim])
-    } else {
-        subject
-    };
     let text = format!(
         "    {} {}  {}  {}",
         style.paint(sign, &[paint, Paint::Bold]),

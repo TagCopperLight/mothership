@@ -56,7 +56,7 @@ $ (sleep 6; printf 'a\n') | sudo mothership review
       harmless
   a  add         add it to chezmoi
   s  secret      add it to chezmoi, encrypted
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
   failed: opening /home/dev/.config/devapp/key.txt: Permission denied (os error 13)
   › 

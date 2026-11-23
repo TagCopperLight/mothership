@@ -2,7 +2,6 @@ pub mod apply;
 pub mod ignore;
 pub mod item;
 pub mod kind;
-pub mod later;
 pub mod preview;
 pub mod record;
 pub mod revert;

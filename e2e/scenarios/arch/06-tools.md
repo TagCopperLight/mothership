@@ -85,13 +85,13 @@ $ printf 'a\nq\ny\n' | sudo mothership review
     + cargo hello  installed  from file:///crates/hello, branch loud
   a  add         write this machine's source into `tools.cargo` in user.toml
   r  revert      uninstall
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
 [2/2] Tools
     - greeter  not installed  ~/.greeter is missing
   a  add         remove its installer from user.toml
   r  revert      run its installer
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › q
 ...
 $ grep hello /var/lib/mothership/fleet/types/workstation/users/me/user.toml
@@ -113,18 +113,18 @@ $ printf 'p\np\np\nq\ny\n' | sudo mothership review
 [1/4] Tools
     + ~/.local/bin/stamp  installed
   can't add: nothing in the fleet downloads it: write an installer for it
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › p
 [2/4] Tools
     + ~/.local/opt/App.AppImage  installed
   can't add: nothing in the fleet downloads it: write an installer for it
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › p
 [3/4] Tools
     - greeter  not installed  ~/.greeter is missing
   a  add         remove its installer from user.toml
   r  revert      run its installer
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › p
 [4/4] Files
     + ~/.local/bin/hi  new
@@ -132,7 +132,7 @@ $ printf 'p\np\np\nq\ny\n' | sudo mothership review
       echo hi
   a  add         add it to chezmoi
   s  secret      add it to chezmoi, encrypted
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › q
 3 passed
 1 not seen yet, for next time

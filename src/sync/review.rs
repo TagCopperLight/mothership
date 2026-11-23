@@ -5,7 +5,6 @@ use crate::{
         checked::{self, Advance, Stage},
     },
     sync::item::{Adding, Item, Secret, Section},
-    sync::later::{self, DAY, Later},
     sync::record::Record,
     sync::revert::{self, Etc, Machine, Revert},
     sync::scan::{self, Columns},
@@ -37,7 +36,6 @@ pub fn run() -> Result<()> {
     };
     let prepared = stage.prepare(fleet.admin(), &message, &key)?;
     if prepared.is_none() && answers.reverts.is_empty() {
-        answers.later.save(fleet, &answers.mine)?;
         return stage.finish();
     }
     if let Some(prepared) = &prepared {
@@ -61,15 +59,12 @@ pub fn run() -> Result<()> {
     if let Some(prepared) = prepared {
         prepared.publish(fleet.admin(), Advance::Merge)?;
     }
-    answers.later.save(fleet, &answers.mine)?;
     revert_all(fleet, &answers.reverts)?;
     stage.finish()
 }
 
 struct Answers<'a> {
     tally: Tally,
-    later: Later,
-    mine: Vec<&'a Item>,
     reverts: Vec<(String, revert::Owned<'a>)>,
 }
 
@@ -78,17 +73,15 @@ struct Tally {
     added: usize,
     reverted: usize,
     ignored: usize,
-    put_off: usize,
     passed: usize,
 }
 
 impl Tally {
-    fn counts(&self) -> [(usize, &'static str, Paint); 5] {
+    fn counts(&self) -> [(usize, &'static str, Paint); 4] {
         [
             (self.added, "added", Paint::Green),
             (self.reverted, "reverted", Paint::Yellow),
             (self.ignored, "ignored", Paint::Dim),
-            (self.put_off, "put off for later", Paint::Blue),
             (self.passed, "passed", Paint::Dim),
         ]
     }
@@ -106,7 +99,6 @@ impl Tally {
             Answer::Add(_) | Answer::Secret(_) => &mut self.added,
             Answer::Revert => &mut self.reverted,
             Answer::Ignore => &mut self.ignored,
-            Answer::Later => &mut self.put_off,
             Answer::Pass => &mut self.passed,
             Answer::Quit => return,
         };
@@ -120,14 +112,12 @@ enum Answer<'a> {
     Secret(&'a Add),
     Revert,
     Ignore,
-    Later,
     Pass,
     Quit,
 }
 
 impl Answer<'_> {
-    const ALWAYS: [Answer<'static>; 4] =
-        [Answer::Ignore, Answer::Later, Answer::Pass, Answer::Quit];
+    const ALWAYS: [Answer<'static>; 3] = [Answer::Ignore, Answer::Pass, Answer::Quit];
 
     fn key(self) -> char {
         match self {
@@ -135,7 +125,6 @@ impl Answer<'_> {
             Answer::Secret(_) => 's',
             Answer::Revert => 'r',
             Answer::Ignore => 'i',
-            Answer::Later => 'l',
             Answer::Pass => 'p',
             Answer::Quit => 'q',
         }
@@ -147,7 +136,6 @@ impl Answer<'_> {
             Answer::Secret(_) => "secret",
             Answer::Revert => "revert",
             Answer::Ignore => "ignore",
-            Answer::Later => "later",
             Answer::Pass => "pass",
             Answer::Quit => "quit",
         }
@@ -162,28 +150,17 @@ fn ask<'a>(
 ) -> Result<Answers<'a>> {
     let fleet = &report.fleet;
     let style = Style::stdout();
-    let mut later = Later::load()?;
-    let now = later::now()?;
-    let back_later = format!(
-        "back in {}",
-        style::count((later::LATER / DAY) as usize, "day")
-    );
     let mine: Vec<&Item> = report
         .shown
         .iter()
         .filter(|item| item.section != Section::Fleet)
-        .collect();
-    let due: Vec<&Item> = mine
-        .iter()
-        .copied()
-        .filter(|item| later.due(fleet, item, now))
         .collect();
 
     let mut tally = Tally::default();
     let mut reverts = Vec::new();
     let mut last: Option<String> = None;
     let mut seen = 0;
-    'items: for (n, item) in due.iter().enumerate() {
+    'items: for (n, item) in mine.iter().enumerate() {
         if style.terminal {
             print!("{}", style::CLEAR);
             if let Some(last) = last.take() {
@@ -192,21 +169,16 @@ fn ask<'a>(
         }
         seen = n;
         let member = item.member.map(|i| &fleet.members[i]);
-        let mut header = format!("[{}/{}] {}", n + 1, due.len(), scan::heading(fleet, item));
+        let mut header = format!("[{}/{}] {}", n + 1, mine.len(), scan::heading(fleet, item));
         if style.terminal {
             header = format!(
                 "{}  {}",
                 style.paint(header, &[Paint::Bold]),
-                progress(n, due.len(), style)
+                progress(n, mine.len(), style)
             );
         }
         println!("{header}");
-        println!("{}", scan::line(item, style, Columns::of(&[item]), None));
-        if let Some(waiting) = later.get(fleet, item) {
-            let days = style::count((now.saturating_sub(waiting.first) / DAY) as usize, "day");
-            let ago = format!("put off {days} ago");
-            println!("      {}", style.paint(ago, &[Paint::Blue]));
-        }
+        println!("{}", scan::line(item, style, Columns::of(&[item])));
         item.preview.show(&item.seen, style.color);
 
         let add = match &item.add {
@@ -258,7 +230,6 @@ fn ask<'a>(
                 Answer::Ignore => {
                     edit::ignore(fleet, member, &item.ignore_line()).map(|()| Some("ignored"))
                 }
-                Answer::Later => Ok(Some(back_later.as_str())),
                 Answer::Pass => Ok(Some("passed")),
             };
             let done = match outcome {
@@ -275,11 +246,6 @@ fn ask<'a>(
                 keys.retain(|(key, _)| *key != answer.key());
                 continue;
             }
-            match answer {
-                Answer::Later => later.put_off(fleet, item, now),
-                Answer::Pass => {}
-                _ => later.remove(fleet, item),
-            }
             tally.count(answer);
             last = Some(format!("{}: {done}", style::clean(&item.subject)));
             break;
@@ -290,20 +256,15 @@ fn ask<'a>(
     if style.terminal {
         print!("{}", style::CLEAR);
     }
-    if due.is_empty() {
+    if mine.is_empty() {
         println!("Nothing to review.");
     } else {
         summary(&tally, style);
     }
-    let unseen = due.len() - seen;
-    let notes = [
-        (unseen, "not seen yet, for next time"),
-        (mine.len() - due.len(), "put off before and not due yet"),
-    ];
-    for (count, what) in notes {
-        if count > 0 {
-            println!("{}", style.paint(format!("{count} {what}"), &[Paint::Dim]));
-        }
+    let unseen = mine.len() - seen;
+    if unseen > 0 {
+        let what = format!("{unseen} not seen yet, for next time");
+        println!("{}", style.paint(what, &[Paint::Dim]));
     }
     let from_fleet = report.shown.len() - mine.len();
     if from_fleet > 0 {
@@ -314,12 +275,7 @@ fn ask<'a>(
             style.command("apply")
         );
     }
-    Ok(Answers {
-        tally,
-        later,
-        mine,
-        reverts,
-    })
+    Ok(Answers { tally, reverts })
 }
 
 fn choices<'a>(

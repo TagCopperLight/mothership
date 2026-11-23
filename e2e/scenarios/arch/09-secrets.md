@@ -54,7 +54,7 @@ $ printf 's\ns\ny\ns\ny\n' | sudo mothership review
   s  secret      copy it into the type's etc/, encrypted
   a  add         copy it into the type's etc/
   r  revert      delete
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › s
 [2/3] Files
     + ~/.config/app  new  1 file
@@ -62,7 +62,7 @@ $ printf 's\ns\ny\ns\ny\n' | sudo mothership review
       TOKEN-SECRET
   a  add         add it to chezmoi
   s  secret      add it to chezmoi, encrypted
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › s
   That adds 1 file. Go on [y/N]? y
 [3/3] Files
@@ -70,7 +70,7 @@ $ printf 's\ns\ny\ns\ny\n' | sudo mothership review
       SSH-SECRET
   s  secret      add it to chezmoi, encrypted
   a  add         add it to chezmoi
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › s
 3 added
 Review on machine: 3 added:
@@ -107,7 +107,7 @@ $ printf 'a\ny\ny\n' | sudo mothership review
       theme = dark
   s  secret      add it to chezmoi, encrypted
   a  add         add it to chezmoi
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
   That adds 1 file. Go on [y/N]? y
 1 added
@@ -138,7 +138,7 @@ $ printf 'a\ny\n' | sudo mothership review
       +token = ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
   a  add         copy this machine's version into chezmoi, encrypted
   r  revert      write the fleet's version
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
   git history keeps the version in clear, so change it.
 1 added
@@ -175,7 +175,7 @@ $ printf 'r\ny\n' | sudo mothership review
       +MINE
   a  add         copy this machine's version into chezmoi, encrypted
   r  revert      write the fleet's version
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › r
 1 reverted
 Then on this machine:
@@ -199,7 +199,7 @@ $ printf 'r\ny\n' | sudo mothership review
       +psk=OTHER
   a  add         copy it into the type's etc/, encrypted
   r  revert      write the fleet's version
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › r
 1 reverted
 Then on this machine:

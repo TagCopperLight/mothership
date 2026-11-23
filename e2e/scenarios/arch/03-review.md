@@ -22,30 +22,29 @@ $ sudo usermod -aG audio me
 ```
 
 Review goes through what changed on the machine, grouped like scan shows it. I add `beta` to
-the fleet's packages, put `gamma` off, add the new app's config, ignore the tokens and pass on
-the rest. Review never shows a secret's contents. Then I quit.
+the fleet's packages, add the new app's config, ignore the tokens and pass on the rest. Review never shows a secret's contents. Then I quit.
 
 ```console
-$ printf 'a\nl\np\na\ny\ni\np\np\nq\ny\n' | sudo mothership review
+$ printf 'a\np\np\na\ny\ni\np\np\nq\ny\n' | sudo mothership review
 [1/8] Packages
     + beta  installed  An app the fleet never lists
   a  add         add it to `packages` in system.toml
   r  revert      uninstall
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
 [2/8] Packages
     - gamma  uninstalled
   a  add         remove it from system.toml
   r  revert      install
-  i ignore · l later · p pass · q quit
-  › l
+  i ignore · p pass · q quit
+  › p
 [3/8] Files
     + /etc/profile.d/proxy.sh  new
       export HTTP_PROXY=http://proxy:3128
   a  add         copy it into the type's etc/
   s  secret      copy it into the type's etc/, encrypted
   r  revert      delete
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › p
 [4/8] Files
     + ~/.config/newapp  new  1 file
@@ -53,7 +52,7 @@ $ printf 'a\nl\np\na\ny\ni\np\np\nq\ny\n' | sudo mothership review
       theme = dark
   a  add         add it to chezmoi
   s  secret      add it to chezmoi, encrypted
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
   That adds 1 file. Go on [y/N]? y
 [5/8] Files
@@ -62,7 +61,7 @@ $ printf 'a\nl\np\na\ny\ni\np\np\nq\ny\n' | sudo mothership review
       abc123
   s  secret      add it to chezmoi, encrypted
   a  add         add it to chezmoi
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › i
 [6/8] Files
     ~ /etc/fleet.conf  edited
@@ -72,7 +71,7 @@ $ printf 'a\nl\np\na\ny\ni\np\np\nq\ny\n' | sudo mothership review
   a  add         copy it into the type's etc/
   s  secret      copy it into the type's etc/, encrypted
   r  revert      write the fleet's version
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › p
 [7/8] Files
     ~ ~/.gitconfig  edited
@@ -85,15 +84,15 @@ $ printf 'a\nl\np\na\ny\ni\np\np\nq\ny\n' | sudo mothership review
   a  add         copy this machine's version into chezmoi
   s  secret      copy this machine's version into chezmoi, encrypted
   r  revert      write the fleet's version
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › p
 [8/8] Account
     + group audio  joined
   a  add         add it to `groups` in user.toml
   r  revert      leave
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › q
-2 added, 1 ignored, 1 put off for later, 3 passed
+2 added, 1 ignored, 4 passed
 1 not seen yet, for next time
 Review on machine: 2 added, 1 ignored:
   M types/workstation/system.toml
@@ -132,20 +131,26 @@ $ cd /var/lib/mothership/fleet &&
 > echo y | sudo mothership commit "Keep beta and newapp, raise the level" >/dev/null
 ```
 
-`gamma` waits for next week. I add the proxy script to the fleet, revert my edits to
-`/etc/fleet.conf` and `~/.gitconfig`, and leave the `audio` group.
+I take `gamma` out of the fleet, add the proxy script, revert my edits to `/etc/fleet.conf` and
+`~/.gitconfig`, and leave the `audio` group.
 
 ```console
-$ printf 'a\nr\nr\nr\ny\n' | sudo mothership review
-[1/4] Files
+$ printf 'a\na\nr\nr\nr\ny\n' | sudo mothership review
+[1/5] Packages
+    - gamma  uninstalled
+  a  add         remove it from system.toml
+  r  revert      install
+  i ignore · p pass · q quit
+  › a
+[2/5] Files
     + /etc/profile.d/proxy.sh  new
       export HTTP_PROXY=http://proxy:3128
   a  add         copy it into the type's etc/
   s  secret      copy it into the type's etc/, encrypted
   r  revert      delete
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
-[2/4] Files
+[3/5] Files
     ~ /etc/fleet.conf  edited
       @@ -1,2 +1,2 @@
        managed = yes
@@ -154,9 +159,9 @@ $ printf 'a\nr\nr\nr\ny\n' | sudo mothership review
   a  add         copy it into the type's etc/
   s  secret      copy it into the type's etc/, encrypted
   r  revert      write the fleet's version
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › r
-[3/4] Files
+[4/5] Files
     ~ ~/.gitconfig  edited
       @@ -1,3 +1,5 @@
        [user]
@@ -167,17 +172,16 @@ $ printf 'a\nr\nr\nr\ny\n' | sudo mothership review
   a  add         copy this machine's version into chezmoi
   s  secret      copy this machine's version into chezmoi, encrypted
   r  revert      write the fleet's version
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › r
-[4/4] Account
+[5/5] Account
     + group audio  joined
   a  add         add it to `groups` in user.toml
   r  revert      leave
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › r
-1 added, 3 reverted
-1 put off before and not due yet
-Review on machine: 1 added:
+2 added, 3 reverted
+Review on machine: 2 added:
   A types/workstation/etc/profile.d/proxy.sh
   M types/workstation/system.toml
 Then on this machine:
@@ -185,7 +189,7 @@ Then on this machine:
   ~/.gitconfig: write the fleet's version
   group audio: leave
 Commit, push and revert [y/N]? y
-Committed [0-9a-f]{12} Review on machine: 1 added (re)
+Committed [0-9a-f]{12} Review on machine: 2 added (re)
 Removing user me from group audio
 ```
 
@@ -224,7 +228,6 @@ Coming from the fleet · 1
   Files
     ~ /etc/fleet.conf  update
 
-1 changed on this machine, for sudo mothership review
 Apply [y/N]? y
 $ cat /etc/fleet.conf
 managed = yes
@@ -242,10 +245,9 @@ $ printf 'a\ny\n' | sudo mothership review
       x = 1
   a  add         add it to chezmoi
   s  secret      add it to chezmoi, encrypted
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
 1 added
-1 put off before and not due yet
 Review on machine: 1 added:
   A types/workstation/users/me/home/dot_config/caf�.conf
 Commit and push [y/N]? y

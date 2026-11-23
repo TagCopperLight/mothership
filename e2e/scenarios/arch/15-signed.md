@@ -64,7 +64,7 @@ ran-by-me
 ```
 
 Once this machine signs only for another type, review refuses each answer that would change a
-file it can't sign, and leaves revert, later and pass.
+file it can't sign, and leaves revert and pass.
 
 ```console
 $ cd /var/lib/mothership/fleet && git config --unset core.fsmonitor &&

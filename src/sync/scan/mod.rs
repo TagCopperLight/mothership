@@ -23,7 +23,6 @@ use crate::{
     package::{Db, Package},
     sync::item::{Change, Item, Section},
     sync::kind::Kind,
-    sync::later::{self, Later},
     sync::record::Record,
     sync::revert,
     util::file,
@@ -236,22 +235,15 @@ pub fn run(refused: Option<Refused>) -> Result<()> {
     report.shown.extend(refused.map(commits::refused));
     let fleet = &report.fleet;
     let style = Style::stdout();
-    let later = Later::load()?;
-    let now = later::now()?;
-    let waiting = |item: &Item| {
-        (item.section != Section::Fleet)
-            .then(|| later.days_left(fleet, item, now))
-            .flatten()
-    };
     for section in Section::ALL {
         let items: Vec<&Item> = report
             .shown
             .iter()
             .filter(|item| item.section == section)
             .collect();
-        print_section(fleet, section, &items, style, &waiting);
+        print_section(fleet, section, &items, style);
     }
-    summary(&report, style, &waiting);
+    summary(&report, style);
     print_unsaved(fleet, Unsaved::Everything, style)?;
     let ignored = format!("{} ignored", report.ignored);
     println!("{}", style.paint(ignored, &[Paint::Dim]));

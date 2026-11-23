@@ -28,7 +28,7 @@ $ printf 'a\na\np\np\np\ny\n' | sudo mothership review
     + omega  installed  An app built on this machine
   a  add         add it to `packages` in system.toml
   r  revert      uninstall
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
   It is in neither pacman's repos nor the AUR: yay -Si omega failed: -> No AUR package found for omega
   It goes into `built_packages`.
@@ -36,7 +36,7 @@ $ printf 'a\na\np\np\np\ny\n' | sudo mothership review
     + zeta  installed  An app only the AUR has
   a  add         add it to `packages` in system.toml
   r  revert      uninstall
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
 [3/5] Files
     + /etc/systemd/system/mine.service  new
@@ -46,13 +46,13 @@ $ printf 'a\na\np\np\np\ny\n' | sudo mothership review
     + mine.service  enabled
   r  revert      disable and stop
   can't add: its unit file comes from outside the fleet
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › p
 [5/5] Account
     + group mine  joined
   r  revert      leave
   can't add: no package the fleet lists creates this group
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › p
 ...
 ```

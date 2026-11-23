@@ -62,11 +62,11 @@ Coming from the fleet · 5
 \d+ ignored (re)
 ```
 
-Review asks only about my changes. I put `beta` off and agree to the deletion, which takes the
+Review asks only about my changes. I pass on `beta` and agree to the deletion, which takes the
 file out of the fleet.
 
 ```console
-$ printf 'l\np\np\np\np\na\nq\ny\n' | sudo mothership review
+$ printf 'p\np\np\np\np\na\nq\ny\n' | sudo mothership review
 ...
 [6/7] Files
     - ~/.bash_profile  deleted
@@ -74,12 +74,12 @@ $ printf 'l\np\np\np\np\na\nq\ny\n' | sudo mothership review
       -[[ -f ~/.bashrc ]] && . ~/.bashrc
   a  add         remove it from chezmoi
   r  revert      write the fleet's version
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
 [7/7] Account
 ...
   › q
-1 added, 1 put off for later, 4 passed
+1 added, 5 passed
 1 not seen yet, for next time
 5 coming from the fleet, for sudo mothership apply
 Review on machine: 1 added:
@@ -90,17 +90,11 @@ $ git -C /var/lib/mothership/fleet show --name-status --format= HEAD
 D	types/workstation/users/me/home/dot_bash_profile
 ```
 
-Scan still shows `beta`, with when review brings it back, and leaves it out of the count. Review
-pushed its commit and the one before it.
+Scan still counts what I passed on. Review pushed its commit and the one before it.
 
 ```console
-$ sudo mothership scan | head -3
-Changed on this machine · 6
-  Packages
-    + beta                 installed    later, back in 7 days  An app the fleet never lists
-$ sudo mothership scan | tail -4
-5 to review     sudo mothership review
+$ sudo mothership scan | tail -3
+6 to review     sudo mothership review
 5 to apply      sudo mothership apply
-1 put off for later
 \d+ ignored (re)
 ```

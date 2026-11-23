@@ -78,7 +78,7 @@ $ printf 'a\ny\ny\n' | sudo mothership review
       theme = light
   a  add         add it to chezmoi
   s  secret      add it to chezmoi, encrypted
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
   That adds 1 file. Go on [y/N]? y
 1 added
@@ -113,7 +113,7 @@ $ printf 'a\ny\ny\n' | sudo mothership review
   a  add         copy this machine's version into chezmoi
   s  secret      copy this machine's version into chezmoi, encrypted
   r  revert      write the fleet's version
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
   shared/dot_gitconfig is shared: dev's version reaches workstation/me too.
   Go on [y/N]? y
@@ -253,13 +253,13 @@ $ printf 'a\ny\ni\ny\n' | sudo mothership review
 [1/2] Users
     + guest  not in the fleet
   a  add         list the user in the type, with an empty home
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
   mothership then manages guest's account, services and files here. Go on [y/N]? y
 [2/2] Users
     + visitor  not in the fleet
   a  add         list the user in the type, with an empty home
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › i
 1 added, 1 ignored
 Review on machine: 1 added, 1 ignored:

@@ -13,7 +13,6 @@ pub enum Paint {
     Red,
     Green,
     Yellow,
-    Blue,
     Magenta,
     Cyan,
 }
@@ -26,7 +25,6 @@ impl Paint {
             Paint::Red => 31,
             Paint::Green => 32,
             Paint::Yellow => 33,
-            Paint::Blue => 34,
             Paint::Magenta => 35,
             Paint::Cyan => 36,
         }

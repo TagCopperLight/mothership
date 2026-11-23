@@ -19,13 +19,13 @@ $ printf 'a\np\ny\n' | sudo mothership review
     + group lambda  joined
   a  add         add it to `groups` in user.toml
   r  revert      leave
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › a
 [2/2] Account
     + group mine  joined
   r  revert      leave
   can't add: no package the fleet lists creates this group
-  i ignore · l later · p pass · q quit
+  i ignore · p pass · q quit
   › p
 1 added, 1 passed
 Review on machine: 1 added:
