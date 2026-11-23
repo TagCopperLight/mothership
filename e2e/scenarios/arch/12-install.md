@@ -8,7 +8,7 @@ $ echo y | sudo mothership apply &>/dev/null
 $ yes | sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" \
 > me="$(grep -o 'age1.*' ~/.config/mothership/key.txt)" > /dev/null
 $ echo "psk=WIFI-SECRET" | sudo install -m 600 /dev/stdin /etc/wifi.conf &&
-> printf 'a\ny\ny\n' | sudo mothership review > /dev/null
+> printf 's\ny\n' | sudo mothership review > /dev/null
 $ sudo mv /etc/mothership/key.txt /root/laptop.txt && mv ~/.config/mothership/key.txt ~/laptop.txt &&
 > (echo y | sudo mothership apply &>/dev/null) &&
 > sudo mv /etc/mothership/key.txt /root/new.txt && mv ~/.config/mothership/key.txt ~/new.txt

@@ -59,7 +59,7 @@ pub fn scan(fleet: &Fleet, db: &Db) -> Result<Vec<Item>> {
                     })
                     .reverting(Etc::Write(path.clone()))
                     .showing(fleet_side(fleet, rel, Some(&path)))
-                    .guessing(&path),
+                    .guessing_tracked(&path),
             ),
             Compare::Missing => Some(
                 item(Change::Removed, "deleted")

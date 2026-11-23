@@ -5,16 +5,9 @@ fn owner_only(path: &Path) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
 }
 
-fn not_secret(dir: &Path, lines: &str) -> Paths {
-    let path = dir.join("not-secret.txt");
-    fs::write(&path, lines).unwrap();
-    Paths::load(&path).unwrap()
-}
-
 #[test]
 fn a_secret_keeps_its_preview() {
     let dir = tempfile::TempDir::new().unwrap();
-    let not_secret = not_secret(dir.path(), "");
     let key = dir.path().join("id");
     fs::write(&key, "abc").unwrap();
     owner_only(&key);
@@ -22,10 +15,10 @@ fn a_secret_keeps_its_preview() {
     fs::write(&notes, "hello").unwrap();
     let item = |path: &Path| {
         judge_secret(
-            &not_secret,
             Item::new(Kind::Home, Change::Added, "x", "new")
                 .showing(Preview::Contents(path.to_path_buf())),
             &Found::at(path, Some(dir.path())),
+            true,
         )
     };
     let secret = item(&key);
@@ -79,19 +72,39 @@ fn a_tracked_file_counts_only_its_own_rights() {
 }
 
 #[test]
-fn not_secret_txt_clears_the_guess() {
+fn only_a_new_file_is_guessed_from_its_rights() {
     let dir = tempfile::TempDir::new().unwrap();
-    let not_secret = not_secret(dir.path(), "~/.config/zed/*\n");
     let settings = dir.path().join("settings.json");
     fs::write(&settings, "{}").unwrap();
     owner_only(&settings);
-    let item = |subject: &str| {
-        judge_secret(
-            &not_secret,
-            Item::new(Kind::Home, Change::Added, subject, "new"),
-            &Found::at(&settings, Some(dir.path())),
-        )
+    let item = |new| {
+        let item = Item::new(Kind::Home, Change::Edited, "~/settings.json", "");
+        judge_secret(item, &Found::at(&settings, Some(dir.path())), new).secret
     };
-    assert_eq!(item("~/.config/zed/settings.json").secret, Secret::No);
-    assert_eq!(item("~/.config/gh/hosts.yml").secret, Secret::Guessed);
+    assert_eq!(item(true), Secret::Guessed);
+    assert_eq!(item(false), Secret::No);
+}
+
+#[test]
+fn a_token_makes_even_a_tracked_file_secret() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let hosts = dir.path().join("hosts.yml");
+    fs::write(&hosts, format!("oauth_token: gho_{}\n", "a".repeat(36))).unwrap();
+    let item = Item::new(Kind::Home, Change::Edited, "~/hosts.yml", "");
+    let item = judge_secret(item, &Found::at(&hosts, None), false);
+    assert_eq!(item.secret, Secret::Token);
+    assert_eq!(item.note, "holds what looks like a GitHub token");
+}
+
+#[test]
+fn a_token_needs_its_prefix_to_start_a_word_and_enough_characters() {
+    let long = "a".repeat(36);
+    assert_eq!(token_in(&format!("x ghp_{long}")), Some("a GitHub token"));
+    assert_eq!(token_in(&format!("xghp_{long}")), None);
+    assert_eq!(token_in("ghp_short"), None);
+    assert_eq!(token_in("risk-management-for-everyone"), None);
+    assert_eq!(
+        token_in("-----BEGIN OPENSSH PRIVATE KEY-----"),
+        Some("a private key")
+    );
 }

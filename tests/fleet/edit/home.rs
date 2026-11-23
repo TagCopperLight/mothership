@@ -30,13 +30,3 @@ fn encrypting_keeps_a_group_readable_file_private_and_follows_no_link() {
     assert_eq!(mode(&file), 0o600);
     assert_eq!(mode(&outside), 0o644);
 }
-
-#[test]
-fn a_clear_folder_names_the_files_only_their_owner_reads() {
-    let dir = tempfile::TempDir::new().unwrap();
-    fs::write(dir.path().join("open"), "x").unwrap();
-    fs::write(dir.path().join("closed"), "x").unwrap();
-    fs::set_permissions(dir.path().join("closed"), fs::Permissions::from_mode(0o640)).unwrap();
-    let error = format!("{:#}", refuse_private(dir.path()).unwrap_err());
-    assert!(error.contains("closed") && !error.contains("open"));
-}

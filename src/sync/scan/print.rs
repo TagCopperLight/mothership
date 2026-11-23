@@ -1,7 +1,7 @@
 use super::Report;
 use crate::{
     fleet::Fleet,
-    sync::item::{Change, Item, Secret, Section},
+    sync::item::{Item, Secret, Section},
     sync::kind::Kind,
     util::style::{self, Paint, Style},
 };
@@ -166,7 +166,7 @@ pub fn line(item: &Item, style: Style, columns: Columns, waiting: Option<u64>) -
         _ => paint,
     };
     let mut extras = Vec::new();
-    if matches!(item.secret, Secret::Guessed | Secret::Fleet) && item.change != Change::InClear {
+    if matches!(item.secret, Secret::Guessed | Secret::Token | Secret::Fleet) {
         extras.push(style.paint("secret", &[Paint::Magenta, Paint::Bold]));
     }
     if let Some(days) = waiting {

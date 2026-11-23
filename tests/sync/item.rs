@@ -11,21 +11,21 @@ fn a_fleet_secret_is_not_guessed_again() {
 }
 
 #[test]
-fn a_secret_is_added_encrypted() {
-    let path = std::path::PathBuf::from("/x");
-    let item = Item::new(Kind::Home, Change::Added, "x", "new")
-        .with(Add::Track {
-            path,
-            storage: Storage::Clear,
-        })
-        .secret(Secret::Guessed);
-    assert!(matches!(
-        item.add,
-        Adding::Offered(Add::Track {
-            storage: Storage::Encrypted,
-            ..
-        })
-    ));
+fn a_token_is_added_encrypted_and_a_guess_keeps_both_choices() {
+    let storage = |secret| {
+        let item = Item::new(Kind::Home, Change::Added, "x", "new")
+            .with(Add::Track {
+                path: "/x".into(),
+                storage: Storage::Clear,
+            })
+            .secret(secret);
+        match item.add {
+            Adding::Offered(Add::Track { storage, .. }) => storage,
+            _ => panic!("the add went away"),
+        }
+    };
+    assert_eq!(storage(Secret::Token), Storage::Encrypted);
+    assert_eq!(storage(Secret::Guessed), Storage::Clear);
 }
 
 #[test]
@@ -58,7 +58,6 @@ fn the_fleet_writing_a_file_says_whether_it_creates_changes_or_deletes_it() {
 #[test]
 fn problems_need_attention_and_changes_start_on_the_machine() {
     let section = |change| Item::new(Kind::Home, change, "x", "").section;
-    assert_eq!(section(Change::InClear), Section::Attention);
     assert_eq!(section(Change::Unreadable), Section::Attention);
     assert_eq!(section(Change::Edited), Section::Machine);
 }

@@ -283,14 +283,6 @@ pub fn ignore(fleet: &Fleet, member: Option<&Member>, line: &str) -> Result<()> 
     append_line(&path, one_line(line)?)
 }
 
-pub fn not_secret(fleet: &Fleet, member: Option<&Member>, subject: &str) -> Result<()> {
-    let path = member.map_or_else(
-        || fleet.not_secret_path(),
-        |member| member.not_secret_path(),
-    );
-    append_line(&path, one_line(&globset::escape(subject))?)
-}
-
 fn one_line(line: &str) -> Result<&str> {
     if line.chars().any(char::is_control) || line.trim() != line {
         bail!("its name holds a control character or spaces at an end: write a pattern by hand");

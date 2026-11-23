@@ -47,23 +47,6 @@ impl Ignore {
     }
 }
 
-#[derive(Clone)]
-pub struct Paths(GlobSet);
-
-impl Paths {
-    pub fn load(path: &Path) -> Result<Self> {
-        let mut builder = GlobSetBuilder::new();
-        for (at, line) in lines(path)? {
-            builder.add(glob(&line, &at)?);
-        }
-        Ok(Paths(builder.build()?))
-    }
-
-    pub fn matches(&self, subject: &str) -> bool {
-        in_matching_folder(&self.0, subject)
-    }
-}
-
 fn in_matching_folder(set: &GlobSet, subject: &str) -> bool {
     Path::new(subject)
         .ancestors()

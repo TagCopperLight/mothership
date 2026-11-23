@@ -7,7 +7,7 @@ makes the new one, encrypts every secret again and commits, signed with the old 
 $ echo y | sudo mothership apply &>/dev/null
 $ yes | sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" > /dev/null
 $ echo "psk=WIFI-SECRET" | sudo install -m 600 /dev/stdin /etc/wifi.conf &&
-> printf 'a\ny\ny\n' | sudo mothership review > /dev/null
+> printf 's\ny\n' | sudo mothership review > /dev/null
 $ printf '%s\nn\ny\n' "$(grep AGE-SECRET ~/recovery.txt)" | sudo mothership recovery > ~/out; cat ~/out | sed 's/AGE-SECRET-KEY-[A-Z0-9]*/<new key>/'
 The fleet's recovery key now: 
 The new recovery key:

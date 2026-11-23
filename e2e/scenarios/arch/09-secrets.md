@@ -43,19 +43,19 @@ Changed on this machine · 3
 \d+ ignored (re)
 ```
 
-Review adds the marked ones encrypted, and I answer **secret** for the token. The fleet holds no
-secret in clear.
+Review offers the marked ones encrypted first. I answer **secret** for all three, the token too.
+The fleet holds no secret in clear.
 
 ```console
-$ printf 'a\ns\ny\na\ny\n' | sudo mothership review
+$ printf 's\ns\ny\ns\ny\n' | sudo mothership review
 [1/3] Files
     + /etc/wifi.conf  new  secret
       psk=WIFI-SECRET
-  a  add         copy it into the type's etc/, encrypted
-  n  not secret  list it in not-secret.txt, and add it later in clear
+  s  secret      copy it into the type's etc/, encrypted
+  a  add         copy it into the type's etc/
   r  revert      delete
   i ignore · l later · p pass · q quit
-  › a
+  › s
 [2/3] Files
     + ~/.config/app  new  1 file
       ── token
@@ -68,10 +68,10 @@ $ printf 'a\ns\ny\na\ny\n' | sudo mothership review
 [3/3] Files
     + ~/.ssh/id_test  new  secret
       SSH-SECRET
-  a  add         add it to chezmoi, encrypted
-  n  not secret  list it in not-secret.txt, and add it later in clear
+  s  secret      add it to chezmoi, encrypted
+  a  add         add it to chezmoi
   i ignore · l later · p pass · q quit
-  › a
+  › s
 3 added
 Review on machine: 3 added:
   A types/workstation/etc/wifi.conf.age
@@ -95,62 +95,58 @@ $ grep -c wifi /var/lib/mothership/fleet/types/workstation/system.toml
 [exit 1]
 ```
 
-An editor keeps its settings for its owner only, though they hold no secret. Review lets me say
-so, and the scan shows the folder as an ordinary one from then on.
+An editor keeps its settings for its owner only, though they hold no secret. I add them in clear.
 
 ```console
 $ mkdir -p ~/.config/editor && echo "theme = dark" > ~/.config/editor/settings &&
 > chmod 600 ~/.config/editor/settings
-$ printf 'n\ny\n' | sudo mothership review
+$ printf 'a\ny\ny\n' | sudo mothership review
 [1/1] Files
     + ~/.config/editor  new  secret  1 file
       ── settings
       theme = dark
-  a  add         add it to chezmoi, encrypted
-  n  not secret  list it in not-secret.txt, and add it later in clear
+  s  secret      add it to chezmoi, encrypted
+  a  add         add it to chezmoi
   i ignore · l later · p pass · q quit
-  › n
-1 marked not secret, which the next review shows as ordinary files
-Review on machine: 1 marked not secret:
-  A types/workstation/users/me/not-secret.txt
+  › a
+  That adds 1 file. Go on [y/N]? y
+1 added
+Review on machine: 1 added:
+  A types/workstation/users/me/home/dot_config/editor/private_settings
 Commit and push [y/N]? y
-Committed [0-9a-f]{12} Review on machine: 1 marked not secret (re)
-$ cat /var/lib/mothership/fleet/types/workstation/users/me/not-secret.txt
-~/.config/editor
-$ sudo mothership scan
+Committed [0-9a-f]{12} Review on machine: 1 added (re)
+```
+
+The scan doesn't guess again about a file the fleet tracks in clear, until I paste a token into
+it. Review then only offers to encrypt it, and reminds me to change the token.
+
+```console
+$ echo "theme = light" > ~/.config/editor/settings && sudo mothership scan
 Changed on this machine · 1
   Files
-    + ~/.config/editor  new  1 file
+    ~ ~/.config/editor/settings  edited
 
 1 to review     sudo mothership review
 \d+ ignored (re)
-$ rm -r ~/.config/editor
-```
-
-A secret the fleet already holds in clear shows up too. Review encrypts it and reminds me to
-change it.
-
-```console
-$ echo "machine example.com login me" > ~/.netrc && chmod 600 ~/.netrc &&
-> cd /var/lib/mothership/fleet && cp ~/.netrc types/workstation/users/me/home/private_dot_netrc &&
-> echo y | sudo mothership commit "Add .netrc" >/dev/null && sudo mothership scan >/dev/null
+$ echo "token = ghp_$(head -c 36 /dev/zero | tr '\0' x)" >> ~/.config/editor/settings
 $ printf 'a\ny\n' | sudo mothership review
 [1/1] Files
-    ! ~/.netrc  secret in clear  git history keeps it: change it once encrypted
-      machine example.com login me
+    ~ ~/.config/editor/settings  edited  secret  holds what looks like a GitHub token
+      @@ -1 +1,2 @@
+      -theme = dark
+      +theme = light
+      +token = ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
   a  add         copy this machine's version into chezmoi, encrypted
-  n  not secret  list it in not-secret.txt, and add it later in clear
+  r  revert      write the fleet's version
   i ignore · l later · p pass · q quit
   › a
   git history keeps the version in clear, so change it.
 1 added
 Review on machine: 1 added:
-  A types/workstation/users/me/home/encrypted_private_dot_netrc.age
-  D types/workstation/users/me/home/private_dot_netrc
+  A types/workstation/users/me/home/dot_config/editor/encrypted_private_settings.age
+  D types/workstation/users/me/home/dot_config/editor/private_settings
 Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 added (re)
-$ ls /var/lib/mothership/fleet/types/workstation/users/me/home | grep netrc
-encrypted_private_dot_netrc.age
 ```
 
 Apply and revert write secrets decrypted, for their owner only. Review shows them decrypted.
@@ -222,10 +218,10 @@ $ echo y | sudo mothership apply &>/dev/null
 $ sudo mothership scan
 Needs attention · 5
   Files
-    ? /etc/wifi.conf       locked  this machine's key isn't on its list
-    ? ~/.config/app/token  locked  this machine's key isn't on its list
-    ? ~/.netrc             locked  this machine's key isn't on its list
-    ? ~/.ssh/id_test       locked  this machine's key isn't on its list
+    ? /etc/wifi.conf             locked  this machine's key isn't on its list
+    ? ~/.config/app/token        locked  this machine's key isn't on its list
+    ? ~/.config/editor/settings  locked  this machine's key isn't on its list
+    ? ~/.ssh/id_test             locked  this machine's key isn't on its list
   Keys
     \+ machine +not trusted +run `sudo mothership trust machine workstation root=age1[a-z0-9]+ me=age1[a-z0-9]+` on a machine that signs for the fleet (re)
 
@@ -234,10 +230,10 @@ Needs attention · 5
 $ echo y | sudo mothership apply
 Left alone, since this machine's key can't open them:
   Files
-    ? /etc/wifi.conf       locked  this machine's key isn't on its list
-    ? ~/.config/app/token  locked  this machine's key isn't on its list
-    ? ~/.netrc             locked  this machine's key isn't on its list
-    ? ~/.ssh/id_test       locked  this machine's key isn't on its list
+    ? /etc/wifi.conf             locked  this machine's key isn't on its list
+    ? ~/.config/app/token        locked  this machine's key isn't on its list
+    ? ~/.config/editor/settings  locked  this machine's key isn't on its list
+    ? ~/.ssh/id_test             locked  this machine's key isn't on its list
 
 5 changed on this machine, for sudo mothership review
 Nothing to apply.
@@ -262,17 +258,17 @@ Re-encrypting for workstation/root:
   /etc/wifi.conf  workstation/root
 desktop opens the 1 secrets of workstation/root now.
 Re-encrypting for workstation/me:
-  .secrets/proxy-key.age  workstation/me
-  ~/.config/app/token     workstation/me
-  ~/.netrc                workstation/me
-  ~/.ssh/id_test          workstation/me
+  .secrets/proxy-key.age     workstation/me
+  ~/.config/app/token        workstation/me
+  ~/.config/editor/settings  workstation/me
+  ~/.ssh/id_test             workstation/me
 desktop opens the 4 secrets of workstation/me now.
 Trust desktop as workstation:
   M types/workstation/etc/wifi.conf.age
   M types/workstation/recipients.txt
   M types/workstation/users/me/home/.secrets/proxy-key.age
   M types/workstation/users/me/home/dot_config/app/encrypted_private_token.age
-  M types/workstation/users/me/home/encrypted_private_dot_netrc.age
+  M types/workstation/users/me/home/dot_config/editor/encrypted_private_settings.age
   M types/workstation/users/me/home/private_dot_ssh/encrypted_private_id_test.age
   M types/workstation/users/me/recipients.txt
 Commit and push [y/N]? y
@@ -290,22 +286,22 @@ laptop is gone from workstation/root.
 git history keeps the versions laptop opens, and that machine may keep copies, so change these:
   /etc/wifi.conf
 Re-encrypting for workstation/me:
-  .secrets/proxy-key.age  workstation/me
-  ~/.config/app/token     workstation/me
-  ~/.netrc                workstation/me
-  ~/.ssh/id_test          workstation/me
+  .secrets/proxy-key.age     workstation/me
+  ~/.config/app/token        workstation/me
+  ~/.config/editor/settings  workstation/me
+  ~/.ssh/id_test             workstation/me
 laptop is gone from workstation/me.
 git history keeps the versions laptop opens, and that machine may keep copies, so change these:
   .secrets/proxy-key.age
   ~/.config/app/token
-  ~/.netrc
+  ~/.config/editor/settings
   ~/.ssh/id_test
 Retire laptop:
   M types/workstation/etc/wifi.conf.age
   M types/workstation/recipients.txt
   M types/workstation/users/me/home/.secrets/proxy-key.age
   M types/workstation/users/me/home/dot_config/app/encrypted_private_token.age
-  M types/workstation/users/me/home/encrypted_private_dot_netrc.age
+  M types/workstation/users/me/home/dot_config/editor/encrypted_private_settings.age
   M types/workstation/users/me/home/private_dot_ssh/encrypted_private_id_test.age
   M types/workstation/users/me/recipients.txt
 Commit and push [y/N]? y

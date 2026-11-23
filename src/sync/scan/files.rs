@@ -1,5 +1,4 @@
 use super::join;
-use super::secret::looks_secret;
 use crate::sync::item::{Change, Item, Secret};
 use crate::sync::kind::Kind;
 use crate::{
@@ -23,7 +22,6 @@ use std::{
 pub struct Chezmoi {
     pub managed: Vec<PathBuf>,
     encrypted: BTreeSet<PathBuf>,
-    templates: BTreeSet<PathBuf>,
     status: Vec<u8>,
 }
 
@@ -38,12 +36,10 @@ impl Chezmoi {
         thread::scope(|s| {
             let managed = s.spawn(|| chezmoi::managed(user, "files,symlinks"));
             let encrypted = s.spawn(|| chezmoi::managed(user, "encrypted"));
-            let templates = s.spawn(|| chezmoi::managed(user, "templates"));
             let status = s.spawn(|| cmd::bytes(As::User(user), "chezmoi", status_args));
             Ok(Chezmoi {
                 managed: join(managed)?,
                 encrypted: join(encrypted)?.into_iter().collect(),
-                templates: join(templates)?.into_iter().collect(),
                 status: join(status)?,
             })
         })
@@ -53,13 +49,9 @@ impl Chezmoi {
 pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Item>> {
     let user = member.user();
     let Chezmoi {
-        managed,
-        encrypted,
-        templates,
-        status,
+        encrypted, status, ..
     } = chezmoi;
     let mut items = Vec::new();
-    let mut listed = BTreeSet::new();
     let root = member.chezmoi_root(fleet);
     for line in status
         .split(|byte| *byte == b'\n')
@@ -97,7 +89,6 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
         } else {
             item.guessing_tracked(&path)
         });
-        listed.insert(path);
     }
     if !member.open {
         items.extend(
@@ -107,34 +98,6 @@ pub fn scan(fleet: &Fleet, member: &Member, chezmoi: &Chezmoi) -> Result<Vec<Ite
         );
     }
 
-    for path in managed {
-        if listed.contains(path) || encrypted.contains(path) || templates.contains(path) {
-            continue;
-        }
-        let add = Add::Update {
-            path: path.clone(),
-            storage: Storage::Clear,
-        };
-        let item = looks_secret(
-            member,
-            Item::new(
-                Kind::File,
-                Change::InClear,
-                user.tilde(path),
-                "secret in clear",
-            )
-            .noting("git history keeps it: change it once encrypted")
-            .with(add)
-            .showing(Preview::Home {
-                path: path.clone(),
-                user: user.clone(),
-            }),
-            path,
-        );
-        if item.secret == Secret::Guessed {
-            items.push(item);
-        }
-    }
     Ok(items)
 }
 

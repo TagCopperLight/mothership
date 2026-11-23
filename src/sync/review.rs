@@ -80,7 +80,6 @@ struct Tally {
     ignored: usize,
     put_off: usize,
     passed: usize,
-    not_secret: usize,
 }
 
 impl Tally {
@@ -95,21 +94,16 @@ impl Tally {
     }
 
     fn parts(&self) -> Vec<String> {
-        [
-            (self.added, "added"),
-            (self.ignored, "ignored"),
-            (self.not_secret, "marked not secret"),
-        ]
-        .iter()
-        .filter(|(count, _)| *count > 0)
-        .map(|(count, what)| format!("{count} {what}"))
-        .collect()
+        [(self.added, "added"), (self.ignored, "ignored")]
+            .iter()
+            .filter(|(count, _)| *count > 0)
+            .map(|(count, what)| format!("{count} {what}"))
+            .collect()
     }
 
     fn count(&mut self, answer: Answer) {
         let count = match answer {
             Answer::Add(_) | Answer::Secret(_) => &mut self.added,
-            Answer::NotSecret => &mut self.not_secret,
             Answer::Revert => &mut self.reverted,
             Answer::Ignore => &mut self.ignored,
             Answer::Later => &mut self.put_off,
@@ -124,7 +118,6 @@ impl Tally {
 enum Answer<'a> {
     Add(&'a Add),
     Secret(&'a Add),
-    NotSecret,
     Revert,
     Ignore,
     Later,
@@ -140,7 +133,6 @@ impl Answer<'_> {
         match self {
             Answer::Add(_) => 'a',
             Answer::Secret(_) => 's',
-            Answer::NotSecret => 'n',
             Answer::Revert => 'r',
             Answer::Ignore => 'i',
             Answer::Later => 'l',
@@ -153,7 +145,6 @@ impl Answer<'_> {
         match self {
             Answer::Add(_) => "add",
             Answer::Secret(_) => "secret",
-            Answer::NotSecret => "not secret",
             Answer::Revert => "revert",
             Answer::Ignore => "ignore",
             Answer::Later => "later",
@@ -223,7 +214,7 @@ fn ask<'a>(
             Adding::Refused(_) | Adding::Never => None,
         };
         let encrypted = add
-            .filter(|_| item.secret == Secret::No)
+            .filter(|_| matches!(item.secret, Secret::No | Secret::Guessed))
             .and_then(Add::encrypted);
         let choices = choices(item, add, encrypted.as_ref());
         let key = |answer: Answer| style.paint(answer.key(), &[Paint::Bold, Paint::Cyan]);
@@ -255,8 +246,6 @@ fn ask<'a>(
                 Answer::Add(add) | Answer::Secret(add) => add
                     .apply(fleet, member, prompt, &item.seen)
                     .map(|added| added.then_some("added to the fleet")),
-                Answer::NotSecret => edit::not_secret(fleet, member, &item.subject)
-                    .map(|()| Some("marked not secret")),
                 Answer::Revert => {
                     let revert = item.revert.as_ref().expect("revert is offered with one");
                     confirm_revert(revert, prompt).map(|go| {
@@ -325,12 +314,6 @@ fn ask<'a>(
             style.command("apply")
         );
     }
-    if tally.not_secret > 0 {
-        println!(
-            "{} marked not secret, which the next review shows as ordinary files",
-            tally.not_secret
-        );
-    }
     Ok(Answers {
         tally,
         later,
@@ -349,11 +332,11 @@ fn choices<'a>(
         choices.push((Answer::Add(add), add.describe()));
     }
     if let Some(encrypted) = encrypted {
-        choices.push((Answer::Secret(encrypted), encrypted.describe()));
-    }
-    if item.secret == Secret::Guessed {
-        let what = "list it in not-secret.txt, and add it later in clear";
-        choices.push((Answer::NotSecret, what.into()));
+        let secret = (Answer::Secret(encrypted), encrypted.describe());
+        match item.secret {
+            Secret::Guessed => choices.insert(0, secret),
+            _ => choices.push(secret),
+        }
     }
     if let Some(revert) = &item.revert {
         choices.push((Answer::Revert, revert.describe()));

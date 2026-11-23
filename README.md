@@ -27,7 +27,7 @@ All of them run with `sudo`.
 
 A machine applies only commits signed by a key `signers.txt` lists, or by the recovery key, and only what is committed. Every command that changes the fleet shows the commit and asks before it signs and pushes.
 
-Secrets are encrypted with [age](https://age-encryption.org). Root and each user have their own key, and their own list of keys allowed to open their secrets. Every secret also opens with the fleet's recovery key, which you keep on paper. Review treats a file other users can't read as a secret, and adds it encrypted.
+Secrets are encrypted with [age](https://age-encryption.org). Root and each user have their own key, and their own list of keys allowed to open their secrets. Every secret also opens with the fleet's recovery key, which you keep on paper. Review offers to encrypt a new file other users can't read, and adds only encrypted a file that looks like it holds a key or a token.
 
 ## Setting up a machine
 

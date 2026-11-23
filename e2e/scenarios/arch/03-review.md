@@ -60,8 +60,8 @@ $ printf 'a\nl\np\na\ny\ni\np\np\nq\ny\n' | sudo mothership review
     + ~/.config/tokens  new  secret  1 file
       ── api
       abc123
-  a  add         add it to chezmoi, encrypted
-  n  not secret  list it in not-secret.txt, and add it later in clear
+  s  secret      add it to chezmoi, encrypted
+  a  add         add it to chezmoi
   i ignore · l later · p pass · q quit
   › i
 [6/8] Files

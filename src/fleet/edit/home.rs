@@ -35,9 +35,6 @@ pub fn track(
     let snapshot = taken(member, path, seen)?;
     let shown = snapshot.path(member.user(), path)?;
     if shown.is_dir() {
-        if storage == Storage::Clear {
-            refuse_private(&shown)?;
-        }
         let count = walk::files(&shown)?.len();
         let files = style::count(count, "file");
         if !prompt.confirm(&format!("  That adds {files}. Go on"))? {
@@ -143,24 +140,6 @@ fn files_in(shown: &Path) -> Result<Vec<(PathBuf, fs::Metadata)>> {
         .into_iter()
         .map(|(rel, meta)| (shown.join(rel), meta))
         .collect())
-}
-
-fn refuse_private(shown: &Path) -> Result<()> {
-    let names: Vec<String> = files_in(shown)?
-        .into_iter()
-        .filter(|(_, meta)| walk::private(meta))
-        .map(|(file, _)| {
-            file.strip_prefix(shown)
-                .map(|rel| rel.display().to_string())
-        })
-        .collect::<Result<_, _>>()?;
-    if !names.is_empty() {
-        bail!(
-            "the folder holds files that could be secrets ({}): add them encrypted, one by one",
-            names.join(", ")
-        );
-    }
-    Ok(())
 }
 
 fn keep_owner_only(shown: &Path) -> Result<()> {

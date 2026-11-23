@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Change {
-    InClear,
     Unreadable,
     Added,
     Edited,
@@ -48,6 +47,7 @@ impl Section {
 pub enum Secret {
     No,
     Guessed,
+    Token,
     Fleet,
     Locked,
 }
@@ -87,7 +87,7 @@ impl Item {
         detail: impl Into<String>,
     ) -> Self {
         let section = match change {
-            Change::InClear | Change::Unreadable => Section::Attention,
+            Change::Unreadable => Section::Attention,
             Change::Added | Change::Edited | Change::Removed => Section::Machine,
         };
         Item {
@@ -118,7 +118,8 @@ impl Item {
     pub fn secret(mut self, secret: Secret) -> Self {
         self.secret = secret;
         self.guess = None;
-        if let Adding::Offered(add) = &mut self.add
+        if secret != Secret::Guessed
+            && let Adding::Offered(add) = &mut self.add
             && let Some(encrypted) = add.encrypted()
         {
             *add = encrypted;
@@ -168,7 +169,6 @@ impl Item {
             (_, change) => change,
         };
         match change {
-            Change::InClear => ("!", Paint::Red),
             Change::Unreadable => ("?", Paint::Dim),
             Change::Added => ("+", Paint::Green),
             Change::Edited => ("~", Paint::Yellow),

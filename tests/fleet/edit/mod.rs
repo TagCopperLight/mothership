@@ -322,24 +322,6 @@ fn tracking_a_folder_stops_unless_confirmed() {
 }
 
 #[test]
-fn a_folder_in_clear_is_refused_when_it_holds_files_only_the_owner_reads() {
-    let checkout = Checkout::new();
-    let folder = checkout.dir.path().join("app");
-    fs::create_dir(&folder).unwrap();
-    fs::write(folder.join("config"), "").unwrap();
-    fs::write(folder.join("token"), "").unwrap();
-    fs::set_permissions(folder.join("token"), fs::Permissions::from_mode(0o600)).unwrap();
-    let seen = checkout.shown_home(&folder);
-    let add = Add::Track {
-        path: folder,
-        storage: Storage::Clear,
-    };
-    let error = checkout.try_apply_seen(add, "y", &seen).unwrap_err();
-    assert!(format!("{error:#}").contains("token"));
-    assert!(!format!("{error:#}").contains("config"));
-}
-
-#[test]
 fn a_home_add_needs_what_was_shown_unchanged() {
     let checkout = Checkout::new();
     let folder = checkout.dir.path().join("app");

@@ -3,7 +3,7 @@ use crate::{
     package::{self},
     secrets::{self, Keys, Recipient, Storage},
     services,
-    sync::ignore::{Ignore, Paths},
+    sync::ignore::Ignore,
     sync::kind::Level,
     system::hardware::{self, Hardware},
     system::user::{self, User},
@@ -53,7 +53,6 @@ pub struct Repo {
     pub etc_elsewhere: BTreeSet<PathBuf>,
     pub secret_etc: BTreeSet<PathBuf>,
     pub ignore: Ignore,
-    pub not_secret: Paths,
     pub profiles: Vec<Profile>,
     pub recovery: Recipient,
     pub services: Vec<services::Service>,
@@ -101,7 +100,6 @@ pub struct Profile {
     pub config: UserConfig,
     pub logins: Option<Vec<String>>,
     pub ignore: Ignore,
-    pub not_secret: Paths,
 }
 
 pub struct Member {
@@ -124,7 +122,6 @@ pub const SYSTEM_TOML: &str = "system.toml";
 pub const USER_TOML: &str = "user.toml";
 pub const ETC_DIR: &str = "etc";
 const IGNORE: &str = "ignore.txt";
-const NOT_SECRET: &str = "not-secret.txt";
 pub const USERS: &str = "users";
 
 pub fn admin() -> Result<User> {
@@ -381,7 +378,6 @@ impl Repo {
             system.services.extend(block.services);
         }
         let ignore = Ignore::load(&type_dir.join(IGNORE), Level::Machine)?;
-        let not_secret = Paths::load(&type_dir.join(NOT_SECRET))?;
         let profiles = profiles(&dir, &type_dir.join(USERS))?;
         let services = services::load(&type_dir)?;
         Ok(Repo {
@@ -394,7 +390,6 @@ impl Repo {
             etc_elsewhere,
             secret_etc,
             ignore,
-            not_secret,
             profiles,
             recovery,
             services,
@@ -415,10 +410,6 @@ impl Repo {
 
     pub fn ignore_path(&self) -> PathBuf {
         self.type_dir.join(IGNORE)
-    }
-
-    pub fn not_secret_path(&self) -> PathBuf {
-        self.type_dir.join(NOT_SECRET)
     }
 
     pub fn system_path(&self) -> PathBuf {
@@ -527,10 +518,6 @@ impl Profile {
         self.dir.join(IGNORE)
     }
 
-    pub fn not_secret_path(&self) -> PathBuf {
-        self.dir.join(NOT_SECRET)
-    }
-
     pub fn recipients(&self) -> PathBuf {
         self.dir.join(secrets::RECIPIENTS)
     }
@@ -554,7 +541,6 @@ fn profiles(fleet_dir: &Path, dir: &Path) -> Result<Vec<Profile>> {
             logins: logins::resolve(fleet_dir, &path, &config.ssh_from)?,
             config,
             ignore: Ignore::load(&dir.join(IGNORE), Level::User)?,
-            not_secret: Paths::load(&dir.join(NOT_SECRET))?,
             name,
             dir,
         });
