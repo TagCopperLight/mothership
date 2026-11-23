@@ -341,12 +341,11 @@ fn every_list(fleet: &Fleet) -> Result<Vec<Target>> {
     Ok(all)
 }
 
-pub fn retire_host(fleet: &Fleet, host: &str, prompt: &mut Prompt) -> Result<()> {
-    let mut readers = Readers::new(prompt);
+pub fn retire_host(fleet: &Fleet, host: &str) -> Result<()> {
     let mut found = false;
     for target in every_list(fleet)? {
         if read(&target.list)?.iter().any(|r| r.name == host) {
-            retire(fleet, &target.text, host, &mut readers)?;
+            retire(fleet, &target, host)?;
             found = true;
         }
         if let Reader::Home(home) = &target.scope
@@ -467,16 +466,13 @@ pub fn trust_with(
         name: name.to_owned(),
         key: key.to_owned(),
     });
-    let rewritten = rewrite(fleet, keys, &target, &list, readers)?;
-    println!(
-        "{name} opens the {} secrets of {text} now.",
-        rewritten.len()
-    );
+    let count = rewrite(fleet, keys, &target, &list, readers)?;
+    println!("{name} opens the {count} secrets of {text} now.");
     Ok(())
 }
 
-pub fn retire(fleet: &Fleet, text: &str, name: &str, readers: &mut Readers) -> Result<()> {
-    let target = target(fleet, text)?;
+fn retire(fleet: &Fleet, target: &Target, name: &str) -> Result<()> {
+    let text = &target.text;
     let mut list = read(&target.list)?;
     let retired = list
         .iter()
@@ -485,37 +481,37 @@ pub fn retire(fleet: &Fleet, text: &str, name: &str, readers: &mut Readers) -> R
         .key
         .clone();
     list.retain(|r| r.name != name);
-    let rewritten = rewrite(fleet, fleet.keys(), &target, &list, readers)?;
+    file::write(&target.list, format(&list).as_bytes(), 0o644)
+        .with_context(|| format!("writing {}", target.list.display()))?;
     println!("{name} is gone from {text}.");
-    if rewritten.is_empty() {
+    let secrets = secrets_of(fleet, target)?;
+    if secrets.is_empty() {
         return Ok(());
     }
-    println!(
-        "git history keeps the versions {name} opens, and that machine may keep copies, so change these:"
-    );
-    for secret in &rewritten {
+    println!("{name} can still open these, so change them:");
+    for secret in &secrets {
         println!("  {}", secret.shown);
     }
-    let still: Vec<&Rewritten> = rewritten
-        .iter()
-        .filter(|secret| secret.recipients.iter().any(|r| r.key == retired))
-        .collect();
-    if !still.is_empty() {
-        println!("{name}'s key still opens these, through another home that shares them:");
-        let others = |secret: &Rewritten| {
+    let mut still = Vec::new();
+    for secret in &secrets {
+        if reader_recipients(&fleet.dir, &secret.path, None)?
+            .iter()
+            .any(|r| r.key == retired)
+        {
             let others: Vec<&str> = secret
                 .readers
                 .iter()
                 .map(String::as_str)
-                .filter(|reader| *reader != text)
+                .filter(|reader| reader != text)
                 .collect();
-            others.join(", ")
-        };
-        let pairs: Vec<(String, String)> = still
-            .iter()
-            .map(|secret| (secret.shown.clone(), others(secret)))
-            .collect();
-        style::print_pairs(&pairs);
+            still.push((secret.shown.clone(), others.join(", ")));
+        }
+    }
+    if !still.is_empty() {
+        println!(
+            "{name}'s key stays in another home that shares these, so their new versions open for it too:"
+        );
+        style::print_pairs(&still);
     }
     Ok(())
 }
@@ -589,19 +585,13 @@ fn reader_recipients(
     Ok(all)
 }
 
-struct Rewritten {
-    shown: String,
-    readers: Vec<String>,
-    recipients: Vec<Recipient>,
-}
-
 fn rewrite(
     fleet: &Fleet,
     keys: &Keys,
     target: &Target,
     list: &[Recipient],
     readers: &mut Readers,
-) -> Result<Vec<Rewritten>> {
+) -> Result<usize> {
     let all = secrets_of(fleet, target)?;
     if !all.is_empty() {
         println!("Re-encrypting for {}:", target.text);
@@ -624,21 +614,16 @@ fn rewrite(
             false => secret.path.clone(),
         };
         let bytes = encrypt_for(&recipients, &keys.decrypt(&file)?)?;
-        sealed.push((file, bytes, secret, recipients));
+        sealed.push((file, bytes));
     }
-    let mut rewritten = Vec::new();
-    for (file, bytes, secret, recipients) in sealed {
+    let count = sealed.len();
+    for (file, bytes) in sealed {
         let mode = fs::metadata(&file)?.permissions().mode() & 0o7777;
         file::write(&file, &bytes, mode).with_context(|| format!("writing {}", file.display()))?;
-        rewritten.push(Rewritten {
-            shown: secret.shown,
-            readers: secret.readers,
-            recipients,
-        });
     }
     file::write(&target.list, format(list).as_bytes(), 0o644)
         .with_context(|| format!("writing {}", target.list.display()))?;
-    Ok(rewritten)
+    Ok(count)
 }
 
 struct Secret {

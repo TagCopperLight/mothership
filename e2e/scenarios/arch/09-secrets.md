@@ -280,29 +280,17 @@ $ sudo mothership scan
 ✓ Nothing differs from the workstation type
 \d+ ignored (re)
 $ yes | sudo mothership retire laptop
-Re-encrypting for workstation/root:
-  /etc/wifi.conf  workstation/root
 laptop is gone from workstation/root.
-git history keeps the versions laptop opens, and that machine may keep copies, so change these:
+laptop can still open these, so change them:
   /etc/wifi.conf
-Re-encrypting for workstation/me:
-  .secrets/proxy-key.age     workstation/me
-  ~/.config/app/token        workstation/me
-  ~/.config/editor/settings  workstation/me
-  ~/.ssh/id_test             workstation/me
 laptop is gone from workstation/me.
-git history keeps the versions laptop opens, and that machine may keep copies, so change these:
+laptop can still open these, so change them:
   .secrets/proxy-key.age
   ~/.config/app/token
   ~/.config/editor/settings
   ~/.ssh/id_test
 Retire laptop:
-  M types/workstation/etc/wifi.conf.age
   M types/workstation/recipients.txt
-  M types/workstation/users/me/home/.secrets/proxy-key.age
-  M types/workstation/users/me/home/dot_config/app/encrypted_private_token.age
-  M types/workstation/users/me/home/dot_config/editor/encrypted_private_settings.age
-  M types/workstation/users/me/home/private_dot_ssh/encrypted_private_id_test.age
   M types/workstation/users/me/recipients.txt
 Commit and push [y/N]? y
 Committed [0-9a-f]{12} Retire laptop (re)

@@ -174,8 +174,8 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         }
         (Command::Retire, [host]) => {
             system::host::check(host)?;
-            let (outcome, _) = edit_fleet(&format!("Retire {host}"), |fleet, prompt| {
-                trust::retire_host(fleet, host, prompt)
+            let (outcome, _) = edit_fleet(&format!("Retire {host}"), |fleet, _| {
+                trust::retire_host(fleet, host)
             })?;
             match outcome {
                 Outcome::Declined => Ok(()),

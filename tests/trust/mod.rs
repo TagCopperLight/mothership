@@ -117,6 +117,26 @@ fn trusting_a_key_opens_every_secret_of_its_list_to_it() {
 }
 
 #[test]
+fn retire_drops_a_key_without_opening_the_secrets() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let laptop = make_key(&dir.path().join("laptop.txt")).unwrap();
+    let desktop = make_key(&dir.path().join("desktop.txt")).unwrap();
+    let list = dir.path().join("list.txt");
+    let text = format!(
+        "# laptop\n{}\n\n# desktop\n{}\n",
+        public(&laptop),
+        public(&desktop)
+    );
+    fs::write(&list, &text).unwrap();
+    let fleet = fleet_with(dir.path(), &text, &[("wifi.conf.age", b"psk=1", &list)]);
+    let sealed = fleet.etc_dir().join("wifi.conf.age");
+    let before = fs::read(&sealed).unwrap();
+    retire_host(&fleet, "laptop").unwrap();
+    assert_eq!(names(&fleet.recipients()), ["desktop"]);
+    assert_eq!(fs::read(&sealed).unwrap(), before);
+}
+
+#[test]
 fn a_secret_this_machine_can_not_open_stops_trust_before_any_write() {
     let dir = tempfile::TempDir::new().unwrap();
     let laptop = make_key(&dir.path().join("laptop.txt")).unwrap();
@@ -312,10 +332,10 @@ fn trust_lists_a_host_s_ssh_and_signing_keys_and_retire_drops_them() {
             .ends_with("lists another key for desktop: retire it first")
     );
 
-    retire_host(&fleet, "desktop", &mut Prompt::answering("")).unwrap();
+    retire_host(&fleet, "desktop").unwrap();
     assert!(read(&ssh_keys).unwrap().is_empty());
     assert!(read(&signers).unwrap().is_empty());
-    assert!(retire_host(&fleet, "desktop", &mut Prompt::answering("")).is_err());
+    assert!(retire_host(&fleet, "desktop").is_err());
 }
 
 #[test]
@@ -421,7 +441,7 @@ fn the_probe_signs_only_versions_and_its_ssh_key_goes_to_github() {
     assert_eq!(list[0].key, format!("{signing} versions"));
     let parsed = sign::parse_signers(&fs::read_to_string(&signers).unwrap()).unwrap();
     assert_eq!(parsed[0].reach, sign::Reach::Versions);
-    retire_host(&fleet, "minipc", &mut Prompt::answering("")).unwrap();
+    retire_host(&fleet, "minipc").unwrap();
     assert!(read(&signers).unwrap().is_empty());
 }
 

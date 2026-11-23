@@ -198,15 +198,12 @@ Commit and push [y/N]? y
 Committed [0-9a-f]{12} Trust devbox as workstation (re)
 On devbox, type this code: [0-9a-f]{12} (re)
 $ yes | sudo mothership retire devbox
-Re-encrypting for workstation/dev:
-  .secrets/token.age  workstation/dev, workstation/me
 devbox is gone from workstation/dev.
-git history keeps the versions devbox opens, and that machine may keep copies, so change these:
+devbox can still open these, so change them:
   .secrets/token.age
-devbox's key still opens these, through another home that shares them:
+devbox's key stays in another home that shares these, so their new versions open for it too:
   .secrets/token.age  workstation/me
 Retire devbox:
-  M shared/.secrets/token.age
   M types/workstation/users/dev/recipients.txt
 Commit and push [y/N]? y
 Committed [0-9a-f]{12} Retire devbox (re)
