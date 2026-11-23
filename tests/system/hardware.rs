@@ -24,8 +24,8 @@ impl Root {
         self.write(&format!("sys/bus/pci/devices/{slot}/vendor"), vendor);
     }
 
-    fn detect(&self) -> Vec<Hardware> {
-        detect(self.0.path()).unwrap().into_iter().collect()
+    fn detect(&self) -> Hardware {
+        detect(self.0.path()).unwrap()
     }
 }
 
@@ -39,12 +39,12 @@ fn finds_the_laptop() {
     fs::create_dir_all(root.0.path().join("sys/bus/acpi/devices/GXFP5130:00")).unwrap();
     assert_eq!(
         root.detect(),
-        [
-            Hardware::CpuIntel,
-            Hardware::GpuIntel,
-            Hardware::Battery,
-            Hardware::Gxfp5130
-        ]
+        Hardware {
+            cpu: Some("GenuineIntel".into()),
+            gpus: BTreeSet::from([0x8086]),
+            acpi: BTreeSet::from(["GXFP5130".into()]),
+            battery: true,
+        }
     );
 }
 
@@ -54,37 +54,75 @@ fn finds_the_desktop_and_skips_a_headset_battery() {
     root.pci("0000:03:00.0", "0x030000", "0x1002");
     root.write("sys/class/power_supply/hid-headset/type", "Battery");
     root.write("sys/class/power_supply/hid-headset/scope", "Device");
-    assert_eq!(root.detect(), [Hardware::CpuAmd, Hardware::GpuAmd]);
+    let found = root.detect();
+    assert_eq!(found.cpu.as_deref(), Some("AuthenticAMD"));
+    assert_eq!(found.gpus, BTreeSet::from([0x1002]));
+    assert!(!found.battery);
 }
 
 #[test]
-fn a_virtual_display_needs_nothing() {
+fn skips_devices_that_arent_displays() {
     let root = Root::new("GenuineIntel");
-    root.pci("0000:00:08.0", "0x030000", "0x1414");
-    assert_eq!(root.detect(), [Hardware::CpuIntel]);
+    root.pci("0000:00:1f.3", "0x040100", "0x10de");
+    assert!(root.detect().gpus.is_empty());
 }
 
 #[test]
-fn a_cpu_from_another_vendor_needs_nothing() {
-    let root = Root::new("CentaurHauls");
-    assert_eq!(root.detect(), []);
-}
-
-#[test]
-fn an_arm_cpu_needs_nothing() {
+fn an_arm_cpu_has_no_vendor() {
     let root = Root::new("GenuineIntel");
     root.write("proc/cpuinfo", "processor\t: 0\nCPU implementer\t: 0x41");
-    assert_eq!(root.detect(), []);
+    assert_eq!(root.detect().cpu, None);
+}
+
+#[derive(Deserialize)]
+struct Block {
+    detect: Detect,
+}
+
+fn parse(toml: &str) -> Result<Detect, String> {
+    toml::from_str::<Block>(toml)
+        .map(|block| block.detect)
+        .map_err(|e| e.to_string())
 }
 
 #[test]
-fn names_read_back_as_the_same_piece() {
-    for (piece, name) in [
-        (Hardware::CpuIntel, "cpu-intel"),
-        (Hardware::GpuNvidia, "gpu-nvidia"),
-        (Hardware::Gxfp5130, "gxfp5130"),
-    ] {
-        assert_eq!(piece.name(), name);
-        assert_eq!(name.parse::<Hardware>().unwrap(), piece);
+fn each_check_reads_from_the_fleet() {
+    assert_eq!(
+        parse(r#"detect = { cpu = "AuthenticAMD" }"#),
+        Ok(Detect::Cpu("AuthenticAMD".into()))
+    );
+    assert_eq!(
+        parse(r#"detect = { gpu = "10de" }"#),
+        Ok(Detect::Gpu(0x10de))
+    );
+    assert_eq!(
+        parse(r#"detect = { acpi = "GXFP5130" }"#),
+        Ok(Detect::Acpi("GXFP5130".into()))
+    );
+    assert_eq!(parse(r#"detect = "battery""#), Ok(Detect::Battery));
+    for wrong in ["0x10de", "10d", "nvidia"] {
+        let error = parse(&format!("detect = {{ gpu = {wrong:?} }}")).unwrap_err();
+        assert!(error.contains("isn't a PCI vendor id"), "{error}");
     }
+}
+
+#[test]
+fn a_check_matches_only_what_the_machine_has() {
+    let laptop = Hardware {
+        cpu: Some("GenuineIntel".into()),
+        gpus: BTreeSet::from([0x8086]),
+        acpi: BTreeSet::from(["GXFP5130".into()]),
+        battery: true,
+    };
+    for detect in [
+        Detect::Cpu("GenuineIntel".into()),
+        Detect::Gpu(0x8086),
+        Detect::Acpi("GXFP5130".into()),
+        Detect::Battery,
+    ] {
+        assert!(detect.matches(&laptop), "{detect:?}");
+        assert!(!detect.matches(&Hardware::default()), "{detect:?}");
+    }
+    assert!(!Detect::Cpu("AuthenticAMD".into()).matches(&laptop));
+    assert!(!Detect::Gpu(0x10de).matches(&laptop));
 }

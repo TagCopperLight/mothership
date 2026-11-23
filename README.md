@@ -77,7 +77,8 @@ A home links each shared file it wants, one link per file, and only the homes li
 packages = ["base", "linux", "git"]
 services = ["NetworkManager.service"]
 
-[hardware.cpu-intel]
+[hardware.intel]
+detect = { cpu = "GenuineIntel" }
 packages = ["intel-ucode"]
 
 [options.encrypted]
@@ -85,7 +86,7 @@ packages = ["sbctl"]
 etc = ["kernel/cmdline"]
 ```
 
-mothership detects the hardware, and stops when the type has no block for a piece the machine has. A machine turns options on in `/etc/mothership/machine.toml`.
+A hardware block turns on when the machine has what its `detect` names: a CPU vendor (`cpu`), a GPU's PCI vendor id (`gpu`), an ACPI id (`acpi`) or `"battery"`. A machine turns options on in `/etc/mothership/machine.toml`.
 
 Each line of `ignore.txt` is a kind and a pattern, such as `home ~/.cache` or `package linux-firmware-*`.
 

@@ -7,7 +7,6 @@ use crate::{
     system::hardware::Hardware,
 };
 use std::{
-    collections::BTreeSet,
     fs,
     os::unix::{self, fs::PermissionsExt},
 };
@@ -26,7 +25,8 @@ services = [
   "fstrim.timer",
 ]
 
-[hardware.battery]
+[hardware.laptop]
+detect = "battery"
 packages = ["power-profiles-daemon"]
 services = ["power-profiles-daemon.service"]
 etc = ["battery.conf"]
@@ -59,6 +59,13 @@ cargo = [
 ]
 "#;
 
+fn laptop() -> Hardware {
+    Hardware {
+        battery: true,
+        ..Hardware::default()
+    }
+}
+
 struct Checkout {
     dir: TempDir,
     fleet: Fleet,
@@ -76,7 +83,7 @@ impl Checkout {
         fs::write(type_dir.join("ignore.txt"), "package htop\n").unwrap();
         fs::create_dir_all(type_dir.join("users/me")).unwrap();
         fs::write(type_dir.join("users/me/user.toml"), USER).unwrap();
-        let hardware = BTreeSet::from([Hardware::Battery]);
+        let hardware = laptop();
         let repo = Repo::new(dir.path().to_path_buf(), "workstation", &[], &hardware).unwrap();
         let mut me = crate::support::current_user();
         me.home = dir.path().to_path_buf();
@@ -173,7 +180,9 @@ fn unlisting_reaches_built_packages_and_the_machines_blocks() {
     );
     let system = checkout.system();
     assert!(system.contains("built_packages = []\n"));
-    assert!(system.contains("[hardware.battery]\npackages = []\nservices = []\n"));
+    assert!(
+        system.contains("[hardware.laptop]\ndetect = \"battery\"\npackages = []\nservices = []\n")
+    );
 }
 
 #[test]
@@ -494,7 +503,7 @@ fn removing_from_etc_drops_the_folders_left_empty() {
 fn removing_a_blocks_file_drops_it_from_the_block() {
     let checkout = Checkout::new();
     etc::remove(&checkout.fleet, Path::new("battery.conf")).unwrap();
-    assert!(checkout.system().contains("[hardware.battery]\npackages = [\"power-profiles-daemon\"]\nservices = [\"power-profiles-daemon.service\"]\netc = []\n"));
+    assert!(checkout.system().contains("[hardware.laptop]\ndetect = \"battery\"\npackages = [\"power-profiles-daemon\"]\nservices = [\"power-profiles-daemon.service\"]\netc = []\n"));
 }
 
 #[test]
@@ -566,7 +575,7 @@ fn listing_a_user_gives_them_an_empty_folder_in_the_type() {
         checkout.dir.path().to_path_buf(),
         "workstation",
         &[],
-        &BTreeSet::from([Hardware::Battery]),
+        &laptop(),
     )
     .unwrap();
     let names: Vec<&str> = repo.profiles.iter().map(|p| p.name.as_str()).collect();

@@ -14,12 +14,3 @@ packages = [
 
 [etc_modes]
 "sudoers.d/sudo" = "440"
-
-# The container sees the host's hardware, so every piece has a block.
-[hardware.cpu-intel]
-[hardware.cpu-amd]
-[hardware.gpu-intel]
-[hardware.gpu-amd]
-[hardware.gpu-nvidia]
-[hardware.battery]
-[hardware.gxfp5130]

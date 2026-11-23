@@ -12,14 +12,6 @@ services = ["NetworkManager.service"]
 [etc_modes]
 "sudoers.d/wheel" = "440"
 
-[hardware.cpu-intel]
-[hardware.cpu-amd]
-[hardware.gpu-intel]
-[hardware.gpu-amd]
-[hardware.gpu-nvidia]
-[hardware.battery]
-[hardware.gxfp5130]
-
 # Boots through systemd-boot and a signed UKI, so the TPM opens the disk.
 [options.encrypted]
 packages = ["sbctl", "tpm2-tss"]

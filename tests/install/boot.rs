@@ -1,10 +1,10 @@
 use super::*;
-use std::{collections::BTreeSet, path::PathBuf};
+use std::path::PathBuf;
 
 fn vm(options: &[&str]) -> Repo {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("e2e/vm/fleet");
     let options: Vec<String> = options.iter().map(|o| o.to_string()).collect();
-    Repo::new(dir, "vm", &options, &BTreeSet::new()).unwrap()
+    Repo::new(dir, "vm", &options, &Default::default()).unwrap()
 }
 
 #[test]

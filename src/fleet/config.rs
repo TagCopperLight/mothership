@@ -1,4 +1,4 @@
-use crate::{package::aur, secrets::Storage, system::hardware::Hardware, util::file};
+use crate::{package::aur, secrets::Storage, system::hardware::Detect, util::file};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{
@@ -16,7 +16,7 @@ pub struct System {
     pub aur_helper: Option<aur::Helper>,
     pub services: Vec<String>,
     pub etc_modes: BTreeMap<PathBuf, Mode>,
-    pub(super) hardware: BTreeMap<Hardware, Block>,
+    pub(super) hardware: BTreeMap<String, Block>,
     pub(super) options: BTreeMap<String, Block>,
 }
 
@@ -35,6 +35,7 @@ pub struct UserConfig {
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields, default)]
 pub(super) struct Block {
+    pub(super) detect: Option<Detect>,
     pub(super) packages: Vec<String>,
     pub(super) built_packages: Vec<String>,
     pub(super) services: Vec<String>,

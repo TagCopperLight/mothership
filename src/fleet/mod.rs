@@ -80,7 +80,7 @@ impl Deref for Fleet {
 #[derive(Clone)]
 pub enum Table {
     Top,
-    Hardware(Hardware),
+    Hardware(String),
     Option(String),
 }
 
@@ -88,7 +88,7 @@ impl Table {
     pub fn path(&self) -> Vec<&str> {
         match self {
             Table::Top => Vec::new(),
-            Table::Hardware(piece) => vec!["hardware", piece.name()],
+            Table::Hardware(name) => vec!["hardware", name],
             Table::Option(name) => vec!["options", name],
         }
     }
@@ -285,7 +285,7 @@ impl Repo {
         dir: PathBuf,
         device_type: &str,
         options: &[String],
-        hardware: &BTreeSet<Hardware>,
+        hardware: &Hardware,
     ) -> Result<Self> {
         homes::check(&dir)?;
         let manifest = Manifest::read(&dir)?;
@@ -297,18 +297,31 @@ impl Repo {
         let system_path = type_dir.join(SYSTEM_TOML);
         let mut system: System = read_toml(&system_path)?;
 
+        if let Some(name) = system
+            .options
+            .iter()
+            .find_map(|(name, b)| b.detect.as_ref().map(|_| name))
+        {
+            bail!(
+                "[options.{name}] of {} can't detect anything: a machine's {MACHINE} turns it on",
+                system_path.display()
+            );
+        }
         let mut blocks = Vec::new();
         let mut active = Vec::new();
-        for piece in hardware {
-            let block = system.hardware.remove(piece).with_context(|| {
+        for (name, block) in std::mem::take(&mut system.hardware) {
+            let detect = block.detect.as_ref().with_context(|| {
                 format!(
-                    "this machine has {0}, and {1} has no [hardware.{0}]",
-                    piece.name(),
+                    "[hardware.{name}] of {} says nothing to detect",
                     system_path.display()
                 )
             })?;
-            blocks.push(Table::Hardware(*piece));
-            active.push(block);
+            if detect.matches(hardware) {
+                blocks.push(Table::Hardware(name));
+                active.push(block);
+            } else {
+                system.hardware.insert(name, block);
+            }
         }
         for option in options {
             let block = system.options.remove(option).with_context(|| {
