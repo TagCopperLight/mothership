@@ -80,3 +80,35 @@ fn a_part_behind_a_link_stays_where_it_is() {
     assert!(!run(RESTORE, &data, &snapshot, &["db/secret"]));
     assert_eq!(read(&outside.join("secret")).as_deref(), Some("outside"));
 }
+
+fn container(status: &str, exit_code: i64, restart_count: i64) -> Container {
+    serde_json::from_value(serde_json::json!({
+        "Id": "c1",
+        "Name": "/app-web-1",
+        "Image": "sha256:0",
+        "State": {"Status": status, "ExitCode": exit_code, "Health": null},
+        "RestartCount": restart_count,
+        "Config": {"Labels": null},
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_restart_during_the_watch_is_a_crash_and_an_older_one_isnt() {
+    let before = BTreeMap::from([("c1".to_owned(), 2)]);
+    assert_eq!(sick(&[container("running", 0, 2)], &before), None);
+    assert_eq!(
+        sick(&[container("running", 0, 3)], &before).as_deref(),
+        Some("app-web-1 crashed and restarted")
+    );
+}
+
+#[test]
+fn only_a_failed_exit_is_a_crash() {
+    let before = BTreeMap::from([("c1".to_owned(), 0)]);
+    assert_eq!(sick(&[container("exited", 0, 0)], &before), None);
+    assert_eq!(
+        sick(&[container("exited", 1, 0)], &before).as_deref(),
+        Some("app-web-1 stopped with code 1")
+    );
+}

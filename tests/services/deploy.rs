@@ -273,20 +273,6 @@ fn a_service_snapshots_only_the_parts_it_names() {
 }
 
 #[test]
-fn a_service_without_a_health_check_keeps_its_new_versions() {
-    let mut world = World::new();
-    let engine = Fake::default();
-    engine.health.borrow_mut().push_back(Health::Unchecked);
-    let (first, _) = world.deploy(&engine, &world.pin("1.0.0", A), None);
-    engine.calls();
-    engine.health.borrow_mut().push_back(Health::Unchecked);
-    let newer = world.pin("1.0.1", B);
-    let (second, outcome) = world.deploy(&engine, &newer, Some(&first));
-    assert_eq!(outcome, Outcome::Updated);
-    assert_eq!(second.running, newer.pins());
-}
-
-#[test]
 fn an_edited_file_stays_and_a_dropped_service_leaves_its_data() {
     let mut world = World::new();
     let engine = Fake::default();

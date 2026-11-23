@@ -397,7 +397,7 @@ pub fn deploy(
         engine.health(name)
     })();
     let failure = match started {
-        Ok(Health::Healthy | Health::Unchecked) => None,
+        Ok(Health::Healthy) => None,
         Ok(Health::Unhealthy(why)) => Some(why),
         Err(e) => Some(format!("{e:#}")),
     };

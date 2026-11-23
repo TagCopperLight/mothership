@@ -7,6 +7,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
+    collections::BTreeMap,
     ffi::OsString,
     path::{Path, PathBuf},
     process::Command,
@@ -18,6 +19,7 @@ const QUERY_LIMIT: Duration = Duration::from_secs(120);
 const RUN_LIMIT: Duration = Duration::from_secs(60 * 60);
 const HEALTH_LIMIT: Duration = Duration::from_secs(10 * 60);
 const HEALTH_POLL: Duration = Duration::from_secs(2);
+const SETTLE: Duration = Duration::from_secs(30);
 const PROJECT_LABEL: &str = "com.docker.compose.project";
 
 pub struct Project<'a> {
@@ -29,7 +31,6 @@ pub struct Project<'a> {
 #[derive(Debug, PartialEq)]
 pub enum Health {
     Healthy,
-    Unchecked,
     Unhealthy(String),
 }
 
@@ -54,6 +55,7 @@ pub struct Container {
     pub name: String,
     pub image: String,
     pub state: ContainerState,
+    pub restart_count: i64,
     pub config: ContainerConfig,
 }
 
@@ -75,7 +77,7 @@ pub struct ContainerHealth {
 #[serde(rename_all = "PascalCase")]
 pub struct ContainerConfig {
     #[serde(default)]
-    pub labels: Option<std::collections::BTreeMap<String, String>>,
+    pub labels: Option<BTreeMap<String, String>>,
 }
 
 impl Container {
@@ -268,12 +270,15 @@ impl Engine for Docker {
 
     fn health(&self, name: &str) -> Result<Health> {
         let start = Instant::now();
+        let mut restarts_at_start = BTreeMap::new();
         loop {
             let containers = self.of(name)?;
-            if containers.iter().all(|c| c.state.health.is_none()) {
-                return Ok(Health::Unchecked);
+            for c in &containers {
+                restarts_at_start
+                    .entry(c.id.clone())
+                    .or_insert(c.restart_count);
             }
-            if let Some(why) = sick(&containers) {
+            if let Some(why) = sick(&containers, &restarts_at_start) {
                 return Ok(Health::Unhealthy(why));
             }
             let healthy = containers.iter().all(|c| {
@@ -282,7 +287,7 @@ impl Engine for Docker {
                     .as_ref()
                     .is_none_or(|h| h.status == "healthy")
             });
-            if healthy {
+            if healthy && start.elapsed() >= SETTLE {
                 return Ok(Health::Healthy);
             }
             if start.elapsed() > HEALTH_LIMIT {
@@ -345,12 +350,16 @@ fn with_parts<'a>(data: &'a Path, snapshot: &'a Path, parts: &'a [PathBuf]) -> V
         .collect()
 }
 
-fn sick(containers: &[Container]) -> Option<String> {
+fn sick(containers: &[Container], restarts_at_start: &BTreeMap<String, i64>) -> Option<String> {
     containers.iter().find_map(|c| {
         let health = c.state.health.as_ref().map(|h| h.status.as_str());
+        let restarted = restarts_at_start
+            .get(&c.id)
+            .is_some_and(|&n| c.restart_count > n);
         match (c.state.status.as_str(), health) {
             (_, Some("unhealthy")) => Some(format!("{} reports unhealthy", c.shown())),
             ("restarting", _) => Some(format!("{} keeps restarting", c.shown())),
+            _ if restarted => Some(format!("{} crashed and restarted", c.shown())),
             ("exited" | "dead", _) if c.state.exit_code != 0 => Some(format!(
                 "{} stopped with code {}",
                 c.shown(),
