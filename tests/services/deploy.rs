@@ -84,6 +84,10 @@ impl Engine for Fake {
         self.log(with_parts("restore", parts));
         Ok(())
     }
+    fn drop_snapshot(&self, _: &str) -> Result<()> {
+        self.log("drop snapshot");
+        Ok(())
+    }
     fn link(&self, network: &str) -> Result<()> {
         self.log(format!("link {network}"));
         Ok(())
@@ -189,7 +193,14 @@ fn an_update_snapshots_the_data_and_a_failed_one_rolls_back_for_good() {
     assert_eq!(outcome, Outcome::Updated);
     assert_eq!(
         engine.calls(),
-        ["config", "pull", "stop", "snapshot", "up app:1.0.1"]
+        [
+            "config",
+            "pull",
+            "stop",
+            "snapshot",
+            "up app:1.0.1",
+            "drop snapshot"
+        ]
     );
 
     engine
@@ -209,7 +220,8 @@ fn an_update_snapshots_the_data_and_a_failed_one_rolls_back_for_good() {
             "up app:1.0.2",
             "stop",
             "restore",
-            "up app:1.0.1"
+            "up app:1.0.1",
+            "drop snapshot"
         ]
     );
     assert_eq!(third.running, second.running);
@@ -288,7 +300,11 @@ fn an_edited_file_stays_and_a_dropped_service_leaves_its_data() {
 
     fs::remove_file(&conf).unwrap();
     remove(&engine, &world.places, "app", &second).unwrap();
-    assert!(engine.calls().ends_with(&["down".to_owned()]));
+    assert!(
+        engine
+            .calls()
+            .ends_with(&["down".to_owned(), "drop snapshot".to_owned()])
+    );
     assert!(!world.places.project("app").exists());
     assert!(world.places.data("app").is_dir());
 }
@@ -336,7 +352,15 @@ fn a_snapshot_that_fails_puts_the_old_version_back_without_touching_the_data() {
     assert_eq!(outcome, Outcome::RolledBack("the disk is full".into()));
     assert_eq!(
         engine.calls(),
-        ["config", "pull", "stop", "snapshot", "stop", "up app:1.0.0"]
+        [
+            "config",
+            "pull",
+            "stop",
+            "snapshot",
+            "stop",
+            "up app:1.0.0",
+            "drop snapshot"
+        ]
     );
     assert_eq!(second.running, first.running);
     assert_eq!(second.files, first.files);

@@ -44,6 +44,7 @@ pub trait Engine {
     fn health(&self, name: &str) -> Result<Health>;
     fn snapshot(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()>;
     fn restore(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()>;
+    fn drop_snapshot(&self, name: &str) -> Result<()>;
     fn confirm(&self, image: &Image, pin: &Pin) -> Result<Option<String>>;
     fn link(&self, network: &str) -> Result<()>;
 }
@@ -208,7 +209,6 @@ impl Docker {
         if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
             bail!("{} doesn't hold a process id", pid_file.display());
         }
-        let script = format!("{PARTS}{script}");
         let mut all: Vec<OsString> = [
             "-U",
             "--preserve-credentials",
@@ -218,7 +218,7 @@ impl Docker {
             "--",
             "sh",
             "-euc",
-            &script,
+            script,
             "sh",
         ]
         .map(OsString::from)
@@ -302,12 +302,20 @@ impl Engine for Docker {
 
     fn snapshot(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()> {
         let to = account::snapshot(&self.user, name);
-        self.in_namespace(SNAPSHOT, &with_parts(data, &to, parts))
+        self.in_namespace(&format!("{PARTS}{SNAPSHOT}"), &with_parts(data, &to, parts))
     }
 
     fn restore(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()> {
         let from = account::snapshot(&self.user, name);
-        self.in_namespace(RESTORE, &with_parts(data, &from, parts))
+        self.in_namespace(
+            &format!("{PARTS}{RESTORE}"),
+            &with_parts(data, &from, parts),
+        )
+    }
+
+    fn drop_snapshot(&self, name: &str) -> Result<()> {
+        let snapshot = account::snapshot(&self.user, name);
+        self.in_namespace(DROP_SNAPSHOT, &[&snapshot])
     }
 
     fn confirm(&self, image: &Image, pin: &Pin) -> Result<Option<String>> {
@@ -336,6 +344,8 @@ for p; do
   if [ -e "$d/$p" ]; then mkdir -p "$s.new/$(dirname "$p")"; cp -a "$d/$p" "$s.new/$(dirname "$p")/"; fi
 done
 rm -rf "$s"; mv "$s.new" "$s""#;
+
+const DROP_SNAPSHOT: &str = r#"rm -rf -- "$1" "$1.new""#;
 
 const RESTORE: &str = r#"for p; do
   inside "$d" "$p"

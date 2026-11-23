@@ -413,6 +413,7 @@ pub fn deploy(
                 snapshotted.then_some(&service.snapshot[..]),
             )
             .with_context(|| format!("{name} failed ({why}), and putting it back failed too"))?;
+            engine.drop_snapshot(name)?;
             let failed: Vec<(&String, &super::Pin)> = pins
                 .iter()
                 .filter(|(image, pin)| entry.running.get(*image) != Some(pin))
@@ -442,6 +443,7 @@ pub fn deploy(
         None => Outcome::Started,
     };
     if update {
+        engine.drop_snapshot(name)?;
         fs::remove_dir_all(&previous)
             .with_context(|| format!("removing {}", previous.display()))?;
     }
@@ -545,6 +547,7 @@ pub fn describe(pins: &[(&String, &super::Pin)]) -> String {
 
 pub fn remove(engine: &dyn Engine, places: &Places, name: &str, entry: &Deployed) -> Result<()> {
     engine.down(name)?;
+    engine.drop_snapshot(name)?;
     let dir = places.project(name);
     let edited = edited(places, name, entry)?;
     for rel in entry.files.keys().filter(|rel| !edited.contains(rel)) {
