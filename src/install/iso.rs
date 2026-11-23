@@ -1,6 +1,6 @@
 use super::{
     CARRIED_KEY, FROM_ISO,
-    answers::{self, ADMIN, Flags},
+    answers::{self, ADMIN, Flags, Saved},
     boot, disk,
     net::{self, Needs},
     repo,
@@ -29,6 +29,10 @@ use std::{
 const FLEET: &str = "/tmp/fleet";
 
 pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
+    let flags = &match Saved::offer(prompt)? {
+        Some(saved) => saved.under(flags),
+        None => flags.clone(),
+    };
     let resumed = disk::still_open()?;
     if resumed {
         println!("The disk from the last run is still open: install goes on from there.");
@@ -59,6 +63,14 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
         bail!("{} has no user {admin}", machine.device_type);
     }
     let timezone = answers::timezone(flags, prompt)?;
+    Saved {
+        fleet: url.clone(),
+        hostname: hostname.clone(),
+        admin: admin.clone(),
+        timezone: timezone.clone(),
+        machine: machine.clone(),
+    }
+    .save()?;
     if !resumed {
         let target = disk::choose(flags, prompt)?;
         if let Some(keymap) = boot::keymap(&fleet)? {
@@ -107,6 +119,7 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     chroot.args(args).env(FROM_ISO, "1");
     cmd::status(chroot, "arch-chroot", &args)?;
     disk::close()?;
+    Saved::forget()?;
     println!(
         "The system is installed. Take out the USB stick and restart: type the disk's \
          passphrase, and install finishes there."

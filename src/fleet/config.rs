@@ -41,7 +41,7 @@ pub(super) struct Block {
     pub(super) etc: Vec<PathBuf>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Machine {
     #[serde(rename = "type")]

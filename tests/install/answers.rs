@@ -67,3 +67,27 @@ fn a_time_zone_stays_inside_zoneinfo() {
         assert!(!known_timezone(name), "{name}");
     }
 }
+
+#[test]
+fn saved_answers_fill_only_what_the_flags_leave_open() {
+    let saved = Saved {
+        fleet: "git@github.com:me/fleet.git".into(),
+        hostname: "laptop".into(),
+        admin: "tag".into(),
+        timezone: "Europe/Paris".into(),
+        machine: Machine {
+            device_type: "workstation".into(),
+            options: vec!["windows".into()],
+        },
+    };
+    let text = toml::to_string(&saved).unwrap();
+    assert_eq!(toml::from_str::<Saved>(&text).unwrap(), saved);
+    let flags = parse(&["--hostname", "desktop", "--type", "server"]).unwrap();
+    let filled = saved.under(&flags);
+    assert_eq!(filled.hostname.as_deref(), Some("desktop"));
+    assert_eq!(filled.device_type.as_deref(), Some("server"));
+    assert!(filled.options.is_empty());
+    assert_eq!(filled.fleet.as_deref(), Some("git@github.com:me/fleet.git"));
+    assert_eq!(filled.admin.as_deref(), Some("tag"));
+    assert_eq!(filled.timezone.as_deref(), Some("Europe/Paris"));
+}

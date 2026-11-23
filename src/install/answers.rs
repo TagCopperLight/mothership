@@ -2,12 +2,16 @@ use super::disk::Layout;
 use crate::{
     fleet::{self, Machine, Repo},
     system::host,
+    util::file,
     util::prompt::{Choice, Prompt},
 };
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
+use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
-#[derive(Default)]
+const SAVED: &str = "/tmp/mothership-answers.toml";
+
+#[derive(Default, Clone)]
 pub struct Flags {
     pub fleet: Option<String>,
     pub device_type: Option<String>,
@@ -68,6 +72,60 @@ impl Flags {
         ]
         .into_iter()
         .find_map(|(given, flag)| given.then_some(flag))
+    }
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct Saved {
+    pub fleet: String,
+    pub hostname: String,
+    pub admin: String,
+    pub timezone: String,
+    pub machine: Machine,
+}
+
+impl Saved {
+    pub fn offer(prompt: &mut Prompt) -> Result<Option<Saved>> {
+        let Some(text) = file::read_if_any(Path::new(SAVED))? else {
+            return Ok(None);
+        };
+        let saved: Saved = toml::from_str(&text).with_context(|| format!("parsing {SAVED}"))?;
+        println!("The last run's answers:");
+        println!("  {}", saved.describe());
+        Ok(prompt.confirm("Use these answers")?.then_some(saved))
+    }
+
+    pub fn save(&self) -> Result<()> {
+        file::write(Path::new(SAVED), toml::to_string(self)?.as_bytes(), 0o600)
+    }
+
+    pub fn forget() -> Result<()> {
+        file::remove_if_found(Path::new(SAVED)).map(drop)
+    }
+
+    fn describe(&self) -> String {
+        let options = match self.machine.options.is_empty() {
+            true => String::new(),
+            false => format!(" with {}", self.machine.options.join(", ")),
+        };
+        format!(
+            "{} from {}, {}{options}, admin {}, time zone {}",
+            self.hostname, self.fleet, self.machine.device_type, self.admin, self.timezone
+        )
+    }
+
+    pub fn under(self, flags: &Flags) -> Flags {
+        let mut filled = flags.clone();
+        filled.fleet.get_or_insert(self.fleet);
+        filled.hostname.get_or_insert(self.hostname);
+        filled.admin.get_or_insert(self.admin);
+        filled.timezone.get_or_insert(self.timezone);
+        if filled.device_type.is_none() {
+            filled.device_type = Some(self.machine.device_type);
+            filled.options = self.machine.options;
+        }
+        filled
     }
 }
 
