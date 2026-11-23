@@ -451,7 +451,7 @@ fn a_service_facing_an_interface_follows_its_addresses_and_waits_without_one() {
 }
 
 #[test]
-fn a_link_puts_the_reached_container_and_every_caller_container_on_one_network() {
+fn a_link_puts_the_reached_container_and_its_caller_container_on_one_network() {
     let mut world = World::new();
     let engine = Fake::default();
     world.pin("1.0.0", A);
@@ -459,7 +459,7 @@ fn a_link_puts_the_reached_container_and_every_caller_container_on_one_network()
     let text = fs::read_to_string(app.join("service.toml")).unwrap();
     fs::write(
         app.join("service.toml"),
-        format!("{text}callers = [\"gate\"]\n"),
+        format!("{text}callers = [\"gate/web\"]\n"),
     )
     .unwrap();
     let gate = world.fleet.join("services/gate");
@@ -480,7 +480,7 @@ fn a_link_puts_the_reached_container_and_every_caller_container_on_one_network()
     assert!(override_of(&world, "app").get("networks").is_none());
     engine.calls();
 
-    let network = "link.app.app.gate";
+    let network = "link.app.app.gate.web";
     let (entry, outcome) = world.deploy(&engine, &services[0], Some(&before));
     assert_eq!(outcome, Outcome::Updated);
     assert_ne!(

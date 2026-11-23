@@ -11,13 +11,14 @@ pub struct Link {
     pub service: String,
     pub container: String,
     pub caller: String,
+    pub caller_container: String,
 }
 
 impl Link {
     pub fn network(&self) -> String {
         format!(
-            "{PREFIX}{}.{}.{}",
-            self.service, self.container, self.caller
+            "{PREFIX}{}.{}.{}.{}",
+            self.service, self.container, self.caller, self.caller_container
         )
     }
 
@@ -32,31 +33,44 @@ pub fn check_callers(container: &str, callers: &BTreeSet<String>) -> Result<()> 
     }
     host::check(container).context("a container that other services call needs a hostname")?;
     for caller in callers {
-        host::check(caller).with_context(|| format!("the caller {caller}"))?;
+        let (service, container) = split(caller)?;
+        for part in [service, container] {
+            host::check(part).with_context(|| format!("the caller {caller}"))?;
+        }
     }
     Ok(())
 }
 
+fn split(caller: &str) -> Result<(&str, &str)> {
+    caller.split_once('/').with_context(|| {
+        format!("the caller {caller} names no container: write {caller}/<container>")
+    })
+}
+
 pub fn between(services: &[Service]) -> Result<Vec<Link>> {
-    let names: BTreeSet<&str> = services.iter().map(|s| s.name.as_str()).collect();
     let mut links = Vec::new();
     for service in services {
         for (container, image) in &service.images {
-            for caller in &image.callers {
+            for entry in &image.callers {
+                let (caller, caller_container) = split(entry)?;
                 let owner = format!("{}'s images.{container}", service.name);
-                if *caller == service.name {
+                if caller == service.name {
                     bail!(
                         "{owner} lets its own service call it: a service's containers reach \
                          each other already"
                     );
                 }
-                if !names.contains(caller.as_str()) {
+                let Some(calling) = services.iter().find(|s| s.name == caller) else {
                     bail!("{owner} lets {caller} call it, and the type has no service {caller}");
+                };
+                if !calling.images.contains_key(caller_container) {
+                    bail!("{owner} lets {entry} call it, and {caller} runs no {caller_container}");
                 }
                 links.push(Link {
                     service: service.name.clone(),
                     container: container.clone(),
-                    caller: caller.clone(),
+                    caller: caller.to_owned(),
+                    caller_container: caller_container.to_owned(),
                 });
             }
         }
@@ -79,7 +93,9 @@ pub fn join(service: &Service, config: &Value) -> Result<(Map<String, Value>, Ma
         let mut added = Map::new();
         for link in &service.links {
             if link.caller == service.name {
-                added.insert(link.network(), Value::Null);
+                if link.caller_container == *container {
+                    added.insert(link.network(), Value::Null);
+                }
             } else if link.container == *container {
                 added.insert(link.network(), json!({ "aliases": [link.name()] }));
             }

@@ -44,7 +44,7 @@ VERSIONS = ["1.0.0", "1.0.1", "1.0.2", "1.0.3"]
 TOKEN = "s3cret-token"
 FLEET = "/var/lib/mothership/fleet"
 STAND_IN = "stand0"
-LINK = "link.app.app.extra"
+LINK = "link.app.app.extra.extra"
 
 
 def main() -> int:
@@ -391,7 +391,7 @@ def fleet(tmp: Path, image: str, registry: Registry, root: x25519.Identity) -> P
     (server / "services/app/secrets").mkdir()
     (server / "services/app/secrets/token.age").symlink_to("../../../../../shared/.secrets/token.age")
     (server / "services/app/service.toml").write_text(
-        pinned(image, registry, "1.0.0", mine=True, callers=["extra"]))
+        pinned(image, registry, "1.0.0", mine=True, callers=["extra/extra"]))
     for other in ["extra", "lonely"]:
         (server / f"services/{other}/service.toml").write_text(
             pinned(image, registry, "1.0.0", mine=False).replace("[images.app]", f"[images.{other}]"))
@@ -475,7 +475,7 @@ sudo ip link set {STAND_IN} up
         vm.run(f"cd {FLEET} && {change}")
         expect(vm.run(f"sudo mothership commit '{message}'", input="y\n"), "Committed")
 
-    callers = ["extra"]
+    callers = ["extra/extra"]
 
     def pin(version: str) -> str:
         text = pinned(image, registry, version, mine=True, callers=callers)
