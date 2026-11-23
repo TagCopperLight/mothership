@@ -155,3 +155,39 @@ fn a_service_stays_on_its_own_networks() {
     )
     .unwrap();
 }
+
+#[test]
+fn a_container_keeps_docker_s_default_rights_and_may_get_a_device() {
+    let app = |extra: Value| {
+        let mut app = json!({"image": "app:1@sha256:1"});
+        app.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        json!({"services": {"app": app}})
+    };
+    let ok = |config: Value| {
+        let (project, data) = (
+            Path::new("/var/lib/mothership/services/app"),
+            Path::new("/srv/app"),
+        );
+        check(&config, "app", project, data, &images()).unwrap();
+    };
+    ok(app(
+        json!({"devices": [{"source": "/dev/dri", "target": "/dev/dri"}]}),
+    ));
+    ok(app(
+        json!({"security_opt": ["no-new-privileges:true"], "privileged": false}),
+    ));
+    assert_eq!(
+        err(app(json!({"privileged": true}))),
+        "app runs privileged: a container keeps Docker's default rights"
+    );
+    assert_eq!(
+        err(app(json!({"cap_add": ["NET_ADMIN"]}))),
+        "app adds capabilities: a container keeps Docker's default rights"
+    );
+    assert_eq!(
+        err(app(json!({"security_opt": ["seccomp:unconfined"]}))),
+        "app sets security_opt seccomp:unconfined: only no-new-privileges is allowed"
+    );
+}

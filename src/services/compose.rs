@@ -81,6 +81,18 @@ pub fn check(
                  callers in service.toml"
             );
         }
+        if service["privileged"].as_bool() == Some(true) {
+            bail!("{name} runs privileged: a container keeps Docker's default rights");
+        }
+        if service["cap_add"].as_array().is_some_and(|c| !c.is_empty()) {
+            bail!("{name} adds capabilities: a container keeps Docker's default rights");
+        }
+        for option in service["security_opt"].as_array().into_iter().flatten() {
+            let option = option.as_str().unwrap_or("");
+            if option.split([':', '=']).next() != Some("no-new-privileges") {
+                bail!("{name} sets security_opt {option}: only no-new-privileges is allowed");
+            }
+        }
         if service.get("build").is_some() {
             bail!("{name} builds its image: the fleet runs only pinned images");
         }
