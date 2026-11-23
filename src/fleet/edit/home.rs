@@ -156,7 +156,7 @@ fn refuse_private(shown: &Path) -> Result<()> {
         .collect::<Result<_, _>>()?;
     if !names.is_empty() {
         bail!(
-            "the folder holds files only their owner can read ({}): add them encrypted, one by one",
+            "the folder holds files that could be secrets ({}): add them encrypted, one by one",
             names.join(", ")
         );
     }
