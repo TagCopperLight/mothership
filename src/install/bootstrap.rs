@@ -1,4 +1,3 @@
-use super::net::{self, Needs};
 use crate::{
     package::Distro,
     util::cmd::{self, As},
@@ -22,18 +21,14 @@ pub fn git(distro: Distro) -> Result<()> {
     if cmd::found(As::Root, "git") {
         return Ok(());
     }
-    net::retry("Installing git", &Needs::mirror(distro)?, || {
-        distro.bootstrap(&["git"])
-    })
+    distro.bootstrap(&["git"])
 }
 
 pub fn ssh(distro: Distro) -> Result<()> {
     if cmd::found(As::Root, "ssh") {
         return Ok(());
     }
-    net::retry("Installing ssh", &Needs::mirror(distro)?, || {
-        distro.bootstrap(&[distro.ssh_package()])
-    })
+    distro.bootstrap(&[distro.ssh_package()])
 }
 
 pub fn chezmoi(distro: Distro) -> Result<()> {
@@ -41,15 +36,11 @@ pub fn chezmoi(distro: Distro) -> Result<()> {
         return Ok(());
     }
     match distro {
-        Distro::Arch => net::retry("Installing chezmoi", &Needs::mirror(distro)?, || {
-            distro.bootstrap(&["chezmoi"])
-        }),
+        Distro::Arch => distro.bootstrap(&["chezmoi"]),
         Distro::Debian => {
             let dir = tempfile::tempdir()?;
             let deb = download_chezmoi_deb(dir.path())?;
-            net::retry("Installing chezmoi", &Needs::mirror(distro)?, || {
-                distro.bootstrap(&[&deb.to_string_lossy()])
-            })
+            distro.bootstrap(&[&deb.to_string_lossy()])
         }
     }
 }
@@ -66,9 +57,7 @@ fn download_chezmoi_deb(dir: &Path) -> Result<PathBuf> {
         format!("https://github.com/twpayne/chezmoi/releases/download/v{CHEZMOI_VERSION}/{name}");
     let deb = dir.join(&name);
     let path = deb.to_string_lossy();
-    net::retry("Downloading chezmoi", &Needs::url(&url)?, || {
-        cmd::root("curl", &["-fsSL", "-o", &path, &url])
-    })?;
+    cmd::root("curl", &["-fsSL", "-o", &path, &url])?;
     let actual = cmd::stdout(As::Root, "sha256sum", &[&*path])?;
     if actual.split_whitespace().next() != Some(*wanted) {
         bail!("{name} isn't the chezmoi {CHEZMOI_VERSION} install knows");

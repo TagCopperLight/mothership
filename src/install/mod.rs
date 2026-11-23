@@ -9,7 +9,7 @@ mod trust;
 
 use crate::{
     fleet::{self, Fleet, Machine, Repo},
-    package::{self, Distro, aur},
+    package::{self, Distro},
     services,
     sync::apply::{self, ServiceManager},
     sync::revert,
@@ -24,7 +24,6 @@ use crate::{
 };
 use answers::Flags;
 use anyhow::{Context, Result, anyhow, bail};
-use net::Needs;
 use ssh_key::PrivateKey;
 use std::{env, ffi::OsStr, fs, os::unix::fs::MetadataExt, path::Path};
 
@@ -68,30 +67,21 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     take_carried_key(&fleet::admin()?)?;
 
     let first_start = !chroot && boot::first_start();
-    let answering = first_start.then(boot::answering);
     if first_start {
-        net::give_up_waiting_after(boot::NETWORK_WITHIN);
         boot::secure()?;
     }
     trust::keys(prompt, &host::name()?)?;
-    drop(answering);
     let fleet = Fleet::load()?;
     match (distro, fleet.system.aur_helper) {
         (Distro::Arch, Some(helper)) if !helper.installed(fleet.admin()) => {
-            net::retry("Building the AUR helper", &Needs::url(aur::URL)?, || {
-                helper.build(fleet.admin())
-            })?;
+            helper.build(fleet.admin())?;
         }
         _ => {}
     }
-    net::retry("Checking the probe's pins", &Needs::mirror(distro)?, || {
-        services::ask_republished(&fleet, &mut |question| prompt.confirm(question))
-    })?;
-    net::retry("Applying the fleet", &Needs::mirror(distro)?, || {
-        apply::unasked(match chroot {
-            true => ServiceManager::Missing,
-            false => ServiceManager::Running,
-        })
+    services::ask_republished(&fleet, &mut |question| prompt.confirm(question))?;
+    apply::unasked(match chroot {
+        true => ServiceManager::Missing,
+        false => ServiceManager::Running,
     })?;
     fleet::require_admin_sudo()?;
     if distro == Distro::Debian {

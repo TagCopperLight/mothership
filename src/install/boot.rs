@@ -6,14 +6,7 @@ use crate::{
     util::file,
 };
 use anyhow::{Context, Result, bail};
-use std::{
-    fs,
-    path::Path,
-    process,
-    sync::mpsc::{self, RecvTimeoutError},
-    thread,
-    time::Duration,
-};
+use std::{fs, path::Path};
 
 const EFI_GLOBAL: &str = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
 const UKIS: &str = "/boot/EFI/Linux";
@@ -26,9 +19,10 @@ const PACKAGES: [&str; 3] = ["linux", "sbctl", "tpm2-tss"];
 const HOOKS: [&str; 2] = ["systemd", "sd-encrypt"];
 const KEYMAP_HOOK: &str = "sd-vconsole";
 const PCRS: &str = "7+15:sha256=0000000000000000000000000000000000000000000000000000000000000000";
-const ANSWER_WITHIN: Duration = Duration::from_secs(30 * 60);
 const PCR_15: &str = "/sys/class/tpm/tpm0/pcr-sha256/15";
-pub const NETWORK_WITHIN: Duration = Duration::from_secs(5 * 60);
+
+const STOPPED: &str =
+    "Install stopped: fix the error above, then run sudo mothership install again, or restart.";
 
 fn unit() -> String {
     format!(
@@ -42,6 +36,7 @@ fn unit() -> String {
          Type=oneshot\n\
          TimeoutStartSec=infinity\n\
          ExecStart={BINARY} install\n\
+         ExecStopPost=/bin/sh -c '[ \"$$SERVICE_RESULT\" = success ] || echo \"{STOPPED}\"'\n\
          StandardInput=tty\n\
          StandardOutput=tty\n\
          TTYPath=/dev/console\n\
@@ -213,24 +208,6 @@ fn ukis() -> Result<Vec<String>> {
 
 pub fn first_start() -> bool {
     Path::new(SERVICE_DIR).join(SERVICE).exists()
-}
-
-pub struct Answering {
-    _done: mpsc::Sender<()>,
-}
-
-pub fn answering() -> Answering {
-    let (done, finished) = mpsc::channel::<()>();
-    thread::spawn(move || {
-        if finished.recv_timeout(ANSWER_WITHIN) == Err(RecvTimeoutError::Timeout) {
-            eprintln!(
-                "Nobody answered for {} minutes: install stops, and asks again at the next start.",
-                ANSWER_WITHIN.as_secs() / 60
-            );
-            process::exit(1);
-        }
-    });
-    Answering { _done: done }
 }
 
 pub fn secure() -> Result<()> {

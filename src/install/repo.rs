@@ -1,6 +1,6 @@
 use super::{
     bootstrap,
-    net::{self, Needs, Remote, Scheme},
+    net::{self, Remote, Scheme},
 };
 use crate::{
     package::Distro,
@@ -36,11 +36,7 @@ fn known_hosts_lines(known: &str, lines: &[String]) -> String {
 }
 
 fn know_github() -> Result<()> {
-    let text = net::retry(
-        "Reading GitHub's host keys",
-        &Needs::url(github::META)?,
-        || cmd::bytes(As::Root, "curl", &["-fsSL", github::META]),
-    )?;
+    let text = cmd::bytes(As::Root, "curl", &["-fsSL", github::META])?;
     let path = Path::new(KNOWN_HOSTS);
     let known = file::read_if_any(path)?.unwrap_or_default();
     let added = known_hosts_lines(&known, &github::known_hosts(&text)?);
@@ -77,7 +73,6 @@ pub fn clone(
     prompt: &mut Prompt,
 ) -> Result<()> {
     let remote = check_url(url)?;
-    let needs = Needs::url(url)?;
     if let Some(remote) = remote {
         bootstrap::ssh(distro)?;
         if remote.host == github::HOST {
@@ -86,7 +81,7 @@ pub fn clone(
         if ssh::user_key(owner)?.is_none() {
             ssh::create_key(owner)?;
         }
-        while !net::retry("Reaching the fleet", &needs, || lets_in(url, owner))? {
+        while !lets_in(url, owner)? {
             let public = ssh::user_key(owner)?.context("install made the key")?;
             println!("{} doesn't let this machine's key in yet.", remote.host);
             if remote.host == github::HOST {
@@ -102,16 +97,14 @@ pub fn clone(
         }
     }
     let path = dir.to_string_lossy();
-    net::retry("Cloning the fleet", &needs, || {
-        for entry in fs::read_dir(dir)? {
-            let path = entry?.path();
-            match path.is_dir() {
-                true => fs::remove_dir_all(path)?,
-                false => fs::remove_file(path)?,
-            }
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        match path.is_dir() {
+            true => fs::remove_dir_all(path)?,
+            false => fs::remove_file(path)?,
         }
-        cmd::run(As::User(owner), "git", &["clone", "--", url, &path])
-    })
+    }
+    cmd::run(As::User(owner), "git", &["clone", "--", url, &path])
 }
 
 #[cfg(test)]

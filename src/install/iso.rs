@@ -1,9 +1,7 @@
 use super::{
     CARRIED_KEY, FROM_ISO,
     answers::{self, ADMIN, Flags, Saved},
-    boot, disk,
-    net::{self, Needs},
-    repo,
+    boot, disk, net, repo,
 };
 use crate::trust::update::BINARY;
 use crate::{
@@ -39,11 +37,8 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     } else {
         boot::check_firmware()?;
     }
-    let mirror = Needs::mirror(Distro::Arch)?;
     if !cmd::found(As::Root, "git") {
-        net::retry("Installing git", &mirror, || {
-            cmd::root("pacman", &["-Sy", "--needed", "--noconfirm", "git"])
-        })?;
+        cmd::root("pacman", &["-Sy", "--needed", "--noconfirm", "git"])?;
     }
     let url = answers::fleet_url(flags, prompt)?;
     let hostname = answers::hostname(flags, prompt)?;
@@ -84,9 +79,7 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
         packages.push(Distro::Arch.ssh_package());
     }
     let args = [&["-K", disk::ROOT], &packages[..]].concat();
-    net::retry("Installing the base system", &mirror, || {
-        cmd::root("pacstrap", &args)
-    })?;
+    cmd::root("pacstrap", &args)?;
     let root = Path::new(disk::ROOT);
     file::write(
         &root.join("etc/hostname"),
