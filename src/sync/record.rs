@@ -66,6 +66,7 @@ impl Record {
             User::Leave(group) => mine.groups.contains(group),
             User::Shell(shell) => mine.shell.as_ref() != Some(shell),
             User::ApplyFile { edited, .. } => !edited,
+            User::ResetDconf(_) => false,
         })
     }
 

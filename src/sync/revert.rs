@@ -52,6 +52,7 @@ pub enum User {
     RunInstaller(String),
     InitChezmoi,
     ApplyFile { path: PathBuf, edited: bool },
+    ResetDconf(String),
 }
 
 impl From<Machine> for Revert {
@@ -93,6 +94,7 @@ impl Revert {
             Revert::Machine(Machine::CreateUser { .. }) => "create it".into(),
             Revert::Machine(Machine::Container(action)) => action.describe().into(),
             Revert::User(User::InitChezmoi) => "write its config".into(),
+            Revert::User(User::ResetDconf(_)) => "reset it to its defaults".into(),
             Revert::User(User::Linger(true)) => "turn it on".into(),
             Revert::User(User::Linger(false)) => "turn it off".into(),
             Revert::User(User::Shell(shell)) => format!("make {shell} the login shell"),
@@ -118,7 +120,7 @@ impl Revert {
 
 impl User {
     pub fn needs_service_manager(&self) -> bool {
-        matches!(self, User::Linger(_) | User::Unit(_))
+        matches!(self, User::Linger(_) | User::Unit(_) | User::ResetDconf(_))
     }
 }
 
@@ -221,7 +223,7 @@ fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
     let name = &user.name;
     let (mut account, mut linger, mut installers, mut tools) =
         (Vec::new(), None, Vec::new(), Vec::new());
-    let (mut files, mut units, mut init) = (Vec::new(), Vec::new(), false);
+    let (mut files, mut units, mut dconf, mut init) = (Vec::new(), Vec::new(), Vec::new(), false);
     for change in changes.iter().copied() {
         match change {
             User::InitChezmoi => init = true,
@@ -235,6 +237,7 @@ fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
                 tools.push(change)
             }
             User::ApplyFile { path, .. } => files.push(path.as_os_str()),
+            User::ResetDconf(section) => dconf.push(format!("{section}/")),
         }
     }
     if init {
@@ -272,11 +275,16 @@ fn run_member(fleet: &Fleet, member: &Member, changes: &[&User]) -> Result<()> {
         let args = [&[OsStr::new("apply"), OsStr::new("--force")], &files[..]].concat();
         cmd::run(As::User(user), "chezmoi", &args)?;
     }
-    if !units.is_empty() {
+    if !units.is_empty() || !dconf.is_empty() {
         cmd::root(
             "systemctl",
             &["start", &format!("user@{}.service", user.uid)],
         )?;
+    }
+    for section in dconf {
+        cmd::run(As::User(user), "dconf", &["reset", "-f", &section])?;
+    }
+    if !units.is_empty() {
         let machine = format!("{name}@");
         let scope = ["--user", "--machine", &machine];
         cmd::root("systemctl", &[&scope[..], &["daemon-reload"]].concat())?;

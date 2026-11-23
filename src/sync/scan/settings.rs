@@ -1,5 +1,6 @@
 use crate::sync::item::{Change, Item};
 use crate::sync::kind::Kind;
+use crate::sync::revert;
 use crate::{
     fleet::Member,
     fleet::edit::Add,
@@ -45,6 +46,8 @@ fn dconf(user: &User) -> Result<Vec<Item>> {
             let keys = style::count(keys, "key");
             Item::new(Kind::Dconf, Change::Added, &section, "set")
                 .noting(keys)
+                .because("the fleet holds no dconf settings")
+                .reverting(revert::User::ResetDconf(section.clone()))
                 .showing(Preview::Dconf {
                     section,
                     user: user.clone(),
