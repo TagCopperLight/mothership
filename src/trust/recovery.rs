@@ -29,7 +29,10 @@ pub fn run(dir: &Path, prompt: &mut Prompt) -> Result<()> {
     let path = dir.join(MANIFEST);
     name(&path, &key)?;
     user::by_uid(fs::metadata(dir)?.uid())?.own(&path)?;
-    println!("The fleet's {MANIFEST} names it now. Commit and push the fleet.");
+    println!(
+        "The fleet's {MANIFEST} names it now. Commit and push the fleet: machines accept this \
+         first commit unsigned, and check every commit after it."
+    );
     Ok(())
 }
 
