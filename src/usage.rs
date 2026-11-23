@@ -2,7 +2,7 @@ use crate::util::file;
 use anyhow::Result;
 use std::path::Path;
 
-const COMMANDS: [(&str, &str, &str); 10] = [
+const COMMANDS: [(&str, &str, &str); 9] = [
     ("scan", "", "show what differs from the fleet"),
     ("review", "", "go through this machine's changes"),
     ("apply", "", "bring in the fleet's changes"),
@@ -11,7 +11,6 @@ const COMMANDS: [(&str, &str, &str); 10] = [
         " <message>",
         "sign and push your edits in the fleet's folder",
     ),
-    ("key", "", "create and print this machine's keys"),
     ("recovery", "", "name or replace the fleet's recovery key"),
     (
         "trust",

@@ -6,6 +6,7 @@
 import hashlib
 import http.server
 import json
+import re
 import shutil
 import socket
 import ssl
@@ -535,10 +536,9 @@ sudo ip link set {STAND_IN} up
     expect(vm.run("sudo mothership scan"), "not applied", "images.app 1.0.2 failed (app-app-1 reports unhealthy)")
     expect(apply(), "these services need attention", code=1)
 
-    keys = vm.run("sudo mothership key").stdout
-    trust = next(line.strip() for line in keys.splitlines() if "mothership trust" in line)
-    probe_ssh = next(line.split(None, 1)[1] for line in keys.splitlines()
-                     if line.startswith("probe-ssh"))
+    scan = vm.run("sudo mothership scan").stdout
+    trust = re.search(r"`(sudo mothership trust [^`]*)`", scan).group(1)
+    probe_ssh = re.search(r"'probe-ssh=([^']*)'", trust).group(1)
     expect(vm.run(trust, input="y\n"), "minipc/probe changes the versions of the fleet's images now")
     vm.run(f"echo '{probe_ssh}' >> ~/.ssh/authorized_keys")
     expect(apply(), "these services need attention", code=1)

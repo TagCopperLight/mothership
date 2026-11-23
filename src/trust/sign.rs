@@ -17,7 +17,7 @@ pub fn machine_key() -> Result<Option<PrivateKey>> {
 }
 
 pub fn require_machine_key() -> Result<PrivateKey> {
-    machine_key()?.with_context(|| format!("{KEY} is missing: run `mothership key`"))
+    machine_key()?.with_context(|| format!("{KEY} is missing: run `sudo mothership apply`"))
 }
 
 pub fn create_machine_key() -> Result<()> {

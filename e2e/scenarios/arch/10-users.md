@@ -139,15 +139,8 @@ $ tail -1 ~/.gitconfig
 user of another type, whose secrets I list from the fleet's rules for that type.
 
 ```console
-$ sudo mothership key | sed 's/age1[a-z0-9]*/<key>/g'
-root     <key>
-dev      <key>
-dev      ssh-ed25519 [A-Za-z0-9+/]+ (re)
-me       <key>
-me       ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPznprSpdY8b3HM0Sy/iwuhzpCwaaMA8rvhDULqPQV9P
-signing  ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBiaU3yvKl1XfZP1NPwoqvUpk/NKEmD0N2A069AmOCrB
-Run this on a machine that signs for the fleet:
-  sudo mothership trust machine workstation root=<key> dev=<key> me=<key>
+$ sudo stat -c '%a %U' /home/dev/.config/mothership/key.txt
+600 dev
 $ cd /var/lib/mothership/fleet && mkdir -p types/server/etc types/server/users/dev &&
 > touch types/server/system.toml types/server/users/dev/user.toml types/server/users/dev/recipients.txt &&
 > echo y | sudo mothership commit "Add a server type" >/dev/null

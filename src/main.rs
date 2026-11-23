@@ -27,7 +27,6 @@ enum Command {
     Scan,
     Review,
     Apply,
-    Key,
     Recovery,
     Commit,
     Trust,
@@ -42,7 +41,6 @@ impl Command {
             "scan" => Command::Scan,
             "review" => Command::Review,
             "apply" => Command::Apply,
-            "key" => Command::Key,
             "recovery" => Command::Recovery,
             "commit" => Command::Commit,
             "trust" => Command::Trust,
@@ -142,7 +140,6 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         (Command::Review, []) => sync::review::run(),
         (Command::Apply, []) => sync::apply::run(),
         (Command::Install, flags) => install::run(flags),
-        (Command::Key, []) => trust::key(&Fleet::load()?),
         (Command::Recovery, []) => {
             trust::recovery::run(std::path::Path::new(fleet::DIR), &mut Prompt::new())
         }

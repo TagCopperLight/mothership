@@ -16,7 +16,6 @@ use crate::{
         make_key, public, read, root_key, user_key,
     },
     services,
-    system::host,
     system::user::User,
     util::file,
     util::prompt::Prompt,
@@ -155,18 +154,6 @@ pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
         }
     }
     Ok(keys)
-}
-
-pub fn key(fleet: &Fleet) -> Result<()> {
-    create_keys(fleet)?;
-    for key in &machine_keys(fleet)? {
-        println!("{:7}  {}", key.name, key.public);
-    }
-    if let Some(command) = trust_command(fleet, &host::name()?)? {
-        println!("Run this on a machine that signs for the fleet:");
-        println!("  {command}");
-    }
-    Ok(())
 }
 
 pub fn pending(fleet: &Fleet) -> Result<Vec<String>> {

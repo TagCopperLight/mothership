@@ -19,7 +19,6 @@ All of them run with `sudo`.
 | `scan` | Lists what differs: what changed on the machine, and what's coming from the fleet. |
 | `review` | Goes through the machine's changes one by one: **add** it to the fleet, **revert** it, **ignore** it, or decide **later**. Nothing changes until its last question: it then commits and pushes the answers, signed, and reverts. |
 | `commit <message>` | Signs and pushes your own edits in the fleet's folder. |
-| `key` | Creates the machine's keys and prints them. |
 | `recovery` | Gives a new fleet its recovery key, which opens every secret, or replaces it and encrypts every secret again. |
 | `trust <host> <type> <name>=<key>...` | Lets a new machine's keys open their lists' secrets and sign for the fleet, and prints the code to type on it. |
 | `retire <host>` | Removes a machine's keys, and prints the secrets you should change. |

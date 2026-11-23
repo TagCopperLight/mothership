@@ -5,13 +5,12 @@ laptop's keys move aside: this machine becomes a new one, with keys of its own.
 
 ```console
 $ echo y | sudo mothership apply &>/dev/null
-$ sudo mothership key > /dev/null &&
-> yes | sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" \
+$ yes | sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" \
 > me="$(grep -o 'age1.*' ~/.config/mothership/key.txt)" > /dev/null
 $ echo "psk=WIFI-SECRET" | sudo install -m 600 /dev/stdin /etc/wifi.conf &&
 > printf 'a\ny\ny\n' | sudo mothership review > /dev/null
 $ sudo mv /etc/mothership/key.txt /root/laptop.txt && mv ~/.config/mothership/key.txt ~/laptop.txt &&
-> sudo mothership key > /dev/null &&
+> (echo y | sudo mothership apply &>/dev/null) &&
 > sudo mv /etc/mothership/key.txt /root/new.txt && mv ~/.config/mothership/key.txt ~/new.txt
 ```
 
@@ -76,7 +75,7 @@ $ sudo test -e /etc/sudoers.d/zz-mothership-install
 Only the recovery key the fleet names works. Here, root's new key stands in for another one.
 
 ```console
-$ sudo rm /etc/mothership/key.txt && sudo mothership key > /dev/null
+$ sudo rm /etc/mothership/key.txt && echo y | sudo mothership apply &>/dev/null
 $ printf 'r\n%s\n' "$(sudo grep AGE-SECRET /etc/mothership/key.txt)" | sudo mothership install 2>&1 | tail -1
 Error: that isn't the recovery key the fleet's mothership.toml names
 ```

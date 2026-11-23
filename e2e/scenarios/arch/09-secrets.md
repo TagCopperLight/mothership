@@ -1,18 +1,11 @@
 # Secrets go into the fleet encrypted
 
-The machine follows its fleet. `key` makes root's key and mine. Root's opens the secrets of
+The machine follows its fleet, and apply made root's key and mine. Root's opens the secrets of
 `/etc`, mine those of my home, and each goes into its own list. This machine already signs for
 the fleet, so it trusts its own keys, and commits the lists.
 
 ```console
 $ echo y | sudo mothership apply &>/dev/null
-$ sudo mothership key | sed 's/age1[a-z0-9]*/<key>/g'
-root     <key>
-me       <key>
-me       ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPznprSpdY8b3HM0Sy/iwuhzpCwaaMA8rvhDULqPQV9P
-signing  ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBiaU3yvKl1XfZP1NPwoqvUpk/NKEmD0N2A069AmOCrB
-Run this on a machine that signs for the fleet:
-  sudo mothership trust machine workstation root=<key> me=<key>
 $ sudo stat -c '%a %U' /etc/mothership/key.txt ~/.config/mothership/key.txt
 600 root
 600 me
@@ -225,7 +218,7 @@ the secrets open, and apply leaves them alone.
 
 ```console
 $ sudo mv /etc/mothership/key.txt /root/laptop.txt && mv ~/.config/mothership/key.txt ~/laptop.txt
-$ sudo mothership key >/dev/null
+$ echo y | sudo mothership apply &>/dev/null
 $ sudo mothership scan
 Needs attention · 5
   Files

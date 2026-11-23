@@ -47,7 +47,7 @@ While review waits for my answer, dev swaps the folder of a new file for a link 
 `/etc/mothership`. The add reads with dev's rights, so root's key stays out of the fleet.
 
 ```console
-$ sudo mothership key >/dev/null && sudo test -s /etc/mothership/key.txt
+$ echo y | sudo mothership apply &>/dev/null; sudo test -s /etc/mothership/key.txt
 $ sudo -u dev bash -c 'echo harmless > ~/.config/devapp/key.txt'
 $ sudo -u dev bash -c '(sleep 3; mv ~/.config/devapp ~/old; ln -s /etc/mothership ~/.config/devapp) >/dev/null 2>&1 &'
 $ (sleep 6; printf 'a\n') | sudo mothership review

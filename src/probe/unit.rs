@@ -94,7 +94,7 @@ pub fn items(fleet: &Fleet) -> Result<Vec<Item>> {
             items.push(
                 Item::new(Kind::Container, Change::Unreadable, "probe", "no keys")
                     .noting(format!("{DIR} lacks {}", missing.join(" and ")))
-                    .because("`sudo mothership key` creates them"),
+                    .because("`sudo mothership apply` creates them"),
             );
         } else {
             let logins_current = !fleet.etc_open()
