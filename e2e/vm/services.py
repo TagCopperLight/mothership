@@ -491,9 +491,8 @@ sudo ip link set {STAND_IN} up
     commit("Update app", pin("1.0.1"))
     expect(apply(), "Updated app")
     assert data("app", "version") == "1.0.1"
-    assert vm.run("sudo cat /var/lib/services/snapshots/app/precious").stdout == "kept"
-    snapshot = vm.run("sudo ls /var/lib/services/snapshots/app").stdout.split()
-    assert snapshot == ["precious"], f"the snapshot covers only what the service names: {snapshot}"
+    gone = vm.run("sudo test -e /var/lib/services/snapshots/app", check=False).returncode
+    assert gone != 0, "apply deletes the snapshot once the update ends"
 
     extra = "types/server/services/extra"
     commit("Publish from compose", f"echo '    ports: [\"8080:80\"]' >> {extra}/compose.yaml")
@@ -718,7 +717,7 @@ def data_of(vm: VM, service: str, name: str) -> str:
     return vm.run(f"sudo cat /srv/{service}/{name}").stdout
 
 
-WORKFLOW = HERE.parent.parent / "src/container/recipes.yml"
+WORKFLOW = HERE.parent.parent / "src/services/recipes.yml"
 
 
 def recipes(vm: VM, image: str, commit, apply) -> None:
