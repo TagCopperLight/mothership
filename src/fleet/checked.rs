@@ -1,11 +1,13 @@
 use super::{
     DIR, MANIFEST, Manifest,
     homes::{self, Reader},
+    machines::{MACHINES, Machines},
 };
 use crate::{
+    secrets,
     services::{self, confirm::Unconfirmed},
     system::user::User,
-    trust::sign::{self, Commit, Reach, SIGNERS, Signer},
+    trust::sign::{self, Commit, Reach, Signer},
     util::cmd::{self, As},
     util::file,
     util::prompt::Prompt,
@@ -24,6 +26,7 @@ use std::{
 pub const GIT_DIR: &str = "/var/lib/mothership/fleet.git";
 pub const CURRENT: &str = "/var/lib/mothership/current";
 const EXPORTS: &str = "/var/lib/mothership/checked";
+const LISTS: &str = "/var/lib/mothership/recipients";
 const CHECKED: &str = "refs/mothership/checked";
 const MAIN: &str = "refs/incoming/heads/main";
 const ORIGIN: &str = "refs/incoming/origin/main";
@@ -103,12 +106,18 @@ impl Git {
         self.out(&["cat-file", "blob", &name]).map(Some)
     }
 
-    fn signers(&self, commit: &str) -> Result<Vec<Signer>> {
-        match self.blob(commit, SIGNERS)? {
-            Some(text) => sign::parse_signers(&text)
-                .with_context(|| format!("reading {SIGNERS} in {}", short(commit))),
-            None => Ok(Vec::new()),
+    fn machines(&self, commit: &str) -> Result<Machines> {
+        let listed = self.out(&["ls-tree", "--name-only", commit, &format!("{MACHINES}/")])?;
+        let mut files = Vec::new();
+        for rel in listed.lines() {
+            let text = self.out(&["cat-file", "blob", &format!("{commit}:{rel}")])?;
+            files.push((PathBuf::from(rel), text));
         }
+        Machines::parse(files).with_context(|| format!("reading {MACHINES}/ in {}", short(commit)))
+    }
+
+    fn signers(&self, commit: &str) -> Result<Vec<Signer>> {
+        self.machines(commit)?.signers()
     }
 
     fn recovery(&self, commit: &str) -> Result<Option<Signer>> {
@@ -236,10 +245,10 @@ pub fn verify(git: &Git, parent: &str, commit: &str) -> Result<Option<Signer>> {
 }
 
 fn approve(git: &Git, base: &str, commit: &str) -> Result<Option<Signer>> {
-    let after = git.signers(commit)?;
-    sign::distinct(&after, git.recovery(commit)?.as_ref())?;
-    let before = git.signers(base)?;
-    let mut trusted = before.clone();
+    let after = git.machines(commit)?;
+    sign::distinct(&after.signers()?, git.recovery(commit)?.as_ref())?;
+    let before = git.machines(base)?;
+    let mut trusted = before.signers()?;
     trusted.extend(git.recovery(base)?);
     if trusted.is_empty() {
         return Ok(None);
@@ -587,12 +596,47 @@ fn export(git: &Git, commit: &str) -> Result<()> {
     if !done.exists() {
         extract(git, commit, &done)?;
     }
+    write_lists(&done)?;
     file::link(Path::new(CURRENT), &done)?;
     for entry in fs::read_dir(exports)? {
         let path = entry?.path();
         if path != done {
             fs::remove_dir_all(&path).with_context(|| format!("removing {}", path.display()))?;
         }
+    }
+    Ok(())
+}
+
+pub fn list_path(type_name: &str, user: &str) -> PathBuf {
+    Path::new(LISTS).join(type_name).join(format!("{user}.txt"))
+}
+
+fn write_lists(tree: &Path) -> Result<()> {
+    let machines = Machines::load(tree)?;
+    let recovery = Manifest::read(tree)?.recovery();
+    let partial = Path::new(LISTS).with_file_name(".recipients");
+    if partial.exists() {
+        fs::remove_dir_all(&partial)?;
+    }
+    for reader in homes::readers(tree)? {
+        let Reader::Home(home) = &reader else {
+            continue;
+        };
+        let keys: Vec<String> = machines
+            .sealed(std::slice::from_ref(&reader), recovery.as_ref())
+            .into_iter()
+            .map(|recipient| recipient.key)
+            .collect();
+        let path = partial
+            .join(&home.type_name)
+            .join(format!("{}.txt", home.user));
+        file::write(&path, secrets::list_text(&keys).as_bytes(), 0o644)?;
+    }
+    if Path::new(LISTS).exists() {
+        fs::remove_dir_all(LISTS)?;
+    }
+    if partial.exists() {
+        fs::rename(&partial, LISTS)?;
     }
     Ok(())
 }
@@ -807,8 +851,8 @@ impl Stage {
             None => Some("this machine signs nothing for the fleet".to_owned()),
             Some(signer) => {
                 let git = Git::at(GIT_DIR);
-                let before = git.signers(&self.accepted)?;
-                sign::allowed(signer, &changed, &before, &git.signers(&tree)?)
+                let before = git.machines(&self.accepted)?;
+                sign::allowed(signer, &changed, &before, &git.machines(&tree)?)
                     .err()
                     .map(|e| format!("{e:#}"))
             }

@@ -1,6 +1,9 @@
 use super::doc::{self, edit_toml, find_array};
 use crate::{
-    fleet::{Fleet, Mode, homes},
+    fleet::{
+        Fleet, Mode,
+        homes::{self, Reader},
+    },
     secrets::{self, Storage},
     sync::preview::Seen,
     util::file,
@@ -55,12 +58,9 @@ pub fn copy(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage, seen: &See
     } else {
         if storage == Storage::Encrypted {
             if !fleet.etc_open() {
-                bail!(
-                    "root's key isn't in {}: `mothership trust` it first",
-                    fleet.recipients().display()
-                );
+                bail!("the fleet doesn't list root's key: `mothership trust` it first");
             }
-            let list = fleet.sealed_for(secrets::read(&fleet.recipients())?);
+            let list = fleet.sealed(&[Reader::Root(fleet.type_name.clone())]);
             bytes = secrets::encrypt_for(&list, &bytes)?;
         }
         let mode = meta.permissions().mode() & 0o7777;

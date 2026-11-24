@@ -26,14 +26,17 @@ mod config;
 pub mod edit;
 pub mod homes;
 mod logins;
+pub mod machines;
 mod manifest;
 
 pub use manifest::{MANIFEST, Manifest, Pin};
 
 use config::Block;
 pub use config::{
-    GitTool, Installer, MACHINE, Machine, Manager, Mode, System, Tool, Tools, UserConfig,
+    GitTool, Here, Installer, MACHINE, Machine, Manager, Mode, System, Tool, Tools, UserConfig,
 };
+use homes::Reader;
+use machines::Machines;
 
 pub const DIR: &str = "/var/lib/mothership/fleet";
 
@@ -57,10 +60,13 @@ pub struct Repo {
     pub recovery: Recipient,
     pub services: Vec<services::Service>,
     pub probe_host: Option<String>,
+    pub machines: Machines,
 }
 
 pub struct Fleet {
     pub repo: Repo,
+    pub name: String,
+    pub machine: Machine,
     pub members: Vec<Member>,
     admin: User,
     keys: Keys,
@@ -117,7 +123,7 @@ impl Deref for Member {
     }
 }
 
-const TYPES: &str = "types";
+pub const TYPES: &str = "types";
 pub const SYSTEM_TOML: &str = "system.toml";
 pub const USER_TOML: &str = "user.toml";
 pub const ETC_DIR: &str = "etc";
@@ -155,15 +161,15 @@ impl Fleet {
     }
 
     pub fn load_at(dir: &Path) -> Result<Self> {
-        let machine = Machine::load()?;
-        let dir = dir.to_path_buf();
+        let here = Here::load()?;
+        let machine = here.machine(&Machines::load(dir)?)?;
         let admin = admin()?;
-        let repo = Repo::for_machine(dir, &machine)?;
+        let repo = Repo::for_machine(dir.to_path_buf(), &machine)?;
         let mut keys = Keys::default();
         let mut root_keys = Keys::default();
         let etc_open = match secrets::root_key()? {
             Some(key) => {
-                let open = secrets::holds(&repo.recipients(), &secrets::public(&key))?;
+                let open = repo.opens(&Reader::Root(repo.type_name.clone()), &key);
                 root_keys.push(key.clone());
                 keys.push(key);
                 open
@@ -177,7 +183,7 @@ impl Fleet {
             };
             let open = match secrets::user_key(&user) {
                 Ok(Some(key)) => {
-                    let open = secrets::holds(&profile.recipients(), &secrets::public(&key))?;
+                    let open = repo.opens(&repo.reader(profile), &key);
                     keys.push(key);
                     open
                 }
@@ -201,6 +207,8 @@ impl Fleet {
         }
         Ok(Fleet {
             repo,
+            name: here.name,
+            machine,
             admin,
             keys,
             root_keys,
@@ -300,7 +308,7 @@ impl Repo {
             .find_map(|(name, b)| b.detect.as_ref().map(|_| name))
         {
             bail!(
-                "[options.{name}] of {} can't detect anything: a machine's {MACHINE} turns it on",
+                "[options.{name}] of {} can't detect anything: a machine's file turns it on",
                 system_path.display()
             );
         }
@@ -323,7 +331,7 @@ impl Repo {
         for option in options {
             let block = system.options.remove(option).with_context(|| {
                 format!(
-                    "{MACHINE} turns on {option}, and {} has no [options.{option}]",
+                    "the machine turns on {option}, and {} has no [options.{option}]",
                     system_path.display()
                 )
             })?;
@@ -378,7 +386,9 @@ impl Repo {
             system.services.extend(block.services);
         }
         let ignore = Ignore::load(&type_dir.join(IGNORE), Level::Machine)?;
-        let profiles = profiles(&dir, &type_dir.join(USERS))?;
+        let machines = Machines::load(&dir)?;
+        machines.check(&dir)?;
+        let profiles = profiles(&dir, &machines, &type_dir.join(USERS))?;
         let services = services::load(&type_dir)?;
         Ok(Repo {
             dir,
@@ -394,14 +404,27 @@ impl Repo {
             recovery,
             services,
             probe_host,
+            machines,
         })
     }
 
-    pub fn sealed_for(&self, mut list: Vec<Recipient>) -> Vec<Recipient> {
-        if !list.iter().any(|r| r.key == self.recovery.key) {
-            list.push(self.recovery.clone());
-        }
-        list
+    pub fn reader(&self, profile: &Profile) -> Reader {
+        Reader::Home(homes::Home {
+            type_name: self.type_name.clone(),
+            user: profile.name.clone(),
+        })
+    }
+
+    fn opens(&self, reader: &Reader, key: &age::x25519::Identity) -> bool {
+        let public = secrets::public(key);
+        self.machines
+            .recipients(reader)
+            .iter()
+            .any(|r| r.key == public)
+    }
+
+    pub fn sealed(&self, readers: &[Reader]) -> Vec<Recipient> {
+        self.machines.sealed(readers, Some(&self.recovery))
     }
 
     pub fn options(&self) -> Vec<String> {
@@ -414,10 +437,6 @@ impl Repo {
 
     pub fn system_path(&self) -> PathBuf {
         self.type_dir.join(SYSTEM_TOML)
-    }
-
-    pub fn recipients(&self) -> PathBuf {
-        self.type_dir.join(secrets::RECIPIENTS)
     }
 
     pub fn etc_dir(&self) -> PathBuf {
@@ -518,16 +537,12 @@ impl Profile {
         self.dir.join(IGNORE)
     }
 
-    pub fn recipients(&self) -> PathBuf {
-        self.dir.join(secrets::RECIPIENTS)
-    }
-
     pub fn home(&self) -> PathBuf {
         self.dir.join(homes::HOME)
     }
 }
 
-fn profiles(fleet_dir: &Path, dir: &Path) -> Result<Vec<Profile>> {
+fn profiles(fleet_dir: &Path, machines: &Machines, dir: &Path) -> Result<Vec<Profile>> {
     let mut profiles = Vec::new();
     for dir in walk::children(dir)? {
         let name = dir
@@ -538,7 +553,7 @@ fn profiles(fleet_dir: &Path, dir: &Path) -> Result<Vec<Profile>> {
         let path = dir.join(USER_TOML);
         let config: UserConfig = read_toml(&path)?;
         profiles.push(Profile {
-            logins: logins::resolve(fleet_dir, &path, &config.ssh_from)?,
+            logins: logins::resolve(fleet_dir, machines, &path, &config.ssh_from)?,
             config,
             ignore: Ignore::load(&dir.join(IGNORE), Level::User)?,
             name,
@@ -550,18 +565,19 @@ fn profiles(fleet_dir: &Path, dir: &Path) -> Result<Vec<Profile>> {
 }
 
 pub fn check_logins(fleet_dir: &Path) -> Result<()> {
+    let machines = Machines::load(fleet_dir)?;
     for type_name in types(fleet_dir)? {
         for dir in walk::children(&type_dir(fleet_dir, &type_name).join(USERS))? {
             let path = dir.join(USER_TOML);
             let config: UserConfig = read_toml(&path)?;
             let shown = path.strip_prefix(fleet_dir).unwrap_or(&path);
-            logins::resolve(fleet_dir, shown, &config.ssh_from)?;
+            logins::resolve(fleet_dir, &machines, shown, &config.ssh_from)?;
         }
     }
     Ok(())
 }
 
-fn read_toml<T: de::DeserializeOwned>(path: &Path) -> Result<T> {
+pub(super) fn read_toml<T: de::DeserializeOwned>(path: &Path) -> Result<T> {
     toml::from_str(
         &fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?,
     )
@@ -580,7 +596,6 @@ impl Member {
     pub fn chezmoi_root(&self, fleet: &Fleet) -> chezmoi::Root {
         let config = chezmoi::ChezmoiConfig {
             source: self.home(),
-            recipients: self.recipients(),
             ..self.chezmoi_config(fleet)
         };
         chezmoi::Root::new(&self.user, config)
@@ -597,7 +612,7 @@ fn chezmoi_config(repo: &Repo, profile: &Profile, user: &User) -> chezmoi::Chezm
     chezmoi::ChezmoiConfig {
         source: published(profile.home()),
         identity: secrets::key_path(user),
-        recipients: published(profile.recipients()),
+        recipients: checked::list_path(&repo.type_name, &profile.name),
         profile: repo.type_name.clone(),
         user: profile.name.clone(),
         logins: profile.logins.clone(),
@@ -618,6 +633,11 @@ impl Fleet {
             })
             .collect();
         Fleet {
+            name: "machine".to_owned(),
+            machine: Machine {
+                device_type: repo.type_name.clone(),
+                options: Vec::new(),
+            },
             repo,
             admin: user.clone(),
             keys: Keys::default(),

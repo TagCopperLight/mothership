@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     fleet::{Repo, SYSTEM_TOML},
-    secrets::{Keys, RECIPIENTS},
+    secrets::Keys,
     services::tests::toml,
     support,
 };
@@ -12,11 +12,14 @@ fn fleet(dir: &std::path::Path, root: &age::x25519::Identity) -> (Fleet, age::x2
     fs::create_dir_all(server.join("etc")).unwrap();
     fs::create_dir_all(&app).unwrap();
     fs::write(server.join(SYSTEM_TOML), "").unwrap();
-    fs::write(
-        server.join(RECIPIENTS),
-        format!("# minipc\n{}\n", root.to_public()),
-    )
-    .unwrap();
+    support::machine(
+        dir,
+        "minipc",
+        &format!(
+            "type = \"server\"\n[keys]\nage = \"{}\"\n",
+            root.to_public()
+        ),
+    );
     fs::write(app.join(SERVICE_TOML), toml("1.0.0")).unwrap();
     fs::write(app.join("compose.yaml"), "services: {app: {}}\n").unwrap();
     let recovery = support::name_recovery(dir);

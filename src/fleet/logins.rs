@@ -1,9 +1,14 @@
-use super::{USERS, type_dir, types};
-use crate::{secrets, trust::ssh, util::walk};
+use super::{USERS, machines::Machines, type_dir, types};
+use crate::util::walk;
 use anyhow::{Result, bail};
 use std::path::Path;
 
-pub fn resolve(fleet_dir: &Path, owner: &Path, ssh_from: &[String]) -> Result<Option<Vec<String>>> {
+pub fn resolve(
+    fleet_dir: &Path,
+    machines: &Machines,
+    owner: &Path,
+    ssh_from: &[String],
+) -> Result<Option<Vec<String>>> {
     if ssh_from.is_empty() {
         return Ok(None);
     }
@@ -31,8 +36,7 @@ pub fn resolve(fleet_dir: &Path, owner: &Path, ssh_from: &[String]) -> Result<Op
         };
         for dir in dirs {
             let user = dir.file_name().unwrap_or_default().to_string_lossy();
-            for host in secrets::read(&dir.join(ssh::KEYS))? {
-                let line = format!("{} {}/{user}", ssh::normalize(&host.key)?, host.name);
+            for line in machines.logins(type_name, &user)? {
                 if !keys.contains(&line) {
                     keys.push(line);
                 }

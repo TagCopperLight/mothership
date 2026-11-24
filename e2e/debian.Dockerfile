@@ -31,7 +31,10 @@ RUN useradd -m -G sudo -s /bin/bash me \
  && install -o me -g me -m 600 /tmp/ssh /home/me/.ssh/id_ed25519 \
  && install -o me -g me -m 644 /tmp/ssh.pub /home/me/.ssh/id_ed25519.pub \
  && install -m 440 /var/lib/mothership/fleet/types/server/etc/sudoers.d/sudo /etc/sudoers.d/sudo \
- && printf 'type = "server"\n' | install -D -m 644 /dev/stdin /etc/mothership/machine.toml \
+ && printf 'name = "machine"\n' | install -D -m 644 /dev/stdin /etc/mothership/machine.toml \
+ && printf 'type = "server"\nsigns = "everything"\n\n[keys]\nsigning = "%s"\n\n[users.me]\nssh = "%s"\n' \
+    "$(cut -d' ' -f1,2 /tmp/signing.pub)" "$(cut -d' ' -f1,2 /tmp/ssh.pub)" \
+    | install -D -m 644 /dev/stdin /var/lib/mothership/fleet/machines/machine.toml \
  && chown -R me:me /var/lib/mothership/fleet \
  && cd /var/lib/mothership/fleet \
  && runuser -u me -- git init -q -b main \

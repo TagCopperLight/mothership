@@ -159,12 +159,20 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        (Command::Trust, [host, type_name, keys @ ..]) if !keys.is_empty() => {
+        (Command::Trust, [host, type_name, rest @ ..]) => {
+            let (options, keys) = trust::options_and_keys(rest)?;
+            if keys.is_empty() {
+                bail!("usage: {}", usage::of(name));
+            }
             system::host::check(host)?;
+            let machine = fleet::Machine {
+                device_type: type_name.clone(),
+                options,
+            };
             let message = format!("Trust {host} as {type_name}");
             let mut uploads = Vec::new();
             let outcome = edit_fleet(&message, |fleet, prompt| {
-                uploads = trust::trust_host(fleet, fleet.keys(), host, type_name, keys, prompt)?;
+                uploads = trust::trust_host(fleet, fleet.keys(), host, &machine, keys, prompt)?;
                 Ok(())
             })?;
             let code = match outcome {
@@ -188,7 +196,8 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             }
         }
         (Command::Secret, [service, name]) => {
-            let machine = fleet::Machine::load()?;
+            let dir = std::path::Path::new(fleet::DIR);
+            let machine = fleet::Here::load()?.machine(&fleet::machines::Machines::load(dir)?)?;
             let wanted = fleet::edit::secret::Wanted::parse(service, name, &machine.device_type)?;
             let message = format!("Set {} of {}", wanted.name, wanted.shown());
             edit_fleet(&message, |fleet, prompt| {

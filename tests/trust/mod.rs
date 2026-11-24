@@ -20,62 +20,59 @@ fn home_secrets_are_found_by_chezmoi_names() {
     assert_eq!(shown(".secrets/notes.txt"), None);
 }
 
+fn keys_of(list: Vec<Recipient>) -> Vec<String> {
+    list.into_iter().map(|r| r.key).collect()
+}
+
 #[test]
 fn a_shared_home_file_is_for_the_list_of_every_home_linking_it() {
     let dir = tempfile::TempDir::new().unwrap();
     let fleet = dir.path();
-    for (type_name, user, text) in [
-        (
-            "workstation",
-            "tag",
-            "# laptop\nage1tag\n\n# recovery\nage1rec\n",
-        ),
-        (
-            "server",
-            "dev",
-            "# minipc\nage1dev\n\n# recovery\nage1rec\n",
-        ),
+    for (machine, type_name, user, key) in [
+        ("laptop", "workstation", "tag", "age1tag"),
+        ("minipc", "server", "dev", "age1dev"),
+        ("other", "laptop", "dev", "age1other"),
     ] {
         let users = fleet.join("types").join(type_name).join("users").join(user);
         fs::create_dir_all(users.join("home")).unwrap();
-        fs::write(users.join(RECIPIENTS), text).unwrap();
-        symlink(
-            "../../../../../shared/dot_token",
-            users.join("home/dot_token"),
-        )
-        .unwrap();
+        let text = format!("type = \"{type_name}\"\n[users.{user}]\nage = \"{key}\"\n");
+        crate::support::machine(fleet, machine, &text);
+        if machine != "other" {
+            symlink(
+                "../../../../../shared/dot_token",
+                users.join("home/dot_token"),
+            )
+            .unwrap();
+        }
     }
-    let elsewhere = fleet.join("types/laptop/users/dev");
-    fs::create_dir_all(elsewhere.join("home")).unwrap();
-    fs::write(elsewhere.join(RECIPIENTS), "# other\nage1other\n").unwrap();
     fs::create_dir_all(fleet.join("shared")).unwrap();
     fs::write(fleet.join("shared/dot_token"), "").unwrap();
-    let keys = |list: Vec<Recipient>| list.into_iter().map(|r| r.key).collect::<Vec<_>>();
     let link = fleet.join("types/server/users/dev/home/dot_token");
+    let readers = homes::owners(fleet, &link).unwrap();
     assert_eq!(
-        keys(reader_recipients(fleet, &link, None).unwrap()),
-        ["age1dev", "age1rec", "age1tag"]
-    );
-    let dev_list = fleet.join("types/server/users/dev").join(RECIPIENTS);
-    let new = [Recipient {
-        name: "minipc".into(),
-        key: "age1new".into(),
-    }];
-    assert_eq!(
-        keys(reader_recipients(fleet, &link, Some((&dev_list, &new))).unwrap()),
-        ["age1new", "age1tag", "age1rec"]
+        keys_of(Machines::load(fleet).unwrap().recipients_of(&readers)),
+        ["age1dev", "age1tag"]
     );
 }
 
-fn names(list: &Path) -> Vec<String> {
-    read(list).unwrap().into_iter().map(|r| r.name).collect()
+fn root_machine(key: &x25519::Identity) -> String {
+    format!(
+        "type = \"workstation\"\n[keys]\nage = \"{}\"\n",
+        public(key)
+    )
 }
 
-fn fleet_with(dir: &Path, list: &str, secrets: &[(&str, &[u8], &Path)]) -> Fleet {
+fn fleet_with(
+    dir: &Path,
+    machines: &[(&str, String)],
+    secrets: &[(&str, &[u8], &[&x25519::Identity])],
+) -> Fleet {
     let type_dir = dir.join("types/workstation");
     fs::create_dir_all(type_dir.join("etc")).unwrap();
     fs::write(type_dir.join(fleet::SYSTEM_TOML), "").unwrap();
-    fs::write(type_dir.join(RECIPIENTS), list).unwrap();
+    for (name, text) in machines {
+        crate::support::machine(dir, name, text);
+    }
     for (name, text, sealed_for) in secrets {
         let sealed = crate::support::seal(sealed_for, text);
         fs::write(type_dir.join("etc").join(name), sealed).unwrap();
@@ -86,53 +83,74 @@ fn fleet_with(dir: &Path, list: &str, secrets: &[(&str, &[u8], &Path)]) -> Fleet
     Fleet::of(repo, &crate::support::current_user())
 }
 
-#[test]
-fn trusting_a_key_opens_every_secret_of_its_list_to_it() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let laptop = make_key(&dir.path().join("laptop.txt")).unwrap();
-    let desktop = make_key(&dir.path().join("desktop.txt")).unwrap();
-    let list = dir.path().join("list.txt");
-    fs::write(&list, format!("# laptop\n{}\n", public(&laptop))).unwrap();
-    let fleet = fleet_with(
-        dir.path(),
-        &fs::read_to_string(&list).unwrap(),
-        &[("wifi.conf.age", b"psk=1", &list)],
-    );
+fn workstation() -> Machine {
+    Machine {
+        device_type: "workstation".into(),
+        options: Vec::new(),
+    }
+}
+
+fn keys(key: &x25519::Identity) -> Keys {
     let mut keys = Keys::default();
-    keys.push(laptop);
-    trust_with(
-        &fleet,
-        &keys,
-        "workstation/root",
-        "desktop",
-        &public(&desktop),
-        &mut Readers::new(&mut Prompt::answering("")),
+    keys.push(key.clone());
+    keys
+}
+
+fn trust(fleet: &Fleet, keys: &Keys, host: &str, entries: &[String]) -> Result<Vec<github::Key>> {
+    trust_host(
+        fleet,
+        keys,
+        host,
+        &workstation(),
+        entries,
+        &mut Prompt::answering("\n"),
     )
-    .unwrap();
-    assert_eq!(names(&fleet.recipients()), ["laptop", "desktop"]);
-    let mut theirs = Keys::default();
-    theirs.push(desktop);
-    let sealed = fleet.etc_dir().join("wifi.conf.age");
-    assert_eq!(theirs.decrypt(&sealed).unwrap(), b"psk=1");
 }
 
 #[test]
-fn retire_drops_a_key_without_opening_the_secrets() {
+fn trusting_a_machine_opens_every_secret_its_keys_read_to_it() {
     let dir = tempfile::TempDir::new().unwrap();
     let laptop = make_key(&dir.path().join("laptop.txt")).unwrap();
     let desktop = make_key(&dir.path().join("desktop.txt")).unwrap();
-    let list = dir.path().join("list.txt");
-    let text = format!(
-        "# laptop\n{}\n\n# desktop\n{}\n",
-        public(&laptop),
-        public(&desktop)
+    let fleet = fleet_with(
+        dir.path(),
+        &[("laptop", root_machine(&laptop))],
+        &[("wifi.conf.age", b"psk=1", &[&laptop])],
     );
-    fs::write(&list, &text).unwrap();
-    let fleet = fleet_with(dir.path(), &text, &[("wifi.conf.age", b"psk=1", &list)]);
+    trust(
+        &fleet,
+        &keys(&laptop),
+        "desktop",
+        &[format!("root={}", public(&desktop))],
+    )
+    .unwrap();
+    let written = Machines::load(dir.path()).unwrap();
+    assert_eq!(
+        written.get("desktop").unwrap().keys.age,
+        Some(public(&desktop))
+    );
+    let sealed = fleet.etc_dir().join("wifi.conf.age");
+    assert_eq!(keys(&desktop).decrypt(&sealed).unwrap(), b"psk=1");
+}
+
+#[test]
+fn retire_drops_a_machine_without_opening_the_secrets() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let laptop = make_key(&dir.path().join("laptop.txt")).unwrap();
+    let desktop = make_key(&dir.path().join("desktop.txt")).unwrap();
+    let fleet = fleet_with(
+        dir.path(),
+        &[
+            ("laptop", root_machine(&laptop)),
+            ("desktop", root_machine(&desktop)),
+        ],
+        &[("wifi.conf.age", b"psk=1", &[&laptop, &desktop])],
+    );
     let sealed = fleet.etc_dir().join("wifi.conf.age");
     let before = fs::read(&sealed).unwrap();
     retire_host(&fleet, "laptop").unwrap();
-    assert_eq!(names(&fleet.recipients()), ["desktop"]);
+    assert!(!machines::path(dir.path(), "laptop").exists());
+    assert!(machines::path(dir.path(), "desktop").exists());
     assert_eq!(fs::read(&sealed).unwrap(), before);
 }
 
@@ -141,54 +159,68 @@ fn a_secret_this_machine_can_not_open_stops_trust_before_any_write() {
     let dir = tempfile::TempDir::new().unwrap();
     let laptop = make_key(&dir.path().join("laptop.txt")).unwrap();
     let stranger = make_key(&dir.path().join("stranger.txt")).unwrap();
-    let (mine, theirs) = (dir.path().join("mine.txt"), dir.path().join("theirs.txt"));
-    fs::write(&mine, format!("# laptop\n{}\n", public(&laptop))).unwrap();
-    fs::write(&theirs, format!("# stranger\n{}\n", public(&stranger))).unwrap();
     let fleet = fleet_with(
         dir.path(),
-        &fs::read_to_string(&mine).unwrap(),
-        &[("a.conf.age", b"a", &mine), ("b.conf.age", b"b", &theirs)],
+        &[("laptop", root_machine(&laptop))],
+        &[
+            ("a.conf.age", b"a", &[&laptop]),
+            ("b.conf.age", b"b", &[&stranger]),
+        ],
     );
     let before = |name: &str| fs::read(fleet.etc_dir().join(name)).unwrap();
-    let (a, list) = (before("a.conf.age"), fs::read(fleet.recipients()).unwrap());
-    let mut keys = Keys::default();
-    keys.push(laptop);
+    let a = before("a.conf.age");
     let other = make_key(&dir.path().join("other.txt")).unwrap();
-    let error = trust_with(
+    let error = trust(
         &fleet,
-        &keys,
-        "workstation/root",
+        &keys(&laptop),
         "desktop",
-        &public(&other),
-        &mut Readers::new(&mut Prompt::answering("")),
+        &[format!("root={}", public(&other))],
     );
     let error = format!("{:#}", error.err().unwrap());
     assert!(error.starts_with("none of this machine's keys opens"));
     assert!(error.ends_with("etc/b.conf.age"));
     assert_eq!(before("a.conf.age"), a);
-    assert_eq!(fs::read(fleet.recipients()).unwrap(), list);
+    assert!(!machines::path(dir.path(), "desktop").exists());
 }
 
 #[test]
-fn a_name_the_list_holds_is_refused_until_it_is_retired() {
+fn a_machine_keeps_its_keys_and_type_until_it_is_retired() {
     let dir = tempfile::TempDir::new().unwrap();
     let laptop = make_key(&dir.path().join("laptop.txt")).unwrap();
     let other = make_key(&dir.path().join("other.txt")).unwrap();
-    let list = format!("# laptop\n{}\n", public(&laptop));
-    let fleet = fleet_with(dir.path(), &list, &[]);
-    let mut keys = Keys::default();
-    keys.push(laptop);
-    let error = trust_with(
+    let fleet = fleet_with(dir.path(), &[("laptop", root_machine(&laptop))], &[]);
+    let file = machines::path(dir.path(), "laptop");
+    let text = fs::read_to_string(&file).unwrap();
+    let error = trust(
         &fleet,
-        &keys,
-        "workstation/root",
+        &keys(&laptop),
         "laptop",
-        &public(&other),
-        &mut Readers::new(&mut Prompt::answering("")),
+        &[format!("root={}", public(&other))],
     );
-    let error = error.err().unwrap().to_string();
-    assert!(error.contains("sudo mothership retire laptop"));
-    assert_eq!(fs::read_to_string(fleet.recipients()).unwrap(), list);
+    assert_eq!(
+        error.err().unwrap().to_string(),
+        "machines/laptop.toml lists another age key of root for laptop: retire it first"
+    );
+    let server = Machine {
+        device_type: "server".into(),
+        options: Vec::new(),
+    };
+    let moved = trust_host(
+        &fleet,
+        &keys(&laptop),
+        "laptop",
+        &server,
+        &[],
+        &mut Prompt::answering(""),
+    );
+    assert!(
+        moved
+            .err()
+            .unwrap()
+            .to_string()
+            .ends_with("change it there")
+    );
+    assert_eq!(fs::read_to_string(&file).unwrap(), text);
 }
 
 struct SharedSecret {
@@ -204,10 +236,17 @@ fn shared_secret() -> SharedSecret {
     let root = dir.path();
     let laptop = make_key(&root.join("laptop.txt")).unwrap();
     let minipc = make_key(&root.join("minipc.txt")).unwrap();
-    for (type_name, user, key) in [("workstation", "tag", &laptop), ("server", "dev", &minipc)] {
+    for (machine, type_name, user, key) in [
+        ("laptop", "workstation", "tag", &laptop),
+        ("minipc", "server", "dev", &minipc),
+    ] {
         let users = root.join("types").join(type_name).join("users").join(user);
         fs::create_dir_all(users.join("home/.secrets")).unwrap();
-        fs::write(users.join(RECIPIENTS), format!("# key\n{}\n", public(key))).unwrap();
+        let text = format!(
+            "type = \"{type_name}\"\n[users.{user}]\nage = \"{}\"\n",
+            public(key)
+        );
+        crate::support::machine(root, machine, &text);
         fs::write(users.join(fleet::USER_TOML), "").unwrap();
         symlink(
             "../../../../../../shared/.secrets/proxy-key.age",
@@ -215,16 +254,9 @@ fn shared_secret() -> SharedSecret {
         )
         .unwrap();
     }
-    let both = root.join("both.txt");
-    let lists = format!(
-        "# laptop\n{}\n# minipc\n{}\n",
-        public(&laptop),
-        public(&minipc)
-    );
-    fs::write(&both, lists).unwrap();
     fs::create_dir_all(root.join("shared/.secrets")).unwrap();
     let file = root.join("shared/.secrets/proxy-key.age");
-    fs::write(&file, crate::support::seal(&both, b"proxy")).unwrap();
+    fs::write(&file, crate::support::seal(&[&laptop, &minipc], b"proxy")).unwrap();
     for type_name in ["workstation", "server"] {
         fs::write(
             root.join("types").join(type_name).join(fleet::SYSTEM_TOML),
@@ -245,29 +277,25 @@ fn shared_secret() -> SharedSecret {
 }
 
 fn opens(key: &x25519::Identity, file: &Path) -> bool {
-    let mut keys = Keys::default();
-    keys.push(key.clone());
-    keys.decrypt(file).is_ok()
+    keys(key).decrypt(file).is_ok()
 }
 
 #[test]
 fn trusting_a_key_for_one_home_keeps_a_shared_secret_open_to_the_other_homes() {
     let shared = shared_secret();
     let desktop = x25519::Identity::generate();
-    let mut keys = Keys::default();
-    keys.push(shared.laptop.clone());
-    trust_with(
-        &shared.fleet,
-        &keys,
-        "workstation/tag",
-        "desktop",
-        &public(&desktop),
-        &mut Readers::new(&mut Prompt::answering("")),
-    )
-    .unwrap();
+    let entries = [format!("tag={}", public(&desktop))];
+    trust(&shared.fleet, &keys(&shared.laptop), "desktop", &entries).unwrap();
     assert!(opens(&desktop, &shared.file));
     assert!(opens(&shared.laptop, &shared.file));
     assert!(opens(&shared.minipc, &shared.file));
+}
+
+fn random() -> String {
+    let key =
+        ssh_key::PrivateKey::random(&mut ssh_key::rand_core::OsRng, ssh_key::Algorithm::Ed25519)
+            .unwrap();
+    sign::public(&key).unwrap()
 }
 
 #[test]
@@ -276,32 +304,15 @@ fn trust_lists_a_host_s_ssh_and_signing_keys_and_retire_drops_them() {
     let user_dir = dir.path().join("types/workstation/users/me");
     fs::create_dir_all(user_dir.join("home")).unwrap();
     fs::write(user_dir.join(fleet::USER_TOML), "").unwrap();
-    let fleet = fleet_with(dir.path(), "", &[]);
-    let random = || {
-        let key = ssh_key::PrivateKey::random(
-            &mut ssh_key::rand_core::OsRng,
-            ssh_key::Algorithm::Ed25519,
-        )
-        .unwrap();
-        sign::public(&key).unwrap()
-    };
+    let fleet = fleet_with(dir.path(), &[], &[]);
     let (login, signing) = (random(), random());
     let entries = [
         format!("me={login} me@laptop"),
         format!("{SIGNING}={signing}"),
     ];
-    let trust = |entries: &[String]| {
-        trust_host(
-            &fleet,
-            &Keys::default(),
-            "desktop",
-            "workstation",
-            entries,
-            &mut Prompt::answering("\n"),
-        )
-    };
+    let none = Keys::default();
 
-    let uploads = trust(&entries).unwrap();
+    let uploads = trust(&fleet, &none, "desktop", &entries).unwrap();
     assert_eq!(
         uploads,
         [
@@ -317,24 +328,28 @@ fn trust_lists_a_host_s_ssh_and_signing_keys_and_retire_drops_them() {
             },
         ]
     );
-    let ssh_keys = user_dir.join(ssh::KEYS);
-    assert_eq!(read(&ssh_keys).unwrap()[0].key, login);
-    let signers = dir.path().join(sign::SIGNERS);
+    let written = Machines::load(dir.path()).unwrap();
+    let desktop = written.get("desktop").unwrap();
+    assert_eq!(desktop.users["me"].ssh, Some(login));
+    assert_eq!(desktop.keys.signing, Some(signing));
     assert_eq!(
-        read(&signers).unwrap()[0].key,
-        format!("{signing} types/workstation")
+        desktop.signs,
+        Some(sign::Reach::Folders(vec!["types/workstation".into()]))
     );
-    assert_eq!(trust(&entries).unwrap().len(), 2);
-    let error = trust(&[format!("me={}", random())]).err().unwrap();
+    let fleet = fleet_with(dir.path(), &[], &[]);
+    assert_eq!(trust(&fleet, &none, "desktop", &entries).unwrap().len(), 2);
+    let error = trust(&fleet, &none, "desktop", &[format!("me={}", random())]);
     assert!(
         error
+            .err()
+            .unwrap()
             .to_string()
-            .ends_with("lists another key for desktop: retire it first")
+            .ends_with("lists another SSH key of me for desktop: retire it first")
     );
 
     retire_host(&fleet, "desktop").unwrap();
-    assert!(read(&ssh_keys).unwrap().is_empty());
-    assert!(read(&signers).unwrap().is_empty());
+    assert!(!machines::path(dir.path(), "desktop").exists());
+    let fleet = fleet_with(dir.path(), &[], &[]);
     assert!(retire_host(&fleet, "desktop").is_err());
 }
 
@@ -342,49 +357,39 @@ fn trust_lists_a_host_s_ssh_and_signing_keys_and_retire_drops_them() {
 fn a_signer_may_get_several_folders_and_only_ones_the_fleet_has() {
     let dir = tempfile::TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join("shared")).unwrap();
-    let fleet = fleet_with(dir.path(), "", &[]);
-    let key =
-        ssh_key::PrivateKey::random(&mut ssh_key::rand_core::OsRng, ssh_key::Algorithm::Ed25519)
-            .unwrap();
-    let signing = sign::public(&key).unwrap();
+    let fleet = fleet_with(dir.path(), &[], &[]);
     trust_host(
         &fleet,
         &Keys::default(),
         "minipc",
-        "workstation",
-        &[format!("{SIGNING}={signing}")],
-        &mut Prompt::answering("types/nowhere\ntypes/workstation shared\n"),
+        &workstation(),
+        &[format!("{SIGNING}={}", random())],
+        &mut Prompt::answering("types/nowhere\nversions\ntypes/workstation shared\n"),
     )
     .unwrap();
     assert_eq!(
-        read(&dir.path().join(sign::SIGNERS)).unwrap()[0].key,
-        format!("{signing} types/workstation shared")
+        Machines::load(dir.path())
+            .unwrap()
+            .get("minipc")
+            .unwrap()
+            .signs,
+        Some(sign::Reach::Folders(vec![
+            "types/workstation".into(),
+            "shared".into()
+        ]))
     );
 }
 
 #[test]
 fn a_new_recovery_key_opens_every_secret_and_the_old_one_none() {
     let dir = tempfile::TempDir::new().unwrap();
-    let type_dir = dir.path().join("types/workstation");
-    fs::create_dir_all(type_dir.join("etc")).unwrap();
-    fs::write(type_dir.join(fleet::SYSTEM_TOML), "").unwrap();
     let laptop = make_key(&dir.path().join("laptop.txt")).unwrap();
     let old = crate::support::name_recovery(dir.path());
-    fs::write(
-        type_dir.join(RECIPIENTS),
-        format!(
-            "# laptop\n{}\n\n# recovery\n{}\n",
-            public(&laptop),
-            public(&old)
-        ),
-    )
-    .unwrap();
-    let file = type_dir.join("etc/wifi.conf.age");
-    fs::write(
-        &file,
-        crate::support::seal(&type_dir.join(RECIPIENTS), b"psk=1"),
-    )
-    .unwrap();
+    let fleet = fleet_with(
+        dir.path(),
+        &[("laptop", root_machine(&laptop))],
+        &[("wifi.conf.age", b"psk=1", &[&laptop, &old])],
+    );
     let new = crate::support::name_recovery(dir.path());
     let repo = crate::fleet::Repo::new(
         dir.path().to_path_buf(),
@@ -393,38 +398,27 @@ fn a_new_recovery_key_opens_every_secret_and_the_old_one_none() {
         &Default::default(),
     )
     .unwrap();
+    drop(fleet);
     let fleet = Fleet::of(repo, &crate::support::current_user());
-    let mut keys = Keys::default();
-    keys.push(old.clone());
+    let file = fleet.etc_dir().join("wifi.conf.age");
 
-    reseal_everything(&fleet, &keys, &public(&old), &mut Prompt::answering("")).unwrap();
+    reseal_everything(&fleet, &keys(&old), &mut Prompt::answering("")).unwrap();
     assert!(opens(&new, &file));
     assert!(opens(&laptop, &file));
     assert!(!opens(&old, &file));
-    assert_eq!(names(&type_dir.join(RECIPIENTS)), ["laptop"]);
     assert!(!dir.path().join("types/workstation/users").exists());
 }
 
 #[test]
 fn the_probe_signs_only_versions_and_its_ssh_key_goes_to_github() {
     let dir = tempfile::TempDir::new().unwrap();
-    let fleet = fleet_with(dir.path(), "", &[]);
-    let random = || {
-        let key = ssh_key::PrivateKey::random(
-            &mut ssh_key::rand_core::OsRng,
-            ssh_key::Algorithm::Ed25519,
-        )
-        .unwrap();
-        sign::public(&key).unwrap()
-    };
+    let fleet = fleet_with(dir.path(), &[], &[]);
     let (signing, login) = (random(), random());
-    let uploads = trust_host(
+    let uploads = trust(
         &fleet,
         &Keys::default(),
         "minipc",
-        "workstation",
         &[format!("{PROBE}={signing}"), format!("{PROBE_SSH}={login}")],
-        &mut Prompt::answering(""),
     )
     .unwrap();
     assert_eq!(
@@ -435,14 +429,12 @@ fn the_probe_signs_only_versions_and_its_ssh_key_goes_to_github() {
             kind: github::Use::Deploy,
         }]
     );
-    let signers = dir.path().join(sign::SIGNERS);
-    let list = read(&signers).unwrap();
-    assert_eq!(list[0].name, "minipc/probe");
-    assert_eq!(list[0].key, format!("{signing} versions"));
-    let parsed = sign::parse_signers(&fs::read_to_string(&signers).unwrap()).unwrap();
-    assert_eq!(parsed[0].reach, sign::Reach::Versions);
+    let signers = Machines::load(dir.path()).unwrap().signers().unwrap();
+    assert_eq!(signers[0].name, "minipc/probe");
+    assert_eq!(signers[0].reach, sign::Reach::Versions);
+    let fleet = fleet_with(dir.path(), &[], &[]);
     retire_host(&fleet, "minipc").unwrap();
-    assert!(read(&signers).unwrap().is_empty());
+    assert!(!machines::path(dir.path(), "minipc").exists());
 }
 
 #[test]
@@ -451,12 +443,11 @@ fn a_shared_secret_root_links_is_for_the_root_list_too() {
     let fleet = dir.path();
     let dev = fleet.join("types/server/users/dev");
     fs::create_dir_all(dev.join("home/.secrets")).unwrap();
-    fs::write(dev.join(RECIPIENTS), "# minipc\nage1dev\n").unwrap();
-    fs::write(
-        fleet.join("types/server").join(RECIPIENTS),
-        "# minipc\nage1root\n",
-    )
-    .unwrap();
+    crate::support::machine(
+        fleet,
+        "minipc",
+        "type = \"server\"\n[keys]\nage = \"age1root\"\n[users.dev]\nage = \"age1dev\"\n",
+    );
     fs::create_dir_all(fleet.join("shared/.secrets")).unwrap();
     fs::write(fleet.join("shared/.secrets/token.age"), "").unwrap();
     symlink(
@@ -471,13 +462,14 @@ fn a_shared_secret_root_links_is_for_the_root_list_too() {
         etc.join("github-token.age"),
     )
     .unwrap();
-    let keys = |list: Vec<Recipient>| list.into_iter().map(|r| r.key).collect::<Vec<_>>();
+    let machines = Machines::load(fleet).unwrap();
     for link in [
         dev.join("home/.secrets/token.age"),
         etc.join("github-token.age"),
     ] {
+        let readers = homes::owners(fleet, &link).unwrap();
         assert_eq!(
-            keys(reader_recipients(fleet, &link, None).unwrap()),
+            keys_of(machines.recipients_of(&readers)),
             ["age1root", "age1dev"]
         );
     }

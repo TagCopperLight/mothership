@@ -5,7 +5,7 @@ use super::{
 };
 use crate::trust::update::BINARY;
 use crate::{
-    fleet::{self, Repo, checked},
+    fleet::{self, Here, Repo, checked},
     package::Distro,
     system::user,
     trust::ssh,
@@ -83,7 +83,7 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     )?;
     let localtime = root.join("etc/localtime");
     file::link(&localtime, &answers::zoneinfo(&timezone))?;
-    machine.save(root)?;
+    Here::joining(&hostname, machine).save(root)?;
     carry_ssh(root, &root_user)?;
     let copy = file::under(root, fleet::DIR);
     if copy.exists() {

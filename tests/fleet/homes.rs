@@ -178,10 +178,6 @@ fn root_reads_a_shared_secret_it_links_from_etc_or_its_services() {
         token.readers,
         [Reader::Root("server".into()), home("server", "dev")]
     );
-    assert_eq!(
-        Reader::Root("server".into()).recipients(Path::new("f")),
-        Path::new("f/types/server/recipients.txt")
-    );
 }
 
 #[test]

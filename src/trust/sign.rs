@@ -1,4 +1,11 @@
-use crate::{secrets, services, util::file};
+use crate::{
+    fleet::{
+        TYPES,
+        machines::{self, MACHINES, Machines},
+    },
+    secrets, services,
+    util::file,
+};
 use age::{secrecy::ExposeSecret, x25519};
 use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest, Sha256};
@@ -8,7 +15,6 @@ use ssh_key::{
 use std::path::{Path, PathBuf};
 
 pub const KEY: &str = "/etc/mothership/signing";
-pub const SIGNERS: &str = "signers.txt";
 const NAMESPACE: &str = "git";
 const RECOVERY_SEED: &[u8] = b"mothership signing key\0";
 
@@ -92,7 +98,7 @@ impl Reach {
         Ok(Reach::Folders(folders))
     }
 
-    fn covers(&self, path: &Path) -> bool {
+    pub fn covers(&self, path: &Path) -> bool {
         match self {
             Reach::Everything => true,
             Reach::Folders(folders) => folders.iter().any(|folder| path.starts_with(folder)),
@@ -100,7 +106,7 @@ impl Reach {
         }
     }
 
-    fn holds(&self, other: &Reach) -> bool {
+    pub fn holds(&self, other: &Reach) -> bool {
         match (self, other) {
             (Reach::Everything, _) => true,
             (Reach::Folders(_), Reach::Folders(theirs)) => {
@@ -128,37 +134,17 @@ impl Signer {
     }
 }
 
-pub fn parse_signers(text: &str) -> Result<Vec<Signer>> {
-    secrets::parse(text)?
-        .into_iter()
-        .map(|entry| {
-            let words: Vec<&str> = entry.key.split_whitespace().collect();
-            let [kind, data, folders @ ..] = &words[..] else {
-                bail!("{}'s key isn't an SSH public key", entry.name);
-            };
-            let key = PublicKey::from_openssh(&format!("{kind} {data}"))
-                .map_err(|e| anyhow!("{}'s key: {e}", entry.name))?;
-            let reach = Reach::parse(folders).with_context(|| format!("{}'s line", entry.name))?;
-            Ok(Signer {
-                name: entry.name,
-                key,
-                reach,
-            })
-        })
-        .collect()
-}
-
 pub fn distinct(signers: &[Signer], recovery: Option<&Signer>) -> Result<()> {
     for (i, signer) in signers.iter().enumerate() {
         if let Some(other) = signers[..i].iter().find(|other| other.key == signer.key) {
             bail!(
-                "{SIGNERS} lists one key twice, as {} and {}",
+                "{MACHINES}/ lists one signing key twice, as {} and {}",
                 other.name,
                 signer.name
             );
         }
         if recovery.is_some_and(|recovery| recovery.key == signer.key) {
-            bail!("{SIGNERS} lists the recovery key, as {}", signer.name);
+            bail!("{MACHINES}/ lists the recovery key, as {}", signer.name);
         }
     }
     Ok(())
@@ -222,26 +208,33 @@ impl Commit {
 pub fn allowed(
     signer: &Signer,
     changed: &[PathBuf],
-    before: &[Signer],
-    after: &[Signer],
+    before: &Machines,
+    after: &Machines,
 ) -> Result<()> {
     for path in changed {
-        if path == Path::new(SIGNERS) {
-            let moved = before
-                .iter()
-                .filter(|s| !after.contains(s))
-                .chain(after.iter().filter(|s| !before.contains(s)));
-            for other in moved {
-                if !signer.reach.holds(&other.reach) {
-                    bail!(
-                        "{} can't change {}'s line in {SIGNERS}",
-                        signer.name,
-                        other.name
-                    );
-                }
+        let Some(name) = machines::named(path) else {
+            if !signer.reach.covers(path) {
+                bail!("{} can't sign a change to {}", signer.name, path.display());
             }
-        } else if !signer.reach.covers(path) {
-            bail!("{} can't sign a change to {}", signer.name, path.display());
+            continue;
+        };
+        for entry in [before.get(name), after.get(name)].into_iter().flatten() {
+            if !signer
+                .reach
+                .covers(&Path::new(TYPES).join(&entry.device_type))
+            {
+                bail!(
+                    "{} can't change {name}, a machine of {}",
+                    signer.name,
+                    entry.device_type
+                );
+            }
+            if !entry.reaches().all(|reach| signer.reach.holds(&reach)) {
+                bail!(
+                    "{} can't change {name}, which signs more than it",
+                    signer.name
+                );
+            }
         }
     }
     Ok(())

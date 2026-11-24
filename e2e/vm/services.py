@@ -384,7 +384,10 @@ def fleet(tmp: Path, image: str, registry: Registry, root: x25519.Identity) -> P
     manifest = (work / "mothership.toml").read_text()
     recovery = x25519.Recipient.from_str(manifest.split('age = "')[1].split('"')[0])
     server = work / "types/server"
-    (server / "recipients.txt").write_text(f"# minipc\n{root.to_public()}\n")
+    signing = " ".join((E2E / "signing.pub").read_text().split()[:2])
+    (work / "machines").mkdir()
+    (work / "machines/minipc.toml").write_text(
+        f'type = "server"\nsigns = "everything"\n\n[keys]\nsigning = "{signing}"\nage = "{root.to_public()}"\n')
     (work / "shared/.secrets").mkdir(parents=True)
     (work / "shared/.secrets/token.age").write_bytes(
         pyrage.encrypt(f"{TOKEN}\n".encode(), [root.to_public(), recovery]))
@@ -433,7 +436,7 @@ sudo install -m 644 /tmp/registry.crt /usr/local/share/ca-certificates/mothershi
 sudo update-ca-certificates > /dev/null
 sudo install -D -m 600 /tmp/signing /etc/mothership/signing
 sudo install -D -m 600 /tmp/key.txt /etc/mothership/key.txt
-printf 'type = "server"\\n' | sudo install -D -m 644 /dev/stdin /etc/mothership/machine.toml
+printf 'name = "minipc"\\n' | sudo install -D -m 644 /dev/stdin /etc/mothership/machine.toml
 install -m 600 /tmp/ssh ~/.ssh/id_ed25519
 install -m 644 /tmp/ssh.pub ~/.ssh/id_ed25519.pub
 ssh-keyscan -q localhost | sudo tee /etc/ssh/ssh_known_hosts > /dev/null

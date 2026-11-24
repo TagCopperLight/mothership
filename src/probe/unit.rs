@@ -4,7 +4,6 @@ use crate::{
     services::{self, Action},
     sync::item::{Change, Item, Section},
     sync::kind::Kind,
-    system::host,
     trust::update,
     util::cmd,
     util::file,
@@ -26,8 +25,8 @@ const TIMER_TEXT: &str = "[Unit]\nDescription=Run mothership's probe every 5 min
     [Timer]\nOnCalendar=*:0/5\nRandomizedDelaySec=30s\nPersistent=true\n\n[Install]\n\
     WantedBy=timers.target\n";
 
-pub fn runs_here(fleet: &Fleet) -> Result<bool> {
-    Ok(fleet.probe_host.as_deref() == Some(host::name()?.as_str()))
+pub fn runs_here(fleet: &Fleet) -> bool {
+    fleet.probe_host.as_deref() == Some(fleet.name.as_str())
 }
 
 pub fn key_path(name: &str) -> PathBuf {
@@ -68,7 +67,7 @@ fn service(fleet: &Fleet) -> Result<String> {
          RestrictSUIDSGID=yes\nLockPersonality=yes\nRestrictNamespaces=yes\n\
          CapabilityBoundingSet=\nSystemCallArchitectures=native\n",
         update::BINARY,
-        host::name()?
+        fleet.name
     ))
 }
 
@@ -83,7 +82,7 @@ fn fleet_item(mut item: Item) -> Item {
 
 pub fn items(fleet: &Fleet) -> Result<Vec<Item>> {
     let mut items = Vec::new();
-    let here = runs_here(fleet)?;
+    let here = runs_here(fleet);
     let present = written(SERVICE)?.is_some() || written(TIMER)?.is_some();
     if here {
         let missing: Vec<&str> = [SIGNING, SSH]

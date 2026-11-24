@@ -8,7 +8,7 @@ mod repo;
 mod trust;
 
 use crate::{
-    fleet::{self, Fleet, Machine, Repo},
+    fleet::{self, Fleet, Here, Repo, machines::Machines},
     package::{self, Distro},
     services,
     sync::apply::{self, ServiceManager},
@@ -60,8 +60,8 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
             &started
         }
     };
-    let machine = Machine::load()?;
     let dir = Path::new(fleet::DIR);
+    let machine = Here::load()?.machine(&Machines::load(dir)?)?;
     let members = Repo::for_machine(dir.into(), &machine)?.profiles;
     for member in &members {
         if user::by_name(&member.name)?.is_none() {
@@ -78,8 +78,9 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
     if first_start {
         boot::secure()?;
     }
-    trust::keys(prompt, &host::name()?)?;
+    trust::keys(prompt)?;
     let fleet = Fleet::load()?;
+    Here::load()?.settle(&fleet.machines)?;
     match (distro, fleet.system.aur_helper) {
         (Distro::Arch, Some(helper)) if !helper.installed(fleet.admin()) => {
             helper.build(fleet.admin())?;
@@ -131,7 +132,7 @@ fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<St
     let machine = answers::machine(flags, prompt, dir)?;
     answers::check_admin(dir, &machine, &admin)?;
     host::rename(&hostname)?;
-    machine.save(Path::new("/"))?;
+    Here::joining(&hostname, machine).save(Path::new("/"))?;
     Ok(admin)
 }
 

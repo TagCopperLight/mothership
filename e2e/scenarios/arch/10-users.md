@@ -135,62 +135,64 @@ $ tail -1 ~/.gitconfig
 [user]
 ```
 
-`dev` has a key of their own, next to root's and mine. From this machine I can trust a key for a
-user of another type, whose secrets I list from the fleet's rules for that type.
+`dev` has a key of their own, next to root's and mine. From this machine I can trust a machine of
+another type, whose secrets I list from the fleet's rules for that type.
 
 ```console
 $ sudo stat -c '%a %U' /home/dev/.config/mothership/key.txt
 600 dev
 $ cd /var/lib/mothership/fleet && mkdir -p types/server/etc types/server/users/dev &&
-> touch types/server/system.toml types/server/users/dev/user.toml types/server/users/dev/recipients.txt &&
+> touch types/server/system.toml types/server/users/dev/user.toml &&
 > echo y | sudo mothership commit "Add a server type" >/dev/null
-$ yes | sudo mothership trust laptop server dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
-laptop opens the 0 secrets of server/dev now.
-Trust laptop as server:
-  M types/server/users/dev/recipients.txt
+$ yes | sudo mothership trust minipc server dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
+minipc opens the 0 secrets of server/dev now.
+Trust minipc as server:
+  A machines/minipc.toml
 Commit and push [y/N]? y
-Committed [0-9a-f]{12} Trust laptop as server (re)
-On laptop, type this code: [0-9a-f]{12} (re)
-$ sed 's/age1[a-z0-9]*/<key>/' /var/lib/mothership/fleet/types/server/users/dev/recipients.txt
-# laptop
-<key>
+Committed [0-9a-f]{12} Trust minipc as server (re)
+On minipc, type this code: [0-9a-f]{12} (re)
+$ sed 's/age1[a-z0-9]*/<key>/' /var/lib/mothership/fleet/machines/minipc.toml
+type = "server"
+
+[users.dev]
+age = "<key>"
 ```
 
 A secret both homes use lives once in `shared/.secrets/`, and each home links it. Trust re-encrypts
-it for the lists of both homes, and asks first. My key also opens dev's list under another name,
-`devbox`: retiring `devbox` leaves the secret open to my key through my own home.
+it for every key of both homes, and asks first. A machine `devbox` lets my key open dev's home:
+retiring `devbox` leaves the secret open to my key through my own home.
 
 ```console
-$ yes | sudo mothership trust laptop workstation me="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
-laptop opens the 0 secrets of workstation/me now.
-Trust laptop as workstation:
-  A types/workstation/users/me/recipients.txt
+$ yes | sudo mothership trust machine workstation me="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
+machine opens the 0 secrets of workstation/me now.
+Trust machine as workstation:
+  M machines/machine.toml
 Commit and push [y/N]? y
-Committed [0-9a-f]{12} Trust laptop as workstation (re)
-On laptop, type this code: [0-9a-f]{12} (re)
+Committed [0-9a-f]{12} Trust machine as workstation (re)
+On machine, type this code: [0-9a-f]{12} (re)
 $ cd /var/lib/mothership/fleet && mkdir -p shared/.secrets types/workstation/users/{me,dev}/home/.secrets &&
 > echo "SHARED-TOKEN" | chezmoi encrypt > shared/.secrets/token.age &&
 > for user in me dev; do ln -s ../../../../../../shared/.secrets/token.age types/workstation/users/$user/home/.secrets/token.age; done &&
 > echo '{{ include ".secrets/token.age" | decrypt | trim }}' > shared/dot_token.tmpl &&
 > ln -s ../../../../../shared/dot_token.tmpl types/workstation/users/dev/home/dot_token.tmpl &&
 > echo y | sudo mothership commit "Share a token" >/dev/null
-$ yes | sudo mothership trust minipc workstation dev="$(sudo grep -o 'age1.*' /home/dev/.config/mothership/key.txt)" 
-Re-encrypting for workstation/dev:
+$ yes | sudo mothership trust machine workstation dev="$(sudo grep -o 'age1.*' /home/dev/.config/mothership/key.txt)" 
+Re-encrypting:
   .secrets/token.age  workstation/dev, workstation/me
-minipc opens the 1 secrets of workstation/dev now.
-Trust minipc as workstation:
+machine opens the 1 secrets of workstation/dev now.
+Trust machine as workstation:
+  M machines/machine.toml
   M shared/.secrets/token.age
-  A types/workstation/users/dev/recipients.txt
 Commit and push [y/N]? y
-Committed [0-9a-f]{12} Trust minipc as workstation (re)
-On minipc, type this code: [0-9a-f]{12} (re)
+Committed [0-9a-f]{12} Trust machine as workstation (re)
+On machine, type this code: [0-9a-f]{12} (re)
 $ echo n | sudo mothership trust devbox workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
-Re-encrypting for workstation/dev:
+Re-encrypting:
   .secrets/token.age  workstation/dev, workstation/me
 devbox opens the 1 secrets of workstation/dev now.
 Trust devbox as workstation:
+  A machines/devbox.toml
   M shared/.secrets/token.age
-  M types/workstation/users/dev/recipients.txt
 Commit and push [y/N]? n
 Nothing changed.
 $ yes | sudo mothership trust devbox workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)" | tail -3
@@ -198,13 +200,10 @@ Commit and push [y/N]? y
 Committed [0-9a-f]{12} Trust devbox as workstation (re)
 On devbox, type this code: [0-9a-f]{12} (re)
 $ yes | sudo mothership retire devbox
-devbox is gone from workstation/dev.
-devbox can still open these, so change them:
+devbox can still open these secrets of workstation/dev, so change them:
   .secrets/token.age
-devbox's key stays in another home that shares these, so their new versions open for it too:
-  .secrets/token.age  workstation/me
 Retire devbox:
-  M types/workstation/users/dev/recipients.txt
+  D machines/devbox.toml
 Commit and push [y/N]? y
 Committed [0-9a-f]{12} Retire devbox (re)
 $ echo y | sudo mothership apply
@@ -228,7 +227,7 @@ $ cd /var/lib/mothership/fleet && mkdir -p types/server/users/dev/home/.secrets 
 > ln -s ../../../../../../shared/.secrets/token.age types/server/users/dev/home/.secrets/token.age &&
 > echo y | sudo mothership commit "Link the token from the server" >/dev/null
 $ echo n | sudo mothership trust devbox workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)" 2>&1
-Re-encrypting for workstation/dev:
+Re-encrypting:
   .secrets/token.age  server/dev, workstation/dev, workstation/me
 server/dev links shared/.secrets/token.age, which was never encrypted for it. Let server/dev open it [y/N]? n
 Error: shared/.secrets/token.age stays closed to server/dev: remove its link from server/dev first
@@ -265,14 +264,12 @@ $ printf 'a\ny\ni\ny\n' | sudo mothership review
 Review on machine: 1 added, 1 ignored:
   M types/workstation/ignore.txt
   A types/workstation/users/guest/home/.keep
-  A types/workstation/users/guest/recipients.txt
   A types/workstation/users/guest/user.toml
 Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 1 added, 1 ignored (re)
 $ cd /var/lib/mothership/fleet && git show --name-only --format= HEAD && tail -1 types/workstation/ignore.txt
 types/workstation/ignore.txt
 types/workstation/users/guest/home/.keep
-types/workstation/users/guest/recipients.txt
 types/workstation/users/guest/user.toml
 user visitor
 $ sudo mothership scan | head -4

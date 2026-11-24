@@ -1,26 +1,27 @@
 # Secrets go into the fleet encrypted
 
 The machine follows its fleet, and apply made root's key and mine. Root's opens the secrets of
-`/etc`, mine those of my home, and each goes into its own list. This machine already signs for
-the fleet, so it trusts its own keys, and commits the lists.
+`/etc`, mine those of my home, and both go into the machine's file in `machines/`. This machine
+already signs for the fleet, so it trusts its own keys, and commits its file.
 
 ```console
 $ echo y | sudo mothership apply &>/dev/null
 $ sudo stat -c '%a %U' /etc/mothership/key.txt ~/.config/mothership/key.txt
 600 root
 600 me
-$ yes | sudo mothership trust laptop workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" \
+$ yes | sudo mothership trust machine workstation root="$(sudo grep -o 'age1.*' /etc/mothership/key.txt)" \
 > me="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
-laptop opens the 0 secrets of workstation/root now.
-laptop opens the 0 secrets of workstation/me now.
-Trust laptop as workstation:
-  A types/workstation/recipients.txt
-  A types/workstation/users/me/recipients.txt
+machine opens the 0 secrets of server/root now.
+machine opens the 0 secrets of server/me now.
+machine opens the 0 secrets of workstation/root now.
+machine opens the 0 secrets of workstation/me now.
+Trust machine as workstation:
+  M machines/machine.toml
 Commit and push [y/N]? y
-Committed [0-9a-f]{12} Trust laptop as workstation (re)
-On laptop, type this code: [0-9a-f]{12} (re)
-$ yes | sudo mothership trust laptop workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
-Error: workstation has no user dev
+Committed [0-9a-f]{12} Trust machine as workstation (re)
+On machine, type this code: [0-9a-f]{12} (re)
+$ yes | sudo mothership trust machine workstation dev="$(grep -o 'age1.*' ~/.config/mothership/key.txt)"
+Error: machine lists keys for dev, and workstation has no such user
 [exit 1]
 ```
 
@@ -209,11 +210,14 @@ $ sudo cat /etc/wifi.conf
 psk=WIFI-SECRET
 ```
 
-A second machine has its own keys, which the fleet doesn't know yet. Scan says what to run where
-the secrets open, and apply leaves them alone.
+A second machine, the desktop, has its own name and keys, which the fleet doesn't know yet. I play
+it on this container: I set its keys aside and name it in its own `machine.toml`. Scan says what
+to run where the secrets open, and apply leaves them alone.
 
 ```console
-$ sudo mv /etc/mothership/key.txt /root/laptop.txt && mv ~/.config/mothership/key.txt ~/laptop.txt
+$ sudo mv /etc/mothership/key.txt /root/laptop.txt && sudo mv /etc/mothership/signing /root/laptop-signing &&
+> mv ~/.config/mothership/key.txt ~/laptop.txt
+$ printf 'name = "desktop"\ntype = "workstation"\n' | sudo tee /etc/mothership/machine.toml >/dev/null
 $ echo y | sudo mothership apply &>/dev/null
 $ sudo mothership scan
 Needs attention · 5
@@ -223,7 +227,7 @@ Needs attention · 5
     ? ~/.config/editor/settings  locked  this machine's key isn't on its list
     ? ~/.ssh/id_test             locked  this machine's key isn't on its list
   Keys
-    \+ machine +not trusted +run `sudo mothership trust machine workstation root=age1[a-z0-9]+ me=age1[a-z0-9]+` on a machine that signs for the fleet (re)
+    \+ desktop +not trusted +run `sudo mothership trust desktop workstation root=age1[a-z0-9]+ me=age1[a-z0-9]+ 'me=ssh-ed25519 [A-Za-z0-9+/]+' 'signing=ssh-ed25519 [A-Za-z0-9+/]+'` on a machine that signs for the fleet (re)
 
 5 to review     sudo mothership review
 \d+ ignored (re)
@@ -240,63 +244,73 @@ Nothing to apply.
 ```
 
 Back on the laptop, a template takes a secret value from my home's `.secrets/` folder, which
-chezmoi writes nowhere. The laptop trusts the desktop in both lists, then the desktop retires the
-laptop and lists what to change.
+chezmoi writes nowhere. The laptop trusts the desktop, which may sign everything, and every
+secret its keys read opens for it.
 
 ```console
-$ sudo mv /etc/mothership/key.txt /root/desktop.txt && sudo mv /root/laptop.txt /etc/mothership/key.txt
+$ sudo mv /etc/mothership/key.txt /root/desktop.txt && sudo mv /etc/mothership/signing /root/desktop-signing &&
+> sudo mv /root/laptop.txt /etc/mothership/key.txt && sudo mv /root/laptop-signing /etc/mothership/signing
 $ mv ~/.config/mothership/key.txt ~/desktop.txt && mv ~/laptop.txt ~/.config/mothership/key.txt
+$ printf 'name = "machine"\n' | sudo tee /etc/mothership/machine.toml >/dev/null
 $ cd /var/lib/mothership/fleet/types/workstation/users/me/home && mkdir .secrets &&
 > echo "PROXY-SECRET" | chezmoi encrypt > .secrets/proxy-key.age &&
 > echo '{{ include ".secrets/proxy-key.age" | decrypt | trim }}' > dot_proxy.tmpl &&
 > echo y | sudo mothership commit "Read the proxy key" >/dev/null
 $ echo y | sudo mothership apply >/dev/null && cat ~/.proxy
 PROXY-SECRET
-$ yes | sudo mothership trust desktop workstation root="$(sudo grep -o 'age1.*' /root/desktop.txt)" \
-> me="$(grep -o 'age1.*' ~/desktop.txt)"
-Re-encrypting for workstation/root:
-  /etc/wifi.conf  workstation/root
-desktop opens the 1 secrets of workstation/root now.
-Re-encrypting for workstation/me:
+$ printf '*\ny\n' | sudo mothership trust desktop workstation root="$(sudo grep -o 'age1.*' /root/desktop.txt)" \
+> me="$(grep -o 'age1.*' ~/desktop.txt)" me="$(cat ~/.ssh/id_ed25519.pub)" \
+> signing="$(sudo ssh-keygen -y -f /root/desktop-signing)"
+desktop may change: Enter for types/workstation, * for everything, or folders separated by spaces › *
+Re-encrypting:
+  /etc/wifi.conf             workstation/root
   .secrets/proxy-key.age     workstation/me
   ~/.config/app/token        workstation/me
   ~/.config/editor/settings  workstation/me
   ~/.ssh/id_test             workstation/me
+desktop opens the 0 secrets of server/root now.
+desktop opens the 0 secrets of server/me now.
+desktop opens the 1 secrets of workstation/root now.
 desktop opens the 4 secrets of workstation/me now.
+workstation/me on desktop has an SSH key in the fleet now.
+desktop signs for the fleet now.
 Trust desktop as workstation:
+  A machines/desktop.toml
   M types/workstation/etc/wifi.conf.age
-  M types/workstation/recipients.txt
   M types/workstation/users/me/home/.secrets/proxy-key.age
   M types/workstation/users/me/home/dot_config/app/encrypted_private_token.age
   M types/workstation/users/me/home/dot_config/editor/encrypted_private_settings.age
   M types/workstation/users/me/home/private_dot_ssh/encrypted_private_id_test.age
-  M types/workstation/users/me/recipients.txt
 Commit and push [y/N]? y
 Committed [0-9a-f]{12} Trust desktop as workstation (re)
 On desktop, type this code: [0-9a-f]{12} (re)
-$ sudo mv /etc/mothership/key.txt /root/laptop.txt && sudo mv /root/desktop.txt /etc/mothership/key.txt
+```
+
+On the desktop, everything opens. It retires the laptop and lists what to change.
+
+```console
+$ sudo mv /etc/mothership/key.txt /root/laptop.txt && sudo mv /etc/mothership/signing /root/laptop-signing &&
+> sudo mv /root/desktop.txt /etc/mothership/key.txt && sudo mv /root/desktop-signing /etc/mothership/signing
 $ mv ~/.config/mothership/key.txt ~/laptop.txt && mv ~/desktop.txt ~/.config/mothership/key.txt
+$ printf 'name = "desktop"\n' | sudo tee /etc/mothership/machine.toml >/dev/null
 $ sudo mothership scan
 ✓ Nothing differs from the workstation type
 \d+ ignored (re)
-$ yes | sudo mothership retire laptop
-laptop is gone from workstation/root.
-laptop can still open these, so change them:
+$ yes | sudo mothership retire machine
+machine signs nothing now.
+machine can still open these secrets of workstation/root, so change them:
   /etc/wifi.conf
-laptop is gone from workstation/me.
-laptop can still open these, so change them:
+machine can still open these secrets of workstation/me, so change them:
   .secrets/proxy-key.age
   ~/.config/app/token
   ~/.config/editor/settings
   ~/.ssh/id_test
-Retire laptop:
-  M types/workstation/recipients.txt
-  M types/workstation/users/me/recipients.txt
+Retire machine:
+  D machines/machine.toml
 Commit and push [y/N]? y
-Committed [0-9a-f]{12} Retire laptop (re)
-$ sed 's/age1[a-z0-9]*/<key>/' /var/lib/mothership/fleet/types/workstation/users/me/recipients.txt
-# desktop
-<key>
+Committed [0-9a-f]{12} Retire machine (re)
+$ ls /var/lib/mothership/fleet/machines
+desktop.toml
 $ chezmoi execute-template < /var/lib/mothership/fleet/types/workstation/users/me/home/dot_proxy.tmpl
 PROXY-SECRET
 $ find /var/lib/mothership/fleet -not -user me | wc -l

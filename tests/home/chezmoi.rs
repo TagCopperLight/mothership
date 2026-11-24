@@ -16,7 +16,7 @@ fn the_config_text_stays_byte_for_byte_the_same() {
     let config = ChezmoiConfig {
         source: PathBuf::from("/fleet/types/workstation/users/me/home"),
         identity: PathBuf::from("/home/me/.config/mothership/key.txt"),
-        recipients: PathBuf::from("/fleet/types/workstation/users/me/recipients.txt"),
+        recipients: PathBuf::from("/home/me/.config/mothership/recipients.txt"),
         profile: "workstation".into(),
         user: "me".into(),
         logins: None,
@@ -27,7 +27,7 @@ sourceDir = "/fleet/types/workstation/users/me/home"
 
 [age]
 identity = "/home/me/.config/mothership/key.txt"
-recipientsFile = "/fleet/types/workstation/users/me/recipients.txt"
+recipientsFile = "/home/me/.config/mothership/recipients.txt"
 useBuiltin = true
 
 [data]

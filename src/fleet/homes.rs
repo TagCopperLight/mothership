@@ -51,8 +51,11 @@ impl Reader {
         }
     }
 
-    pub fn recipients(&self, fleet_dir: &Path) -> PathBuf {
-        self.dir(fleet_dir).join(secrets::RECIPIENTS)
+    pub fn type_name(&self) -> &str {
+        match self {
+            Reader::Root(type_name) => type_name,
+            Reader::Home(home) => &home.type_name,
+        }
     }
 }
 
@@ -63,6 +66,20 @@ impl fmt::Display for Reader {
             Reader::Home(home) => home.fmt(f),
         }
     }
+}
+
+pub fn readers(fleet_dir: &Path) -> Result<Vec<Reader>> {
+    let mut all = Vec::new();
+    for type_name in types(fleet_dir)? {
+        all.push(Reader::Root(type_name.clone()));
+        for dir in walk::children(&type_dir(fleet_dir, &type_name).join(USERS))? {
+            all.push(Reader::Home(Home {
+                type_name: type_name.clone(),
+                user: dir.file_name().unwrap_or_default().to_string_lossy().into(),
+            }));
+        }
+    }
+    Ok(all)
 }
 
 const ROOT_PLACES: [&str; 2] = [ETC_DIR, services::SERVICES];

@@ -1,3 +1,4 @@
+use super::machines::{self, Machines};
 use crate::{package::aur, secrets::Storage, system::hardware::Detect, util::file};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Deserializer, Serialize, de};
@@ -51,8 +52,26 @@ pub struct Machine {
     pub options: Vec<String>,
 }
 
-impl Machine {
-    pub fn load() -> Result<Machine> {
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Here {
+    pub name: String,
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    device_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    options: Vec<String>,
+}
+
+impl Here {
+    pub fn joining(name: &str, machine: Machine) -> Here {
+        Here {
+            name: name.to_owned(),
+            device_type: Some(machine.device_type),
+            options: machine.options,
+        }
+    }
+
+    pub fn load() -> Result<Here> {
         toml::from_str(&fs::read_to_string(MACHINE).with_context(|| format!("reading {MACHINE}"))?)
             .with_context(|| format!("parsing {MACHINE}"))
     }
@@ -61,6 +80,37 @@ impl Machine {
         let path = file::under(root, MACHINE);
         file::write(&path, toml::to_string(self)?.as_bytes(), 0o644)
             .with_context(|| format!("writing {}", path.display()))
+    }
+
+    pub fn machine(&self, machines: &Machines) -> Result<Machine> {
+        if let Some(entry) = machines.get(&self.name) {
+            return Ok(Machine {
+                device_type: entry.device_type.clone(),
+                options: entry.options.clone(),
+            });
+        }
+        let device_type = self.device_type.clone().with_context(|| {
+            format!(
+                "the fleet has no {}, and {MACHINE} names no type",
+                machines::path(Path::new(""), &self.name).display()
+            )
+        })?;
+        Ok(Machine {
+            device_type,
+            options: self.options.clone(),
+        })
+    }
+
+    pub fn settle(self, machines: &Machines) -> Result<()> {
+        if self.device_type.is_none() || machines.get(&self.name).is_none() {
+            return Ok(());
+        }
+        Here {
+            name: self.name,
+            device_type: None,
+            options: Vec::new(),
+        }
+        .save(Path::new("/"))
     }
 }
 

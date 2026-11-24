@@ -20,14 +20,14 @@ All of them run with `sudo`.
 | `review` | Goes through the machine's changes one by one: **add** it to the fleet, **revert** it, **ignore** it, or **pass** on it until the next review. Nothing changes until its last question: it then commits and pushes the answers, signed, and reverts. |
 | `commit <message>` | Signs and pushes your own edits in the fleet's folder. |
 | `recovery` | Gives a new fleet its recovery key, which opens every secret, or replaces it and encrypts every secret again. |
-| `trust <host> <type> <name>=<key>...` | Lets a new machine's keys open their lists' secrets and sign for the fleet, and prints the code to type on it. |
-| `retire <host>` | Removes a machine's keys, and prints the secrets you should change. |
-| `secret <service> <name>` | Reads a value and encrypts it into the service's secrets, for the type's root list and the recovery key. `<service>` may be `<type>/<service>`. |
+| `trust <host> <type> [--option <option>]... <name>=<key>...` | Writes a machine's file in `machines/`, so its keys open their secrets and sign for the fleet, and prints the code to type on it. |
+| `retire <host>` | Deletes a machine's file, and prints the secrets you should change. |
+| `secret <service> <name>` | Reads a value and encrypts it into the service's secrets, for the type's root keys and the recovery key. `<service>` may be `<type>/<service>`. |
 | `install` | Sets up a new machine from the fleet. |
 
-A machine applies only commits signed by a key `signers.txt` lists, or by the recovery key, and only what is committed. Every command that changes the fleet shows the commit and asks before it signs and pushes.
+A machine applies only commits signed by a key in `machines/`, or by the recovery key, and only what is committed. Every command that changes the fleet shows the commit and asks before it signs and pushes.
 
-Secrets are encrypted with [age](https://age-encryption.org). Root and each user have their own key, and their own list of keys allowed to open their secrets. Every secret also opens with the fleet's recovery key, which you keep on paper. Review offers to encrypt a new file other users can't read, and adds only encrypted a file that looks like it holds a key or a token.
+Secrets are encrypted with [age](https://age-encryption.org). Root and each user have their own key on each machine. A secret opens for that key on every machine of the type, for root on every machine that may sign the type's folder, and for the fleet's recovery key, which you keep on paper. Review offers to encrypt a new file other users can't read, and adds only encrypted a file that looks like it holds a key or a token.
 
 ## Setting up a machine
 
@@ -54,20 +54,17 @@ From the Arch ISO, install also partitions and encrypts the disk:
 
 ```text
 mothership.toml           the recovery key, and the mothership release every machine runs
-signers.txt               the keys whose commits machines apply, each with the folders it may change
+machines/laptop.toml      a machine's type, options, the folders it may sign, and its public keys
 shared/                   files and secrets several homes get, linked from each home or root's secrets
 types/workstation/
 ├── system.toml           packages, services, hardware and options
 ├── etc/                  files copied into /etc
-├── recipients.txt        keys that open the secrets in /etc
 ├── ignore.txt            differences scan never reports
 ├── services/gripsou/     a service: its containers, files and secrets
 └── users/tag/
     ├── home/             tag's home on a workstation, as chezmoi source files
     │   └── .secrets/     secrets templates read, never written to the home
     ├── user.toml         groups, shell, linger, user services, tools and ssh_from
-    ├── recipients.txt    keys that open the secrets of tag's home
-    ├── ssh-keys.txt      tag's SSH public key on each workstation
     └── ignore.txt
 ```
 
@@ -86,13 +83,29 @@ packages = ["sbctl"]
 etc = ["kernel/cmdline"]
 ```
 
-A hardware block turns on when the machine has what its `detect` names: a CPU vendor (`cpu`), a GPU's PCI vendor id (`gpu`), an ACPI id (`acpi`) or `"battery"`. A machine turns options on in `/etc/mothership/machine.toml`.
+A hardware block turns on when the machine has what its `detect` names: a CPU vendor (`cpu`), a GPU's PCI vendor id (`gpu`), an ACPI id (`acpi`) or `"battery"`. A machine turns options on in its file:
+
+```toml
+type = "workstation"
+options = ["encrypted"]
+signs = "everything"      # or folders, such as ["types/workstation"]
+
+[keys]
+signing = "ssh-ed25519 AAAA…"
+age = "age1…"             # root's
+
+[users.tag]
+age = "age1…"
+ssh = "ssh-ed25519 AAAA…"
+```
+
+`trust` writes this file. The machine itself keeps only its name, in `/etc/mothership/machine.toml`.
 
 Each line of `ignore.txt` is a kind and a pattern, such as `home ~/.cache` or `package linux-firmware-*`.
 
 ## Services
 
-On a server, the account `services` runs each service with its own rootless Docker, and keeps its data in `/srv/<name>/`. A service folder holds a `compose.yaml` without `image:` lines, the files it mounts, `*.tmpl` templates that read `{{ secret "name" }}`, and `secrets/*.age`, encrypted for the type's `recipients.txt`, which containers read in `/run/secrets/`. Private images on ghcr.io need `services/ghcr-token.age`, a classic token with only `read:packages`, from which mothership writes Docker's login file. `service.toml` pins each container's image:
+On a server, the account `services` runs each service with its own rootless Docker, and keeps its data in `/srv/<name>/`. A service folder holds a `compose.yaml` without `image:` lines, the files it mounts, `*.tmpl` templates that read `{{ secret "name" }}`, and `secrets/*.age`, encrypted for the type's root keys, which containers read in `/run/secrets/`. Private images on ghcr.io need `services/ghcr-token.age`, a classic token with only `read:packages`, from which mothership writes Docker's login file. `service.toml` pins each container's image:
 
 ```toml
 [images.app]

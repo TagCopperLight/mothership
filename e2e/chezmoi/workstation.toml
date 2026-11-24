@@ -3,7 +3,7 @@ sourceDir = "/var/lib/mothership/current/types/workstation/users/me/home"
 
 [age]
 identity = "/home/me/.config/mothership/key.txt"
-recipientsFile = "/var/lib/mothership/current/types/workstation/users/me/recipients.txt"
+recipientsFile = "/var/lib/mothership/recipients/workstation/me.txt"
 useBuiltin = true
 
 [data]

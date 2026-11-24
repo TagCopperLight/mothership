@@ -44,8 +44,9 @@ back to the last commit this machine accepts.
 
 ```console
 $ ssh-keygen -q -t ed25519 -N '' -f ~/rogue && cd /var/lib/mothership/fleet &&
-> git reset -q --hard HEAD~ && printf '\n# rogue\n%s\n' "$(cut -d' ' -f1,2 ~/rogue.pub)" >> signers.txt &&
-> git -c gpg.format=ssh -c user.signingkey=$HOME/rogue commit -S -qam "Let me in" &&
+> git reset -q --hard HEAD~ &&
+> printf 'type = "workstation"\nsigns = "everything"\n\n[keys]\nsigning = "%s"\n' "$(cut -d' ' -f1,2 ~/rogue.pub)" > machines/rogue.toml &&
+> git add machines && git -c gpg.format=ssh -c user.signingkey=$HOME/rogue commit -S -qm "Let me in" &&
 > git push -qf
 $ sudo mothership scan | grep refused
     \+ [0-9a-f]{12} Let me in +refused, \d{4}-\d\d-\d\d, claims to be by Me +a key the fleet doesn't list signed it: sudo mothership commit asks whether to vouch for it or drop it (re)
@@ -84,7 +85,7 @@ file it can't sign, and leaves revert and pass.
 
 ```console
 $ cd /var/lib/mothership/fleet && git config --unset core.fsmonitor &&
-> sed -i '/^ssh-ed25519/s/$/ types\/server/' signers.txt &&
+> sed -i 's|^signs = .*|signs = ["types/server"]|' machines/machine.toml &&
 > echo y | sudo mothership commit "Sign only for servers" >/dev/null && echo y | sudo mothership apply &> /dev/null
 $ echo "new" | sudo install -m 644 /dev/stdin /etc/scoped.conf
 $ printf 'a\np\n' | sudo mothership review | grep -A1 "can't sign"
@@ -94,12 +95,12 @@ $ git -C /var/lib/mothership/fleet log -1 --format=%s
 Sign only for servers
 ```
 
-A machine can't list a key a second time, with folders of its choosing: a machine checking a
-commit would then find either line for that key.
+A machine can't list a signing key a second time, with folders of its choosing: a machine
+checking a commit would then find either machine for that key.
 
 ```console
 $ cd /var/lib/mothership/fleet && git reset -q --hard &&
-> printf '\n# trap\n%s types/server/users\n' "$(cat /tmp/signing.pub)" >> signers.txt &&
+> printf 'type = "server"\nsigns = ["types/server/users"]\n\n[keys]\nsigning = "%s"\n' "$(cat /tmp/signing.pub)" > machines/trap.toml &&
 > echo y | sudo mothership commit "Add a trap" 2>&1 | tail -1
-Error: the fleet's machines would refuse this commit, so nothing changed: signers.txt lists one key twice, as machine and trap
+Error: the fleet's machines would refuse this commit, so nothing changed: machines/ lists one signing key twice, as machine and trap
 ```

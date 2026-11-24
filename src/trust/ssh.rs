@@ -3,8 +3,6 @@ use anyhow::{Context, Result, anyhow};
 use ssh_key::{Algorithm, LineEnding, PrivateKey, PublicKey, rand_core::OsRng};
 use std::{fs, io::ErrorKind, os::unix::fs::DirBuilderExt, path::PathBuf};
 
-pub const KEYS: &str = "ssh-keys.txt";
-
 pub fn key_path(user: &User) -> PathBuf {
     user.home.join(".ssh/id_ed25519")
 }

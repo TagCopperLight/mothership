@@ -15,7 +15,7 @@ const COMMANDS: [(&str, &str, &str); 9] = [
     (
         "trust",
         " <host> <type> <key>...",
-        "let a new machine's keys in",
+        "let a machine in, with its --option and keys",
     ),
     ("retire", " <host>", "remove a machine's keys"),
     (

@@ -1,12 +1,13 @@
 # An option brings its block, and takes it back
 
-The machine follows its fleet. Then I turn on the `extra` option, whose block lists `beta` and
-`/etc/option.conf`.
+The machine follows its fleet. Then I turn on the `extra` option in the machine's file in
+`machines/`, whose block lists `beta` and `/etc/option.conf`.
 
 ```console
 $ echo y | sudo mothership apply &>/dev/null
-$ printf 'type = "workstation"\noptions = ["extra"]\n' |
-> sudo tee /etc/mothership/machine.toml >/dev/null
+$ cd /var/lib/mothership/fleet &&
+> sed -i '1a options = ["extra"]' machines/machine.toml &&
+> echo y | sudo mothership commit "Turn on extra" >/dev/null
 $ echo y | sudo mothership apply
 Coming from the fleet · 2
   Packages
@@ -23,7 +24,9 @@ option = yes
 Turning it off again removes both.
 
 ```console
-$ printf 'type = "workstation"\n' | sudo tee /etc/mothership/machine.toml >/dev/null
+$ cd /var/lib/mothership/fleet &&
+> sed -i '/^options/d' machines/machine.toml &&
+> echo y | sudo mothership commit "Turn off extra" >/dev/null
 $ echo y | sudo mothership apply
 Coming from the fleet · 2
   Packages
@@ -44,9 +47,10 @@ ls: cannot access '/etc/option.conf': No such file or directory
 An option the type doesn't offer stops everything.
 
 ```console
-$ printf 'type = "workstation"\noptions = ["nope"]\n' |
-> sudo tee /etc/mothership/machine.toml >/dev/null
+$ cd /var/lib/mothership/fleet &&
+> sed -i '1a options = ["nope"]' machines/machine.toml &&
+> echo y | sudo mothership commit "Turn on nope" >/dev/null
 $ sudo mothership scan
-Error: /etc/mothership/machine.toml turns on nope, and /var/lib/mothership/current/types/workstation/system.toml has no [options.nope]
+Error: the machine turns on nope, and /var/lib/mothership/current/types/workstation/system.toml has no [options.nope]
 [exit 1]
 ```

@@ -127,25 +127,6 @@ fn the_recovery_signer_comes_back_from_the_age_key_alone() {
 }
 
 #[test]
-fn reads_the_folders_after_the_key() {
-    let (laptop, minipc) = (random(), random());
-    let text = format!(
-        "# laptop\n{}\n\n# minipc\n{} types/minipc shared/dot_gitconfig\n",
-        public(&laptop).unwrap(),
-        public(&minipc).unwrap()
-    );
-    assert_eq!(
-        parse_signers(&text).unwrap(),
-        [
-            signer("laptop", &laptop, &[]),
-            signer("minipc", &minipc, &["types/minipc", "shared/dot_gitconfig"])
-        ]
-    );
-    let outside = format!("# laptop\n{} ../etc\n", public(&laptop).unwrap());
-    assert!(parse_signers(&outside).is_err());
-}
-
-#[test]
 fn a_key_listed_twice_or_the_recovery_key_is_refused() {
     let (laptop, minipc) = (random(), random());
     let list = [
@@ -157,13 +138,35 @@ fn a_key_listed_twice_or_the_recovery_key_is_refused() {
     let twice = [list[0].clone(), list[1].clone(), trap];
     assert_eq!(
         distinct(&twice, None).unwrap_err().to_string(),
-        "signers.txt lists one key twice, as laptop and trap"
+        "machines/ lists one signing key twice, as laptop and trap"
     );
     let recovery = Signer::recovery(&public(&minipc).unwrap()).unwrap();
     assert_eq!(
         distinct(&list, Some(&recovery)).unwrap_err().to_string(),
-        "signers.txt lists the recovery key, as minipc"
+        "machines/ lists the recovery key, as minipc"
     );
+}
+
+fn machine(type_name: &str, signs: &str, key: &PrivateKey) -> String {
+    format!(
+        "type = \"{type_name}\"\nsigns = {signs}\n[keys]\nsigning = \"{}\"\n",
+        public(key).unwrap()
+    )
+}
+
+fn machines(files: &[(&str, &str)]) -> Machines {
+    Machines::parse(
+        files
+            .iter()
+            .map(|(name, text)| {
+                (
+                    PathBuf::from(format!("machines/{name}.toml")),
+                    text.to_string(),
+                )
+            })
+            .collect(),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -172,7 +175,9 @@ fn a_scoped_signer_changes_its_type_and_hands_out_no_more_than_it_has() {
     let workstation = signer("laptop", &laptop, &[]);
     let server = signer("minipc", &minipc, &["types/minipc", "shared/minipc"]);
     let paths = |list: &[&str]| list.iter().map(PathBuf::from).collect::<Vec<_>>();
-    let before = [workstation.clone(), server.clone()];
+    let laptop_file = machine("workstation", "\"everything\"", &laptop);
+    let minipc_file = machine("minipc", r#"["types/minipc", "shared/minipc"]"#, &minipc);
+    let before = machines(&[("laptop", &laptop_file), ("minipc", &minipc_file)]);
 
     assert!(
         allowed(
@@ -198,30 +203,57 @@ fn a_scoped_signer_changes_its_type_and_hands_out_no_more_than_it_has() {
         .is_ok()
     );
 
-    let sibling = [
-        workstation.clone(),
-        server.clone(),
-        signer("minipc2", &other, &["types/minipc/users"]),
-    ];
-    assert!(allowed(&server, &paths(&[SIGNERS]), &before, &sibling).is_ok());
-    let wider = [
-        workstation.clone(),
-        server.clone(),
-        signer("rogue", &other, &[]),
-    ];
-    assert_eq!(
-        allowed(&server, &paths(&[SIGNERS]), &before, &wider)
-            .unwrap_err()
-            .to_string(),
-        "minipc can't change rogue's line in signers.txt"
+    let with = |name: &str, text: &str| {
+        machines(&[
+            ("laptop", &laptop_file),
+            ("minipc", &minipc_file),
+            (name, text),
+        ])
+    };
+    let change = |signer: &Signer, name: &str, before: &Machines, after: &Machines| {
+        allowed(
+            signer,
+            &paths(&[&format!("machines/{name}.toml")]),
+            before,
+            after,
+        )
+        .map_err(|e| e.to_string())
+    };
+    let sibling = with(
+        "minipc2",
+        &machine("minipc", r#"["types/minipc/users"]"#, &other),
     );
-    let other_type = [
-        workstation.clone(),
-        server.clone(),
-        signer("rogue", &other, &["types/minipc", "types/workstation"]),
-    ];
-    assert!(allowed(&server, &paths(&[SIGNERS]), &before, &other_type).is_err());
-    let dropped = [server.clone()];
-    assert!(allowed(&server, &paths(&[SIGNERS]), &before, &dropped).is_err());
-    assert!(allowed(&workstation, &paths(&[SIGNERS]), &before, &wider).is_ok());
+    assert!(change(&server, "minipc2", &before, &sibling).is_ok());
+    let wider = with("rogue", &machine("minipc", "\"everything\"", &other));
+    assert_eq!(
+        change(&server, "rogue", &before, &wider).unwrap_err(),
+        "minipc can't change rogue, which signs more than it"
+    );
+    let elsewhere = with(
+        "rogue",
+        &machine("workstation", r#"["types/minipc"]"#, &other),
+    );
+    assert_eq!(
+        change(&server, "rogue", &before, &elsewhere).unwrap_err(),
+        "minipc can't change rogue, a machine of workstation"
+    );
+    let dropped = machines(&[("minipc", &minipc_file)]);
+    assert!(change(&server, "laptop", &before, &dropped).is_err());
+    let optioned = machines(&[
+        ("laptop", &laptop_file),
+        (
+            "minipc",
+            &minipc_file.replace("signs", "options = [\"gpu\"]\nsigns"),
+        ),
+    ]);
+    assert!(change(&server, "minipc", &before, &optioned).is_ok());
+    assert!(change(&workstation, "rogue", &before, &wider).is_ok());
+    let probed = with(
+        "probed",
+        &format!(
+            "type = \"minipc\"\n[keys]\nprobe = \"{}\"\n",
+            public(&other).unwrap()
+        ),
+    );
+    assert!(change(&server, "probed", &before, &probed).is_err());
 }

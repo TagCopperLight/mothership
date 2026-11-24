@@ -179,7 +179,7 @@ fn confirm_shared(
     prompt.confirm("  Go on")
 }
 
-fn own_list(fleet: &Fleet, member: &Member) -> Result<String> {
+fn own_list(fleet: &Fleet, member: &Member) -> Result<Vec<String>> {
     trust::readers_list(fleet, &member.home())
 }
 
@@ -223,9 +223,8 @@ fn chezmoi_add(
     }
     if !member.open {
         bail!(
-            "{}'s key isn't in {}: `mothership trust` it first",
-            member.name,
-            member.recipients().display()
+            "the fleet doesn't list {}'s key: `mothership trust` it first",
+            member.name
         );
     }
     let user = member.user();

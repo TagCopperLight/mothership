@@ -21,7 +21,7 @@ enum Next {
     Recovery,
 }
 
-pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
+pub fn keys(prompt: &mut Prompt) -> Result<()> {
     let admin = fleet::admin()?;
     loop {
         let anchored = checked::anchored()?;
@@ -30,7 +30,7 @@ pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
             false => Fleet::load_at(Path::new(fleet::DIR))?,
         };
         crate::trust::create_keys(&fleet)?;
-        let command = crate::trust::trust_command(&fleet, hostname)?;
+        let command = crate::trust::trust_command(&fleet)?;
         match &command {
             None if anchored => return Ok(()),
             None => println!("This machine needs a fleet commit to trust first."),
@@ -50,13 +50,13 @@ pub fn keys(prompt: &mut Prompt, hostname: &str) -> Result<()> {
                     println!("That code doesn't work: {e:#}");
                 }
             }
-            Some(Next::Recovery) => recover(prompt, hostname, &fleet, anchored)?,
+            Some(Next::Recovery) => recover(prompt, &fleet, anchored)?,
             None => bail!("install stopped before the fleet trusted this machine"),
         }
     }
 }
 
-fn recover(prompt: &mut Prompt, hostname: &str, fleet: &Fleet, anchored: bool) -> Result<()> {
+fn recover(prompt: &mut Prompt, fleet: &Fleet, anchored: bool) -> Result<()> {
     let age = secrets::identity(&prompt.hidden("Recovery key:")?)?;
     if secrets::public(&age) != fleet.recovery.key {
         bail!(
@@ -85,13 +85,13 @@ fn recover(prompt: &mut Prompt, hostname: &str, fleet: &Fleet, anchored: bool) -
     let uploads = crate::trust::trust_host(
         &staged,
         &keys,
-        hostname,
-        &staged.type_name,
+        &staged.name,
+        &staged.machine,
         &entries,
         prompt,
     )?;
     let who = author(&staged, prompt)?;
-    let message = format!("Trust {hostname} as {}", staged.type_name);
+    let message = format!("Trust {} as {}", staged.name, staged.type_name);
     let key = sign::recovery_key(&age);
     if let Outcome::Declined = stage.commit(admin, &who, &message, &key, prompt, Advance::Merge)? {
         bail!("install stopped before the fleet trusted this machine");

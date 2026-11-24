@@ -6,14 +6,15 @@ pub mod update;
 
 use crate::{
     fleet::{
-        self, Fleet, Repo, checked,
+        self, Fleet, Machine, Repo, checked,
         homes::{self, Home, Reader},
+        machines::{self, Entry, Machines, probe_name, same_key},
     },
     home::chezmoi,
     probe,
     secrets::{
-        AGE, Keys, RECIPIENTS, ROOT_KEY, Recipient, Storage, encrypt_for, format, holds, key_path,
-        make_key, public, read, root_key, user_key,
+        AGE, Keys, ROOT_KEY, Recipient, Storage, encrypt_for, key_path, make_key, public, root_key,
+        user_key,
     },
     services,
     system::user::User,
@@ -48,13 +49,11 @@ pub struct MachineKey {
 pub const SIGNING: &str = "signing";
 const PROBE: &str = "probe";
 const PROBE_SSH: &str = "probe-ssh";
-
-fn probe_signer(host: &str) -> String {
-    format!("{host}/{PROBE}")
-}
+const ROOT: &str = "root";
+const OPTION: &str = "--option";
 
 fn owners(fleet: &Fleet) -> Vec<(String, Option<&User>, PathBuf)> {
-    let mut owners = vec![("root".to_owned(), None, fleet.type_dir.clone())];
+    let mut owners = vec![(ROOT.to_owned(), None, fleet.type_dir.clone())];
     for member in &fleet.members {
         owners.push((member.name.clone(), Some(member.user()), member.dir.clone()));
     }
@@ -65,7 +64,7 @@ pub fn create_keys(fleet: &Fleet) -> Result<()> {
     if sign::machine_key()?.is_none() {
         sign::create_machine_key()?;
     }
-    if probe::unit::runs_here(fleet)? {
+    if probe::unit::runs_here(fleet) {
         for name in [probe::unit::SIGNING, probe::unit::SSH] {
             let path = probe::unit::key_path(name);
             if sign::read_key(&path)?.is_none() {
@@ -91,8 +90,15 @@ pub fn create_keys(fleet: &Fleet) -> Result<()> {
 }
 
 pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
+    let entry = fleet.machines.get(&fleet.name);
+    let listed = |user: Option<&User>, pick: fn(&machines::UserKeys) -> &Option<String>| {
+        entry.and_then(|entry| match user {
+            None => entry.keys.age.as_deref(),
+            Some(user) => pick(entry.users.get(&user.name)?).as_deref(),
+        })
+    };
     let mut keys = Vec::new();
-    for (name, user, dir) in owners(fleet) {
+    for (name, user, _) in owners(fleet) {
         let target = format!("{}/{name}", fleet.type_name);
         let age = match user {
             None => root_key()?,
@@ -103,7 +109,7 @@ pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
             keys.push(MachineKey {
                 name: name.clone(),
                 sort: Sort::Age,
-                trusted: holds(&dir.join(RECIPIENTS), &public)?,
+                trusted: same_key(listed(user, |keys| &keys.age), &public),
                 public,
                 target: target.clone(),
             });
@@ -114,34 +120,35 @@ pub fn machine_keys(fleet: &Fleet) -> Result<Vec<MachineKey>> {
             keys.push(MachineKey {
                 name,
                 sort: Sort::Ssh,
-                trusted: holds(&dir.join(ssh::KEYS), &public)?,
+                trusted: same_key(listed(Some(user), |keys| &keys.ssh), &public),
                 public,
                 target,
             });
         }
     }
+    let file = machines::path(Path::new(""), &fleet.name)
+        .display()
+        .to_string();
+    let root_key = |pick: fn(&machines::RootKeys) -> &Option<String>| {
+        entry.and_then(|entry| pick(&entry.keys).as_deref())
+    };
     if let Some(key) = sign::machine_key()? {
-        let text = file::read_if_any(&fleet.dir.join(sign::SIGNERS))?.unwrap_or_default();
+        let public = sign::public(&key)?;
         keys.push(MachineKey {
             name: SIGNING.to_owned(),
             sort: Sort::Signing,
-            trusted: sign::parse_signers(&text)?
-                .iter()
-                .any(|signer| &signer.key == key.public_key()),
-            public: sign::public(&key)?,
-            target: sign::SIGNERS.to_owned(),
+            trusted: same_key(root_key(|keys| &keys.signing), &public),
+            public,
+            target: file.clone(),
         });
     }
-    if probe::unit::runs_here(fleet)?
+    if probe::unit::runs_here(fleet)
         && let Some(signing) = sign::read_key(&probe::unit::key_path(probe::unit::SIGNING))?
         && let Some(ssh) = sign::read_key(&probe::unit::key_path(probe::unit::SSH))?
     {
-        let text = file::read_if_any(&fleet.dir.join(sign::SIGNERS))?.unwrap_or_default();
-        let trusted = sign::parse_signers(&text)?
-            .iter()
-            .any(|signer| &signer.key == signing.public_key());
+        let trusted = same_key(root_key(|keys| &keys.probe), &sign::public(&signing)?);
         for (name, sort, key, target) in [
-            (PROBE, Sort::Signing, &signing, sign::SIGNERS),
+            (PROBE, Sort::Signing, &signing, file.as_str()),
             (PROBE_SSH, Sort::Ssh, &ssh, "GitHub"),
         ] {
             keys.push(MachineKey {
@@ -164,7 +171,7 @@ pub fn pending(fleet: &Fleet) -> Result<Vec<String>> {
         .collect())
 }
 
-pub fn trust_command(fleet: &Fleet, hostname: &str) -> Result<Option<String>> {
+pub fn trust_command(fleet: &Fleet) -> Result<Option<String>> {
     let entries = pending(fleet)?;
     let quoted: Vec<String> = entries
         .iter()
@@ -173,113 +180,177 @@ pub fn trust_command(fleet: &Fleet, hostname: &str) -> Result<Option<String>> {
             false => entry.clone(),
         })
         .collect();
+    let options: String = fleet
+        .machine
+        .options
+        .iter()
+        .map(|option| format!(" {OPTION} {option}"))
+        .collect();
     Ok((!entries.is_empty()).then(|| {
         format!(
-            "sudo mothership trust {hostname} {} {}",
-            fleet.type_name,
+            "sudo mothership trust {} {}{options} {}",
+            fleet.name,
+            fleet.machine.device_type,
             quoted.join(" ")
         )
     }))
+}
+
+pub fn options_and_keys(args: &[String]) -> Result<(Vec<String>, &[String])> {
+    let mut options = Vec::new();
+    let mut rest = args;
+    while let [flag, option, after @ ..] = rest
+        && flag == OPTION
+    {
+        if options.contains(option) {
+            bail!("{OPTION} {option} is given twice");
+        }
+        options.push(option.clone());
+        rest = after;
+    }
+    Ok((options, rest))
 }
 
 pub fn trust_host(
     fleet: &Fleet,
     keys: &Keys,
     host: &str,
-    type_name: &str,
+    machine: &Machine,
     entries: &[String],
     prompt: &mut Prompt,
 ) -> Result<Vec<github::Key>> {
-    let mut readers = Readers::new(prompt);
+    let file = machines::path(Path::new(""), host);
+    let mut entry = match fleet.machines.get(host) {
+        Some(known)
+            if known.device_type != machine.device_type || known.options != machine.options =>
+        {
+            bail!(
+                "{} says {host} is a {} with options [{}]: change it there",
+                file.display(),
+                known.device_type,
+                known.options.join(", ")
+            )
+        }
+        Some(known) => known.clone(),
+        None => Entry::new(&machine.device_type, &machine.options),
+    };
     let mut uploads = Vec::new();
-    for entry in entries {
-        let (name, key) = entry
+    let mut done = Vec::new();
+    for pair in entries {
+        let (name, key) = pair
             .split_once('=')
-            .with_context(|| format!("{entry} isn't <name>=<key>"))?;
-        let text = format!("{type_name}/{name}");
-        if name == PROBE {
-            add_probe(fleet, host, key)?;
-        } else if name == PROBE_SSH {
-            uploads.push(github::Key {
+            .with_context(|| format!("{pair} isn't <name>=<key>"))?;
+        let lists = |what: &str| format!("{} lists another {what} for {host}", file.display());
+        match name {
+            PROBE => {
+                if set(&mut entry.keys.probe, ssh::normalize(key)?, || {
+                    lists("probe key")
+                })? {
+                    done.push(format!(
+                        "{} changes the versions of the fleet's images now.",
+                        probe_name(host)
+                    ));
+                }
+            }
+            PROBE_SSH => uploads.push(github::Key {
                 title: github::title(host, PROBE),
                 public: ssh::normalize(key)?,
                 kind: github::Use::Deploy,
-            });
-        } else if name == SIGNING {
-            let public = add_signer(fleet, host, type_name, key, readers.prompt)?;
-            uploads.push(github::Key {
-                title: host.to_owned(),
-                public,
-                kind: github::Use::Signing,
-            });
-        } else if key.starts_with("ssh-") {
-            let public = add_ssh_key(fleet, &text, host, key)?;
-            uploads.push(github::Key {
-                title: github::title(host, name),
-                public,
-                kind: github::Use::Login,
-            });
-        } else if !holds(&target(fleet, &text)?.list, key)? {
-            trust_with(fleet, keys, &text, host, key, &mut readers)?;
+            }),
+            SIGNING => {
+                let public = ssh::normalize(key)?;
+                if set(&mut entry.keys.signing, public.clone(), || {
+                    lists("signing key")
+                })? {
+                    entry.signs = Some(ask_reach(fleet, host, &machine.device_type, prompt)?);
+                    done.push(format!("{host} signs for the fleet now."));
+                }
+                uploads.push(github::Key {
+                    title: host.to_owned(),
+                    public,
+                    kind: github::Use::Signing,
+                });
+            }
+            ROOT if key.starts_with("ssh-") => {
+                bail!("root has no SSH key in the fleet, only its users do")
+            }
+            ROOT => {
+                age_key(key)?;
+                set(&mut entry.keys.age, key.to_owned(), || {
+                    lists("age key of root")
+                })?;
+            }
+            user if key.starts_with("ssh-") => {
+                let public = ssh::normalize(key)?;
+                let slot = &mut entry.users.entry(user.to_owned()).or_default().ssh;
+                if set(slot, public.clone(), || {
+                    lists(&format!("SSH key of {user}"))
+                })? {
+                    done.push(format!(
+                        "{}/{user} on {host} has an SSH key in the fleet now.",
+                        machine.device_type
+                    ));
+                }
+                uploads.push(github::Key {
+                    title: github::title(host, user),
+                    public,
+                    kind: github::Use::Login,
+                });
+            }
+            user => {
+                age_key(key)?;
+                let slot = &mut entry.users.entry(user.to_owned()).or_default().age;
+                set(slot, key.to_owned(), || {
+                    lists(&format!("age key of {user}"))
+                })?;
+            }
         }
+    }
+    let mut after = fleet.machines.clone();
+    after.insert(host, entry.clone());
+    after.check(&fleet.dir)?;
+    Machines::check_options(&fleet.dir, &entry)?;
+    let changed = changed_readers(fleet, &after)?;
+    reseal(fleet, keys, &after, &changed, &mut Readers::new(prompt))?;
+    after.write(&fleet.dir, host)?;
+    for reader in &changed {
+        let count = secrets_of(fleet, reader)?.len();
+        println!("{host} opens the {count} secrets of {reader} now.");
+    }
+    for line in done {
+        println!("{line}");
     }
     Ok(uploads)
 }
 
-fn listed_as(list: &[Recipient], path: &Path, host: &str, key: &str) -> Result<bool> {
-    let same = |known: &Recipient| {
-        known
-            .key
-            .split_whitespace()
-            .take(2)
-            .eq(key.split_whitespace())
-    };
-    match list.iter().find(|entry| entry.name == host) {
-        Some(known) if same(known) => Ok(true),
-        Some(_) => bail!(
-            "{} already lists another key for {host}: retire it first",
-            path.display()
-        ),
-        None => Ok(false),
+fn set(slot: &mut Option<String>, key: String, taken: impl Fn() -> String) -> Result<bool> {
+    match slot {
+        None => {
+            *slot = Some(key);
+            Ok(true)
+        }
+        Some(known) if same_key(Some(known), &key) => Ok(false),
+        Some(_) => bail!("{}: retire it first", taken()),
     }
 }
 
-fn add_ssh_key(fleet: &Fleet, text: &str, host: &str, key: &str) -> Result<String> {
-    let Reader::Home(home) = target(fleet, text)?.scope else {
-        bail!("root has no SSH key in the fleet, only its users do");
-    };
-    let public = ssh::normalize(key)?;
-    let path = home.dir(&fleet.dir).join(ssh::KEYS);
-    let mut list = read(&path)?;
-    if !listed_as(&list, &path, host, &public)? {
-        list.push(Recipient {
-            name: host.to_owned(),
-            key: public.clone(),
-        });
-        file::write(&path, format(&list).as_bytes(), 0o644)?;
-        println!("{text} on {host} has an SSH key in the fleet now.");
-    }
-    Ok(public)
+fn age_key(key: &str) -> Result<()> {
+    key.parse::<x25519::Recipient>()
+        .map(drop)
+        .map_err(|e| anyhow!("{key}: {e}"))
 }
 
-fn add_signer(
+fn ask_reach(
     fleet: &Fleet,
     host: &str,
     type_name: &str,
-    key: &str,
     prompt: &mut Prompt,
-) -> Result<String> {
-    let path = fleet.dir.join(sign::SIGNERS);
-    let mut list = read(&path)?;
-    let public = ssh::normalize(key)?;
-    if listed_as(&list, &path, host, &public)? {
-        return Ok(public);
-    }
-    let own = format!("types/{type_name}");
+) -> Result<sign::Reach> {
+    let own = format!("{}/{type_name}", fleet::TYPES);
     let question = format!(
         "{host} may change: Enter for {own}, * for everything, or folders separated by spaces ›"
     );
-    let line = loop {
+    loop {
         let answer = prompt.line_or_empty(&question)?;
         let words: Vec<&str> = match answer.as_str() {
             "" => vec![own.as_str()],
@@ -287,233 +358,97 @@ fn add_signer(
             folders => folders.split_whitespace().collect(),
         };
         match reach(fleet, &words) {
-            Ok(()) => break [&[public.as_str()][..], &words].concat().join(" "),
+            Ok(reach) => return Ok(reach),
             Err(e) => println!("  {e:#}"),
         }
-    };
-    list.push(Recipient {
-        name: host.to_owned(),
-        key: line,
-    });
-    file::write(&path, format(&list).as_bytes(), 0o644)?;
-    println!("{host} signs for the fleet now.");
-    Ok(public)
-}
-
-fn add_probe(fleet: &Fleet, host: &str, key: &str) -> Result<()> {
-    let path = fleet.dir.join(sign::SIGNERS);
-    let mut list = read(&path)?;
-    let public = ssh::normalize(key)?;
-    let name = probe_signer(host);
-    if listed_as(&list, &path, &name, &public)? {
-        return Ok(());
     }
-    list.push(Recipient {
-        name: name.clone(),
-        key: format!("{public} {}", sign::VERSIONS),
-    });
-    file::write(&path, format(&list).as_bytes(), 0o644)?;
-    println!("{name} changes the versions of the fleet's images now.");
-    Ok(())
 }
 
-fn reach(fleet: &Fleet, folders: &[&str]) -> Result<()> {
-    if let sign::Reach::Folders(folders) = sign::Reach::parse(folders)? {
+fn reach(fleet: &Fleet, folders: &[&str]) -> Result<sign::Reach> {
+    let reach = sign::Reach::parse(folders)?;
+    if let sign::Reach::Folders(folders) = &reach {
         for folder in folders {
-            if !fleet.dir.join(&folder).is_dir() {
+            if !fleet.dir.join(folder).is_dir() {
                 bail!("the fleet has no folder {}", folder.display());
             }
         }
     }
-    Ok(())
+    if reach == sign::Reach::Versions {
+        bail!("only the probe signs versions alone");
+    }
+    Ok(reach)
 }
 
-fn every_list(fleet: &Fleet) -> Result<Vec<Target>> {
-    let mut all = Vec::new();
-    for type_name in fleet::types(&fleet.dir)? {
-        all.push(target(fleet, &format!("{type_name}/root"))?);
-        let users = fleet::type_dir(&fleet.dir, &type_name).join(fleet::USERS);
-        for dir in walk::children(&users)? {
-            let user = dir.file_name().unwrap_or_default().to_string_lossy();
-            all.push(target(fleet, &format!("{type_name}/{user}"))?);
-        }
-    }
-    Ok(all)
+fn changed_readers(fleet: &Fleet, after: &Machines) -> Result<Vec<Reader>> {
+    Ok(homes::readers(&fleet.dir)?
+        .into_iter()
+        .filter(|reader| fleet.machines.recipients(reader) != after.recipients(reader))
+        .collect())
 }
 
 pub fn retire_host(fleet: &Fleet, host: &str) -> Result<()> {
-    let mut found = false;
-    for target in every_list(fleet)? {
-        if read(&target.list)?.iter().any(|r| r.name == host) {
-            retire(fleet, &target, host)?;
-            found = true;
-        }
-        if let Reader::Home(home) = &target.scope
-            && drop_named(&home.dir(&fleet.dir).join(ssh::KEYS), host)?
-        {
-            println!("{} on {host} has no SSH key in the fleet now.", target.text);
-            found = true;
-        }
-    }
-    for name in [host.to_owned(), probe_signer(host)] {
-        if drop_named(&fleet.dir.join(sign::SIGNERS), &name)? {
+    let mut after = fleet.machines.clone();
+    let entry = after
+        .remove(host)
+        .with_context(|| format!("the fleet has no machine {host}"))?;
+    let changed = changed_readers(fleet, &after)?;
+    after.write(&fleet.dir, host)?;
+    for (name, key) in [
+        (host.to_owned(), &entry.keys.signing),
+        (probe_name(host), &entry.keys.probe),
+    ] {
+        if key.is_some() {
             println!("{name} signs nothing now.");
-            found = true;
         }
     }
-    if !found {
-        bail!("the fleet holds no key named {host}");
+    for reader in &changed {
+        let secrets = secrets_of(fleet, reader)?;
+        if secrets.is_empty() {
+            continue;
+        }
+        println!("{host} can still open these secrets of {reader}, so change them:");
+        for secret in &secrets {
+            println!("  {}", secret.shown);
+        }
     }
     fleet::check_logins(&fleet.dir).with_context(|| format!("{host} stays"))
 }
 
-pub fn reseal_everything(
-    fleet: &Fleet,
-    keys: &Keys,
-    dropped: &str,
-    prompt: &mut Prompt,
-) -> Result<()> {
-    let mut readers = Readers::new(prompt);
-    for target in every_list(fleet)? {
-        let before = read(&target.list)?;
-        let mut list = before.clone();
-        list.retain(|r| r.key != dropped);
-        if list == before && secrets_of(fleet, &target)?.is_empty() {
-            continue;
-        }
-        rewrite(fleet, keys, &target, &list, &mut readers)?;
-    }
-    Ok(())
+pub fn reseal_everything(fleet: &Fleet, keys: &Keys, prompt: &mut Prompt) -> Result<()> {
+    let all = homes::readers(&fleet.dir)?;
+    reseal(
+        fleet,
+        keys,
+        &fleet.machines,
+        &all,
+        &mut Readers::new(prompt),
+    )
 }
 
-fn drop_named(path: &Path, name: &str) -> Result<bool> {
-    let mut list = read(path)?;
-    let before = list.len();
-    list.retain(|entry| entry.name != name);
-    if list.len() == before {
-        return Ok(false);
-    }
-    file::write(path, format(&list).as_bytes(), 0o644)?;
-    Ok(true)
-}
-
-struct Target {
-    text: String,
-    type_name: String,
-    scope: Reader,
-    list: PathBuf,
-}
-
-fn target(fleet: &Fleet, text: &str) -> Result<Target> {
-    let (type_name, scope) = text
+fn reader(fleet: &Fleet, text: &str) -> Result<Reader> {
+    let (type_name, user) = text
         .split_once('/')
         .with_context(|| format!("{text} is not <type>/root or <type>/<user>"))?;
     let type_dir = fleet::type_dir(&fleet.dir, type_name);
     if type_name.is_empty() || type_name.contains("..") || !type_dir.is_dir() {
         bail!("the fleet has no type {type_name}");
     }
-    let (scope, list) = match scope {
-        "root" => (
-            Reader::Root(type_name.to_owned()),
-            type_dir.join(RECIPIENTS),
-        ),
-        user => {
-            let home = Home {
-                type_name: type_name.to_owned(),
-                user: user.to_owned(),
-            };
-            let dir = home.dir(&fleet.dir);
-            if user.is_empty() || user.contains('/') || user.contains("..") || !dir.is_dir() {
-                bail!("{type_name} has no user {user}");
-            }
-            (Reader::Home(home), dir.join(RECIPIENTS))
-        }
-    };
-    Ok(Target {
-        text: text.to_owned(),
+    if user == ROOT {
+        return Ok(Reader::Root(type_name.to_owned()));
+    }
+    let home = Home {
         type_name: type_name.to_owned(),
-        scope,
-        list,
-    })
+        user: user.to_owned(),
+    };
+    let dir = home.dir(&fleet.dir);
+    if user.is_empty() || user.contains('/') || user.contains("..") || !dir.is_dir() {
+        bail!("{type_name} has no user {user}");
+    }
+    Ok(Reader::Home(home))
 }
 
 pub fn guards_secrets(fleet: &Fleet, text: &str) -> Result<bool> {
-    Ok(!secrets_of(fleet, &target(fleet, text)?)?.is_empty())
-}
-
-pub fn trust_with(
-    fleet: &Fleet,
-    keys: &Keys,
-    text: &str,
-    name: &str,
-    key: &str,
-    readers: &mut Readers,
-) -> Result<()> {
-    let target = target(fleet, text)?;
-    key.parse::<x25519::Recipient>()
-        .map_err(|e| anyhow!("{key}: {e}"))?;
-    if name.is_empty() || name.contains(['\n', '#']) {
-        bail!("a key's name can't be empty or hold a newline or #");
-    }
-    let mut list = read(&target.list)?;
-    if let Some(known) = list.iter().find(|r| r.key == key) {
-        bail!("{text} already holds this key, as {}", known.name);
-    }
-    if list.iter().any(|r| r.name == name) {
-        bail!("{text} already holds a key named {name}: run `sudo mothership retire {name}` first");
-    }
-    list.push(Recipient {
-        name: name.to_owned(),
-        key: key.to_owned(),
-    });
-    let count = rewrite(fleet, keys, &target, &list, readers)?;
-    println!("{name} opens the {count} secrets of {text} now.");
-    Ok(())
-}
-
-fn retire(fleet: &Fleet, target: &Target, name: &str) -> Result<()> {
-    let text = &target.text;
-    let mut list = read(&target.list)?;
-    let retired = list
-        .iter()
-        .find(|r| r.name == name)
-        .with_context(|| format!("{text} holds no {name}"))?
-        .key
-        .clone();
-    list.retain(|r| r.name != name);
-    file::write(&target.list, format(&list).as_bytes(), 0o644)
-        .with_context(|| format!("writing {}", target.list.display()))?;
-    println!("{name} is gone from {text}.");
-    let secrets = secrets_of(fleet, target)?;
-    if secrets.is_empty() {
-        return Ok(());
-    }
-    println!("{name} can still open these, so change them:");
-    for secret in &secrets {
-        println!("  {}", secret.shown);
-    }
-    let mut still = Vec::new();
-    for secret in &secrets {
-        if reader_recipients(&fleet.dir, &secret.path, None)?
-            .iter()
-            .any(|r| r.key == retired)
-        {
-            let others: Vec<&str> = secret
-                .readers
-                .iter()
-                .map(String::as_str)
-                .filter(|reader| reader != text)
-                .collect();
-            still.push((secret.shown.clone(), others.join(", ")));
-        }
-    }
-    if !still.is_empty() {
-        println!(
-            "{name}'s key stays in another home that shares these, so their new versions open for it too:"
-        );
-        style::print_pairs(&still);
-    }
-    Ok(())
+    Ok(!secrets_of(fleet, &reader(fleet, text)?)?.is_empty())
 }
 
 pub struct Readers<'p> {
@@ -556,74 +491,58 @@ impl<'p> Readers<'p> {
     }
 }
 
-pub fn readers_list(repo: &Repo, source: &Path) -> Result<String> {
-    Ok(format(&sealed_list(repo, source)?))
+pub fn readers_list(repo: &Repo, source: &Path) -> Result<Vec<String>> {
+    Ok(sealed_list(repo, source)?
+        .into_iter()
+        .map(|recipient| recipient.key)
+        .collect())
 }
 
 pub fn sealed_list(repo: &Repo, source: &Path) -> Result<Vec<Recipient>> {
-    Ok(repo.sealed_for(reader_recipients(&repo.dir, source, None)?))
+    let readers = homes::owners(&repo.dir, source)?;
+    Ok(repo.sealed(&readers))
 }
 
-fn reader_recipients(
-    fleet_dir: &Path,
-    source: &Path,
-    replacing: Option<(&Path, &[Recipient])>,
-) -> Result<Vec<Recipient>> {
-    let mut all: Vec<Recipient> = Vec::new();
-    for reader in homes::owners(fleet_dir, source)? {
-        let path = reader.recipients(fleet_dir);
-        let list = match replacing {
-            Some((replaced, list)) if replaced == path => list.to_vec(),
-            _ => read(&path)?,
-        };
-        for recipient in list {
-            if !all.iter().any(|known| known.key == recipient.key) {
-                all.push(recipient);
+fn reseal(
+    fleet: &Fleet,
+    keys: &Keys,
+    machines: &Machines,
+    readers: &[Reader],
+    approvals: &mut Readers,
+) -> Result<()> {
+    let mut all: Vec<(PathBuf, Secret)> = Vec::new();
+    for reader in readers {
+        for secret in secrets_of(fleet, reader)? {
+            let file = match fs::symlink_metadata(&secret.path)?.is_symlink() {
+                true => homes::target(&fleet.dir, &secret.path)?,
+                false => secret.path.clone(),
+            };
+            if !all.iter().any(|(known, _)| *known == file) {
+                all.push((file, secret));
             }
         }
     }
-    Ok(all)
-}
-
-fn rewrite(
-    fleet: &Fleet,
-    keys: &Keys,
-    target: &Target,
-    list: &[Recipient],
-    readers: &mut Readers,
-) -> Result<usize> {
-    let all = secrets_of(fleet, target)?;
-    if !all.is_empty() {
-        println!("Re-encrypting for {}:", target.text);
-        let pairs: Vec<(String, String)> = all
-            .iter()
-            .map(|secret| (secret.shown.clone(), secret.readers.join(", ")))
-            .collect();
-        style::print_pairs(&pairs);
+    if all.is_empty() {
+        return Ok(());
     }
+    println!("Re-encrypting:");
+    let pairs: Vec<(String, String)> = all
+        .iter()
+        .map(|(_, secret)| (secret.shown.clone(), secret.readers.join(", ")))
+        .collect();
+    style::print_pairs(&pairs);
     let mut sealed = Vec::new();
-    for secret in all {
-        readers.approve(fleet, &secret.path)?;
-        let recipients = fleet.sealed_for(reader_recipients(
-            &fleet.dir,
-            &secret.path,
-            Some((&target.list, list)),
-        )?);
-        let file = match fs::symlink_metadata(&secret.path)?.is_symlink() {
-            true => homes::target(&fleet.dir, &secret.path)?,
-            false => secret.path.clone(),
-        };
-        let bytes = encrypt_for(&recipients, &keys.decrypt(&file)?)?;
-        sealed.push((file, bytes));
+    for (file, secret) in &all {
+        approvals.approve(fleet, &secret.path)?;
+        let owners = homes::owners(&fleet.dir, &secret.path)?;
+        let recipients = machines.sealed(&owners, Some(&fleet.recovery));
+        sealed.push((file, encrypt_for(&recipients, &keys.decrypt(file)?)?));
     }
-    let count = sealed.len();
     for (file, bytes) in sealed {
-        let mode = fs::metadata(&file)?.permissions().mode() & 0o7777;
-        file::write(&file, &bytes, mode).with_context(|| format!("writing {}", file.display()))?;
+        let mode = fs::metadata(file)?.permissions().mode() & 0o7777;
+        file::write(file, &bytes, mode).with_context(|| format!("writing {}", file.display()))?;
     }
-    file::write(&target.list, format(list).as_bytes(), 0o644)
-        .with_context(|| format!("writing {}", target.list.display()))?;
-    Ok(count)
+    Ok(())
 }
 
 struct Secret {
@@ -644,11 +563,11 @@ fn secret(fleet: &Fleet, shown: String, path: PathBuf) -> Result<Secret> {
     })
 }
 
-fn secrets_of(fleet: &Fleet, target: &Target) -> Result<Vec<Secret>> {
+fn secrets_of(fleet: &Fleet, reader: &Reader) -> Result<Vec<Secret>> {
     let mut all = Vec::new();
-    match &target.scope {
-        Reader::Root(_) => {
-            let type_dir = fleet::type_dir(&fleet.dir, &target.type_name);
+    match reader {
+        Reader::Root(type_name) => {
+            let type_dir = fleet::type_dir(&fleet.dir, type_name);
             for file in fleet::etc_files(&type_dir)? {
                 if file.storage == Storage::Encrypted {
                     let shown = Path::new(file::ETC).join(&file.rel).display().to_string();

@@ -85,7 +85,7 @@ fn change(prompt: &mut Prompt) -> Result<()> {
     let fleet = Fleet::load_at(&stage.dir)?;
     let mut keys = Keys::default();
     keys.push(old.clone());
-    trust::reseal_everything(&fleet, &keys, &old_public, prompt)?;
+    trust::reseal_everything(&fleet, &keys, prompt)?;
     let key = sign::recovery_key(&old);
     let message = "Change the recovery key";
     let who = checked::author(&admin)?;

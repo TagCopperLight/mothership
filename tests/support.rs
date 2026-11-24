@@ -25,8 +25,21 @@ pub fn name_recovery(dir: &Path) -> age::x25519::Identity {
     key
 }
 
-pub fn seal(list: &Path, bytes: &[u8]) -> Vec<u8> {
-    crate::secrets::encrypt_for(&crate::secrets::read(list).unwrap(), bytes).unwrap()
+pub fn seal(keys: &[&age::x25519::Identity], bytes: &[u8]) -> Vec<u8> {
+    let list: Vec<crate::secrets::Recipient> = keys
+        .iter()
+        .map(|key| crate::secrets::Recipient {
+            name: "key".into(),
+            key: key.to_public().to_string(),
+        })
+        .collect();
+    crate::secrets::encrypt_for(&list, bytes).unwrap()
+}
+
+pub fn machine(fleet: &Path, name: &str, text: &str) {
+    let path = crate::fleet::machines::path(fleet, name);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
 }
 
 pub fn empty_fleet(dir: &Path) -> Fleet {

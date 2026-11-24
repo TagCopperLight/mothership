@@ -547,7 +547,7 @@ fn listing_a_user_gives_them_an_empty_folder_in_the_type() {
             .exists()
     );
     assert!(checkout.apply(Add::ListUser("dev".into()), "y"));
-    for empty in ["user.toml", "recipients.txt", "home/.keep"] {
+    for empty in ["user.toml", "home/.keep"] {
         assert_eq!(
             checkout.read(&format!("types/workstation/users/dev/{empty}")),
             ""

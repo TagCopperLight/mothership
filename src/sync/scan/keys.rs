@@ -2,7 +2,6 @@ use crate::{
     fleet::Fleet,
     sync::item::{Change, Item, Section},
     sync::kind::Kind,
-    system::host,
     trust::{self, Sort},
 };
 use anyhow::Result;
@@ -19,11 +18,10 @@ pub fn untrusted(fleet: &Fleet) -> Result<Vec<Item>> {
     if !needed {
         return Ok(Vec::new());
     }
-    let hostname = host::name()?;
-    let Some(command) = trust::trust_command(fleet, &hostname)? else {
+    let Some(command) = trust::trust_command(fleet)? else {
         return Ok(Vec::new());
     };
-    let mut item = Item::new(Kind::Key, Change::Added, hostname, "not trusted").noting(format!(
+    let mut item = Item::new(Kind::Key, Change::Added, &fleet.name, "not trusted").noting(format!(
         "run `{command}` on a machine that signs for the fleet"
     ));
     item.section = Section::Attention;

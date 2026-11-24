@@ -101,7 +101,7 @@ impl Root {
 
     pub fn run<S: AsRef<OsStr>>(
         &self,
-        recipients: &str,
+        recipients: &[String],
         snapshot: &Snapshot,
         args: &[S],
     ) -> Result<()> {
@@ -112,22 +112,21 @@ impl Root {
 
     fn command<S: AsRef<OsStr>>(
         &self,
-        recipients: Option<&str>,
+        recipients: Option<&[String]>,
         snapshot: &Snapshot,
         args: &[S],
     ) -> Result<(Command, Run)> {
         let dir = TempDir::new()?;
         let mut config = ChezmoiConfig {
             identity: dir.path().join("key.txt"),
-            recipients: dir.path().join("recipients.txt"),
             ..self.config.clone()
         };
         if let Some(key) = secrets::user_key(&self.user)? {
             secrets::write_key(&config.identity, &key)?;
         }
-        match recipients {
-            Some(list) => fs::write(&config.recipients, list)?,
-            None => config.recipients = self.config.recipients.clone(),
+        if let Some(list) = recipients {
+            config.recipients = dir.path().join("recipients.txt");
+            fs::write(&config.recipients, secrets::list_text(list))?;
         }
         let config_path = dir.path().join("chezmoi.toml");
         fs::write(&config_path, config_text(&config)?)?;

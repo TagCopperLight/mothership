@@ -137,10 +137,6 @@ fn each_folder_under_users_is_a_user_of_the_type() {
     let names: Vec<&str> = fleet.profiles.iter().map(|m| m.name.as_str()).collect();
     assert_eq!(names, ["dev", "tag"]);
     assert!(fleet.profiles[1].config.linger);
-    assert_eq!(
-        fleet.profiles[1].recipients(),
-        users.join("tag/recipients.txt")
-    );
 
     fs::write(users.join("dev/ignore.txt"), "package htop\n").unwrap();
     let cpu = intel();
@@ -157,24 +153,14 @@ fn each_folder_under_users_is_a_user_of_the_type() {
 #[test]
 fn etc_secrets_open_with_root_key_only() {
     let dir = checkout("");
-    let list = dir.path().join("list.txt");
     let (root, user) = (
         secrets::make_key(&dir.path().join("root.txt")).unwrap(),
         secrets::make_key(&dir.path().join("user.txt")).unwrap(),
     );
-    fs::write(
-        &list,
-        format!(
-            "# root\n{}\n\n# user\n{}\n",
-            secrets::public(&root),
-            secrets::public(&user)
-        ),
-    )
-    .unwrap();
     let etc = dir.path().join("types/workstation/etc");
     fs::write(
         etc.join("wifi.conf.age"),
-        crate::support::seal(&list, b"psk=1"),
+        crate::support::seal(&[&root, &user], b"psk=1"),
     )
     .unwrap();
     let mut fleet = Fleet::of(

@@ -83,15 +83,26 @@ impl Repo {
     }
 }
 
-fn line(name: &str, key: &PrivateKey, scope: &str) -> String {
-    format!("# {name}\n{} {scope}\n", sign::public(key).unwrap())
+impl Repo {
+    fn machine(&self, name: &str, key: &PrivateKey, signs: &str) {
+        let public = sign::public(key).unwrap();
+        let text = match signs {
+            "versions" => format!("type = \"server\"\n[keys]\nprobe = \"{public}\"\n"),
+            signs => {
+                format!("type = \"{name}\"\nsigns = {signs}\n[keys]\nsigning = \"{public}\"\n")
+            }
+        };
+        self.write(&format!("machines/{name}.toml"), &text);
+    }
 }
+
+const EVERYTHING: &str = "\"everything\"";
 
 #[test]
 fn a_chain_signed_by_listed_keys_passes_and_stops_at_the_first_unsigned_commit() {
     let repo = Repo::new();
     let (laptop, laptop_file) = repo.key("laptop");
-    repo.write(SIGNERS, &line("laptop", &laptop, ""));
+    repo.machine("laptop", &laptop, EVERYTHING);
     let anchor = repo.commit("Signers", None);
     repo.write("types/a/system.toml", "packages = []\n");
     let signed = repo.commit("Signed", Some(&laptop_file));
@@ -111,7 +122,7 @@ fn a_chain_signed_by_listed_keys_passes_and_stops_at_the_first_unsigned_commit()
 fn a_full_signer_vouches_for_the_unsigned_commits_before_it() {
     let repo = Repo::new();
     let (laptop, laptop_file) = repo.key("laptop");
-    repo.write(SIGNERS, &line("laptop", &laptop, ""));
+    repo.machine("laptop", &laptop, EVERYTHING);
     let anchor = repo.commit("Signers", None);
     repo.write("types/a/system.toml", "packages = [\"zeta\"]\n");
     repo.commit("Unsigned", None);
@@ -136,7 +147,7 @@ fn a_full_signer_vouches_for_the_unsigned_commits_before_it() {
 fn a_signer_can_not_vouch_for_a_line_that_leaves_the_last_accepted_commit() {
     let repo = Repo::new();
     let (laptop, laptop_file) = repo.key("laptop");
-    repo.write(SIGNERS, &line("laptop", &laptop, ""));
+    repo.machine("laptop", &laptop, EVERYTHING);
     let first = repo.commit("Signers", None);
     repo.write("types/a/system.toml", "packages = [\"old\"]\n");
     let old = repo.commit("Old, signed", Some(&laptop_file));
@@ -162,12 +173,9 @@ fn a_signer_vouches_only_within_its_reach_and_the_probe_never_vouches() {
     let (minipc, minipc_file) = repo.key("minipc");
     let (probe, probe_file) = repo.key("probe");
     let (rogue, rogue_file) = repo.key("rogue");
-    let signers = line("laptop", &laptop, "")
-        + "\n"
-        + &line("minipc", &minipc, "types/minipc")
-        + "\n"
-        + &line("probe", &probe, "versions");
-    repo.write(SIGNERS, &signers);
+    repo.machine("laptop", &laptop, EVERYTHING);
+    repo.machine("minipc", &minipc, r#"["types/minipc"]"#);
+    repo.machine("box", &probe, "versions");
     let service = "types/server/services/db/service.toml";
     repo.write(service, &pinned("16.4.3", OLD));
     repo.write("types/server/services/db/compose.yaml", "services: {}\n");
@@ -197,14 +205,14 @@ fn a_signer_vouches_only_within_its_reach_and_the_probe_never_vouches() {
         .to_string();
     assert_eq!(
         error,
-        "the fleet's machines would refuse this commit, so nothing changed: probe may change \
-         only versions, so it can't vouch for the commits before it"
+        "the fleet's machines would refuse this commit, so nothing changed: box/probe may \
+         change only versions, so it can't vouch for the commits before it"
     );
     let vouched = signed_commit(&git, &tree, &tip, &anchor, "me <m@x>", "Vouch", &laptop);
     assert!(vouched.is_ok());
 
     repo.git(&["reset", "-q", "--hard", &unsigned]);
-    repo.write(SIGNERS, &(signers + "\n" + &line("rogue", &rogue, "")));
+    repo.machine("rogue", &rogue, EVERYTHING);
     repo.commit("Let me in", None);
     repo.commit("Vouch for myself", Some(&rogue_file));
     refused();
@@ -215,12 +223,9 @@ fn a_commit_can_not_sign_itself_in() {
     let repo = Repo::new();
     let (laptop, _) = repo.key("laptop");
     let (rogue, rogue_file) = repo.key("rogue");
-    repo.write(SIGNERS, &line("laptop", &laptop, ""));
+    repo.machine("laptop", &laptop, EVERYTHING);
     let anchor = repo.commit("Signers", None);
-    repo.write(
-        SIGNERS,
-        &(line("laptop", &laptop, "") + "\n" + &line("rogue", &rogue, "")),
-    );
+    repo.machine("rogue", &rogue, EVERYTHING);
     repo.commit("Let me in", Some(&rogue_file));
 
     let checked = repo.check(&anchor);
@@ -244,7 +249,7 @@ fn a_scoped_signer_stays_in_its_type_and_recovery_signs_anything() {
     )
     .unwrap();
     fs::set_permissions(&recovery_file, fs::Permissions::from_mode(0o600)).unwrap();
-    repo.write(SIGNERS, &line("minipc", &minipc, "types/minipc"));
+    repo.machine("minipc", &minipc, r#"["types/minipc"]"#);
     repo.write(
         MANIFEST,
         &format!(
@@ -321,10 +326,8 @@ fn a_versions_signer_changes_only_versions_and_digests_within_their_major() {
     let repo = Repo::new();
     let (laptop, _) = repo.key("laptop");
     let (probe, probe_file) = repo.key("probe");
-    repo.write(
-        SIGNERS,
-        &(line("laptop", &laptop, "") + "\n" + &line("probe", &probe, "versions")),
-    );
+    repo.machine("laptop", &laptop, EVERYTHING);
+    repo.machine("box", &probe, "versions");
     let service = "types/server/services/db/service.toml";
     repo.write(service, &pinned("16.4.3", OLD));
     repo.write("types/server/services/db/compose.yaml", "services: {}\n");
@@ -348,13 +351,13 @@ fn a_versions_signer_changes_only_versions_and_digests_within_their_major() {
     assert_eq!(
         refused(&pinned("17.0.0", NEW), service),
         format!(
-            "probe can't sign this change to {service}: images.db: 17.0.0 leaves major version 16"
+            "box/probe can't sign this change to {service}: images.db: 17.0.0 leaves major version 16"
         )
     );
     assert_eq!(
         refused(&pinned("16.4.0", NEW), service),
         format!(
-            "probe can't sign this change to {service}: images.db: 16.4.0 is older than 16.5.0"
+            "box/probe can't sign this change to {service}: images.db: 16.4.0 is older than 16.5.0"
         )
     );
     assert_eq!(
@@ -363,7 +366,7 @@ fn a_versions_signer_changes_only_versions_and_digests_within_their_major() {
             service
         ),
         format!(
-            "probe can't sign this change to {service}: it changes images.db beyond its version and digest"
+            "box/probe can't sign this change to {service}: it changes images.db beyond its version and digest"
         )
     );
     assert_eq!(
@@ -371,14 +374,14 @@ fn a_versions_signer_changes_only_versions_and_digests_within_their_major() {
             "services: {evil: {}}\n",
             "types/server/services/db/compose.yaml"
         ),
-        "probe can't sign a change to types/server/services/db/compose.yaml"
+        "box/probe can't sign a change to types/server/services/db/compose.yaml"
     );
     assert_eq!(
         refused(
             &pinned("1.0.0", NEW),
             "types/server/services/new/service.toml"
         ),
-        "probe can't add or remove types/server/services/new/service.toml"
+        "box/probe can't add or remove types/server/services/new/service.toml"
     );
     repo.git(&["reset", "-q", "--hard", &digest]);
     let path = repo.work.join(service);
@@ -387,14 +390,14 @@ fn a_versions_signer_changes_only_versions_and_digests_within_their_major() {
     repo.commit("Link", Some(&probe_file));
     assert_eq!(
         repo.check(&digest).refused.unwrap().why,
-        format!("probe can change only a plain file's text, not {service}'s kind")
+        format!("box/probe can change only a plain file's text, not {service}'s kind")
     );
     repo.git(&["reset", "-q", "--hard", &digest]);
-    repo.write(SIGNERS, &line("laptop", &laptop, ""));
+    fs::remove_file(repo.work.join("machines/box.toml")).unwrap();
     repo.commit("Drop itself", Some(&probe_file));
     assert_eq!(
         repo.check(&digest).refused.unwrap().why,
-        "probe can't change probe's line in signers.txt"
+        "box/probe can't change box, a machine of server"
     );
 }
 
@@ -417,10 +420,8 @@ fn a_new_machine_still_checks_the_pins_the_probe_set_before_its_anchor() {
     let repo = Repo::new();
     let (laptop, laptop_file) = repo.key("laptop");
     let (probe, probe_file) = repo.key("probe");
-    repo.write(
-        SIGNERS,
-        &(line("laptop", &laptop, "") + "\n" + &line("probe", &probe, "versions")),
-    );
+    repo.machine("laptop", &laptop, EVERYTHING);
+    repo.machine("box", &probe, "versions");
     let service = "types/server/services/db/service.toml";
     repo.write(service, &pinned("16.4.3", OLD));
     repo.commit("Fleet", None);

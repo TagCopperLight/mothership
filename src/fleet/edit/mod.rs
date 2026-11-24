@@ -8,7 +8,7 @@ use doc::{declare, edit_toml, tool_entry, undeclare};
 use crate::{
     fleet::{self, Fleet, Manager, Member, Tool, homes},
     package::Distro,
-    secrets::{self, Storage},
+    secrets::Storage,
     services,
     sync::kind::Level,
     sync::preview::Seen,
@@ -252,11 +252,7 @@ fn list_user(fleet: &Fleet, name: &str) -> Result<()> {
     }
     let home = dir.join(homes::HOME);
     fs::create_dir_all(&home).with_context(|| format!("creating {}", home.display()))?;
-    for empty in [
-        dir.join(fleet::USER_TOML),
-        dir.join(secrets::RECIPIENTS),
-        home.join(homes::KEEP),
-    ] {
+    for empty in [dir.join(fleet::USER_TOML), home.join(homes::KEEP)] {
         file::write(&empty, b"", FILE_MODE)?;
     }
     Ok(())

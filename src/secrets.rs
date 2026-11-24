@@ -11,13 +11,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const RECIPIENTS: &str = "recipients.txt";
 pub const ROOT_KEY: &str = "/etc/mothership/key.txt";
 pub const AGE: &str = ".age";
 pub const RECOVERY: &str = "recovery";
 
 pub fn key_path(user: &User) -> PathBuf {
     user.home.join(".config/mothership/key.txt")
+}
+
+pub fn list_text(keys: &[String]) -> String {
+    keys.iter().map(|key| format!("{key}\n")).collect()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -104,51 +107,6 @@ pub fn encrypt_for(list: &[Recipient], bytes: &[u8]) -> Result<Vec<u8>> {
 pub struct Recipient {
     pub name: String,
     pub key: String,
-}
-
-pub fn parse(text: &str) -> Result<Vec<Recipient>> {
-    let mut list: Vec<Recipient> = Vec::new();
-    let mut name = None;
-    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        if let Some(comment) = line.strip_prefix('#') {
-            if let Some(unused) = name.replace(comment.trim().to_owned()) {
-                bail!("# {unused} names no key");
-            }
-            continue;
-        }
-        let name = name
-            .take()
-            .with_context(|| format!("{line} has no `# name` above it"))?;
-        if let Some(known) = list.iter().find(|r| r.name == name || r.key == line) {
-            bail!("{} is in the list twice", known.name);
-        }
-        list.push(Recipient {
-            name,
-            key: line.to_owned(),
-        });
-    }
-    if let Some(unused) = name {
-        bail!("# {unused} names no key");
-    }
-    Ok(list)
-}
-
-pub fn format(list: &[Recipient]) -> String {
-    list.iter()
-        .map(|r| format!("# {}\n{}\n", r.name, r.key))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-pub fn holds(list: &Path, public: &str) -> Result<bool> {
-    Ok(read(list)?.iter().any(|r| r.key == public))
-}
-
-pub fn read(path: &Path) -> Result<Vec<Recipient>> {
-    match file::read_if_any(path)? {
-        Some(text) => parse(&text).with_context(|| format!("parsing {}", path.display())),
-        None => Ok(Vec::new()),
-    }
 }
 
 pub fn make_key(path: &Path) -> Result<x25519::Identity> {
