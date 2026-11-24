@@ -9,6 +9,7 @@ use crate::{
     util::cmd::{self, As},
     util::file,
     util::prompt::Prompt,
+    util::style,
 };
 use anyhow::{Context, Result, bail};
 use ssh_key::PrivateKey;
@@ -146,13 +147,7 @@ pub struct Step {
 }
 
 pub fn check(git: &Git, from: &str, to: &str) -> Result<Checked> {
-    if !git.is_ancestor(from, to)? {
-        bail!(
-            "main doesn't follow {}, the last commit this machine checked: rebase it onto that \
-             commit",
-            short(from)
-        );
-    }
+    follows(git, from, to)?;
     let list = git.out(&[
         "rev-list",
         "--first-parent",
@@ -160,40 +155,76 @@ pub fn check(git: &Git, from: &str, to: &str) -> Result<Checked> {
         &format!("{from}..{to}"),
     ])?;
     let mut good = from.to_owned();
+    let mut refused = None;
     let mut steps = Vec::new();
     for commit in list.lines() {
-        let signer = match verify(git, &good, commit) {
-            Ok(signer) => signer,
-            Err(why) => {
-                let line = git.out(&["log", "-1", "--format=%an%x00%as%x00%s", commit])?;
-                let [author, date, subject] = line.splitn(3, '\0').collect::<Vec<_>>()[..] else {
-                    bail!("git log printed {line}");
-                };
-                return Ok(Checked {
-                    commit: good,
-                    refused: Some(Refused {
-                        commit: commit.to_owned(),
-                        author: author.to_owned(),
-                        date: date.to_owned(),
-                        subject: subject.to_owned(),
-                        why: format!("{why:#}"),
-                    }),
-                    steps,
+        match admit(git, &good, commit, refused.as_ref()) {
+            Ok(signer) => {
+                steps.push(Step {
+                    parent: good,
+                    commit: commit.to_owned(),
+                    reach: signer.map_or(Reach::Everything, |signer| signer.reach),
                 });
+                good = commit.to_owned();
+                refused = None;
             }
-        };
-        steps.push(Step {
-            parent: good,
-            commit: commit.to_owned(),
-            reach: signer.map_or(Reach::Everything, |signer| signer.reach),
-        });
-        good = commit.to_owned();
+            Err(why) if refused.is_none() => refused = Some(refused_at(git, commit, &why)?),
+            Err(_) => {}
+        }
     }
     Ok(Checked {
         commit: good,
-        refused: None,
+        refused,
         steps,
     })
+}
+
+fn follows(git: &Git, from: &str, to: &str) -> Result<()> {
+    if !git.is_ancestor(from, to)? {
+        bail!(
+            "main doesn't follow {}, the last commit this machine checked: rebase it onto that \
+             commit",
+            short(from)
+        );
+    }
+    Ok(())
+}
+
+fn refused_at(git: &Git, commit: &str, why: &anyhow::Error) -> Result<Refused> {
+    let line = git.out(&["log", "-1", "--format=%an%x00%as%x00%s", commit])?;
+    let [author, date, subject] = line.splitn(3, '\0').collect::<Vec<_>>()[..] else {
+        bail!("git log printed {line}");
+    };
+    Ok(Refused {
+        commit: commit.to_owned(),
+        author: style::clean(author),
+        date: style::clean(date),
+        subject: style::clean(subject),
+        why: format!("{why:#}"),
+    })
+}
+
+fn admit(git: &Git, good: &str, commit: &str, refused: Option<&Refused>) -> Result<Option<Signer>> {
+    let Some(refused) = refused else {
+        return verify(git, good, commit);
+    };
+    if git.rev(&format!("{}^1", refused.commit))?.as_deref() != Some(good) {
+        bail!(
+            "it can't vouch for {}, which doesn't follow {} on main's line",
+            short(&refused.commit),
+            short(good)
+        );
+    }
+    let signer = approve(git, good, commit)?;
+    if let Some(signer) = &signer
+        && signer.reach == Reach::Versions
+    {
+        bail!(
+            "{} may change only versions, so it can't vouch for the commits before it",
+            signer.name
+        );
+    }
+    Ok(signer)
 }
 
 pub fn verify(git: &Git, parent: &str, commit: &str) -> Result<Option<Signer>> {
@@ -201,11 +232,15 @@ pub fn verify(git: &Git, parent: &str, commit: &str) -> Result<Option<Signer>> {
     if first != parent {
         bail!("it doesn't follow {} on main's line", short(parent));
     }
+    approve(git, parent, commit)
+}
+
+fn approve(git: &Git, base: &str, commit: &str) -> Result<Option<Signer>> {
     let after = git.signers(commit)?;
     sign::distinct(&after, git.recovery(commit)?.as_ref())?;
-    let before = git.signers(parent)?;
+    let before = git.signers(base)?;
     let mut trusted = before.clone();
-    trusted.extend(git.recovery(parent)?);
+    trusted.extend(git.recovery(base)?);
     if trusted.is_empty() {
         return Ok(None);
     }
@@ -222,7 +257,7 @@ pub fn verify(git: &Git, parent: &str, commit: &str) -> Result<Option<Signer>> {
         "-r",
         "--name-only",
         "--no-commit-id",
-        parent,
+        base,
         commit,
     ])?;
     let changed: Vec<PathBuf> = changed.lines().map(PathBuf::from).collect();
@@ -230,11 +265,10 @@ pub fn verify(git: &Git, parent: &str, commit: &str) -> Result<Option<Signer>> {
     if signer.reach == Reach::Versions {
         for path in &changed {
             let text = path.to_string_lossy();
-            let (Some(old), Some(new)) = (git.blob(parent, &text)?, git.blob(commit, &text)?)
-            else {
+            let (Some(old), Some(new)) = (git.blob(base, &text)?, git.blob(commit, &text)?) else {
                 bail!("{} can't add or remove {text}", signer.name);
             };
-            for side in [parent, commit] {
+            for side in [base, commit] {
                 if git.out(&["ls-tree", "--format=%(objectmode)", side, "--", &text])? != PLAIN {
                     bail!(
                         "{} can change only a plain file's text, not {text}'s kind",
@@ -327,6 +361,7 @@ pub fn signed_commit(
     git: &Git,
     tree: &str,
     parent: &str,
+    accepted: &str,
     who: &str,
     message: &str,
     key: &PrivateKey,
@@ -346,7 +381,8 @@ pub fn signed_commit(
         1,
     );
     let commit = git.with_input(&["hash-object", "-t", "commit", "-w", "--stdin"], &object)?;
-    if let Err(why) = verify(git, parent, &commit) {
+    let before = check(git, accepted, parent)?;
+    if let Err(why) = admit(git, &before.commit, &commit, before.refused.as_ref()) {
         bail!("the fleet's machines would refuse this commit, so nothing changed: {why:#}");
     }
     Ok(commit)
@@ -406,7 +442,7 @@ pub fn sync_from(admin: &User, remote: Remote, anchor: Anchor) -> Result<Sync> {
     export(&git, &checked.commit)?;
     if checked.commit != main
         && git.is_ancestor(&main, &checked.commit)?
-        && let Err(e) = advance_main(admin, &main, &checked.commit)
+        && let Err(e) = move_main(admin, &main, &checked.commit)
     {
         println!(
             "Couldn't move main to {} in {DIR}: {e:#}",
@@ -582,23 +618,44 @@ fn extract(git: &Git, commit: &str, done: &Path) -> Result<()> {
 pub struct Stage {
     pub dir: PathBuf,
     base: String,
+    accepted: String,
     index: tempfile::TempDir,
     kept: String,
 }
 
-pub fn stage() -> Result<Stage> {
+#[derive(Clone, Copy)]
+enum Settle {
+    Vouch,
+    Drop,
+    Nothing,
+}
+
+pub fn stage(prompt: &mut Prompt) -> Result<Option<Stage>> {
     let git = Git::at(GIT_DIR);
-    let base = git
+    let accepted = git
         .rev(CHECKED)?
         .context("this machine has checked no commit of the fleet yet")?;
-    let (_, tip) = tips(&git)?;
-    if tip != base {
-        bail!(
-            "the fleet's main goes past {}, the last commit this machine accepts: remove the \
-             commits after it from main, then push",
-            short(&base)
-        );
-    }
+    let (main, tip) = tips(&git)?;
+    follows(&git, &accepted, &tip)?;
+    let base = match tip == accepted {
+        true => accepted.clone(),
+        false => match settle(&git, &accepted, &tip, prompt)? {
+            Settle::Nothing => {
+                println!("Nothing changed.");
+                return Ok(None);
+            }
+            Settle::Vouch => {
+                if main != tip {
+                    move_main(&super::admin()?, &main, &tip)?;
+                }
+                tip
+            }
+            Settle::Drop => {
+                drop_after(&git, &super::admin()?, &accepted, &main)?;
+                accepted.clone()
+            }
+        },
+    };
     let dir = PathBuf::from(STAGING);
     if dir.exists() {
         fs::remove_dir_all(&dir).with_context(|| format!("removing {STAGING}"))?;
@@ -609,14 +666,67 @@ pub fn stage() -> Result<Stage> {
         dir,
         kept: git.out(&["rev-parse", &format!("{base}^{{tree}}")])?,
         base,
+        accepted,
         index: tempfile::TempDir::new()?,
     };
     stage.staged(&["read-tree", &stage.base])?;
-    Ok(stage)
+    Ok(Some(stage))
+}
+
+fn settle(git: &Git, accepted: &str, tip: &str, prompt: &mut Prompt) -> Result<Settle> {
+    let range = format!("{accepted}..{tip}");
+    let count: usize = git
+        .out(&["rev-list", "--count", "--first-parent", &range])?
+        .parse()?;
+    println!(
+        "main holds {} after {}, the last one this machine accepts:",
+        style::count(count, "commit"),
+        short(accepted)
+    );
+    let log = git.out(&[
+        "log",
+        "--first-parent",
+        "--abbrev=12",
+        "--format=  %h %an, %as: %s",
+        &range,
+    ])?;
+    let args = ["-c", "core.quotePath=false", "diff", accepted, tip];
+    let diff = cmd::output(git.command(&args), "git", &args)?;
+    for line in log.lines().chain(String::from_utf8_lossy(&diff).lines()) {
+        println!("{}", style::clean(line));
+    }
+    let answers = [
+        ('v', Settle::Vouch),
+        ('d', Settle::Drop),
+        ('n', Settle::Nothing),
+    ];
+    let question = "v vouch for them, signing on top · d drop them from main · n change nothing ›";
+    Ok(prompt.ask(question, &answers)?.unwrap_or(Settle::Nothing))
+}
+
+fn drop_after(git: &Git, admin: &User, accepted: &str, main: &str) -> Result<()> {
+    if main != accepted {
+        move_main(admin, main, accepted)?;
+    }
+    if let Some(origin) = git.rev(ORIGIN)?
+        && !git.is_ancestor(&origin, accepted)?
+    {
+        in_checkout(
+            admin,
+            &[
+                "push",
+                "--quiet",
+                &format!("--force-with-lease=main:{origin}"),
+                "origin",
+                &format!("{accepted}:refs/heads/main"),
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 pub enum Outcome {
-    Unchanged,
+    Unchanged(String),
     Declined,
     Pushed(String),
 }
@@ -634,10 +744,6 @@ pub struct Prepared {
 }
 
 impl Stage {
-    pub fn base(&self) -> &str {
-        &self.base
-    }
-
     pub fn take_checkout(&self, admin: &User) -> Result<()> {
         let git = |args: &[&str]| in_checkout(admin, args);
         if git(&["branch", "--show-current"])?.trim() != "main" {
@@ -686,7 +792,7 @@ impl Stage {
         let Some(key) = sign::machine_key()? else {
             return Ok(None);
         };
-        let signers = Git::at(GIT_DIR).signers(&self.base)?;
+        let signers = Git::at(GIT_DIR).signers(&self.accepted)?;
         Ok(signers.into_iter().find(|s| &s.key == key.public_key()))
     }
 
@@ -695,13 +801,14 @@ impl Stage {
         if tree == self.kept {
             return Ok(None);
         }
-        let changed = self.staged(&["diff-tree", "-r", "--name-only", &self.base, &tree])?;
+        let changed = self.staged(&["diff-tree", "-r", "--name-only", &self.accepted, &tree])?;
         let changed: Vec<PathBuf> = changed.lines().map(PathBuf::from).collect();
         let why = match signer {
             None => Some("this machine signs nothing for the fleet".to_owned()),
             Some(signer) => {
-                let signers = Git::at(GIT_DIR).signers(&self.base)?;
-                sign::allowed(signer, &changed, &signers, &signers)
+                let git = Git::at(GIT_DIR);
+                let before = git.signers(&self.accepted)?;
+                sign::allowed(signer, &changed, &before, &git.signers(&tree)?)
                     .err()
                     .map(|e| format!("{e:#}"))
             }
@@ -726,7 +833,9 @@ impl Stage {
     ) -> Result<Option<Prepared>> {
         let git = Git::at(GIT_DIR);
         let tree = self.tree()?;
-        if Some(&tree) == git.rev(&format!("{}^{{tree}}", self.base))?.as_ref() {
+        if self.base == self.accepted
+            && Some(&tree) == git.rev(&format!("{}^{{tree}}", self.base))?.as_ref()
+        {
             return Ok(None);
         }
         let config = |name: &str| -> Result<String> {
@@ -738,7 +847,7 @@ impl Stage {
             })
         };
         let who = format!("{} <{}>", config("user.name")?, config("user.email")?);
-        let commit = signed_commit(&git, &tree, &self.base, &who, message, key)?;
+        let commit = signed_commit(&git, &tree, &self.base, &self.accepted, &who, message, key)?;
         Ok(Some(Prepared {
             base: self.base.clone(),
             commit,
@@ -755,9 +864,10 @@ impl Stage {
         advance: Advance,
     ) -> Result<Outcome> {
         let prepared = self.prepare(admin, message, key)?;
+        let base = self.base.clone();
         self.finish()?;
         let Some(prepared) = prepared else {
-            return Ok(Outcome::Unchanged);
+            return Ok(Outcome::Unchanged(base));
         };
         prepared.show()?;
         if !prompt.confirm("Commit and push")? {
@@ -823,11 +933,11 @@ fn publish(admin: &User, base: &str, commit: &str, bundle: &Path, advance: Advan
     let git = |args: &[&str]| in_checkout(admin, args);
     let main = git(&["rev-parse", "--verify", "main"])?;
     if main.trim() != base {
-        bail!("main moved in {DIR} while mothership worked: run it again");
+        return Err(moved());
     }
     git(&["fetch", "--quiet", &bundle.to_string_lossy(), STAGED])?;
     match advance {
-        Advance::Merge => advance_main(admin, base, commit)?,
+        Advance::Merge => move_main(admin, base, commit)?,
         Advance::KeepEdits => git(&["reset", "--quiet", commit]).map(drop)?,
     }
     if let Err(e) = git(&["push", "--quiet", "origin", "main"]) {
@@ -867,10 +977,16 @@ pub fn origin_of(dir: &Path, git: impl Fn() -> Command) -> Result<String> {
         .to_owned())
 }
 
-fn advance_main(admin: &User, from: &str, to: &str) -> Result<()> {
+fn moved() -> anyhow::Error {
+    anyhow::anyhow!("main moved in {DIR} while mothership worked: run it again")
+}
+
+fn move_main(admin: &User, from: &str, to: &str) -> Result<()> {
     let git = |args: &[&str]| in_checkout(admin, args);
     match git(&["branch", "--show-current"])?.trim() {
-        "main" => git(&["merge", "--ff-only", "--quiet", to]),
+        "main" if git(&["rev-parse", "HEAD"])?.trim() != from => Err(moved()),
+        "main" => git(&["update-index", "-q", "--refresh"])
+            .and_then(|_| git(&["reset", "--keep", "--quiet", to])),
         _ => git(&["update-ref", "refs/heads/main", to, from]),
     }
     .map(drop)

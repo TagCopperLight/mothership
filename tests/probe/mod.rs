@@ -57,7 +57,7 @@ fn the_probes_commit_passes_the_check_every_machine_runs() {
             digest: new.clone(),
         },
     };
-    let commit = commit(&repo, &dot_git, &base, &[update], "minipc", &key).unwrap();
+    let commit = commit(&repo, &dot_git, &base, &base, &[update], "minipc", &key).unwrap();
     let checked = checked::check(&repo, &base, &commit).unwrap();
     assert!(checked.refused.is_none());
     let text = repo

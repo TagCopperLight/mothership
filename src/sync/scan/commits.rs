@@ -10,8 +10,10 @@ pub fn refused(commit: Refused) -> Item {
         "refused, {}, claims to be by {}",
         commit.date, commit.author
     );
-    let mut item = Item::new(Kind::Commit, Change::Added, subject, detail)
-        .noting(format!("{}: remove it from main, then push", commit.why));
+    let mut item = Item::new(Kind::Commit, Change::Added, subject, detail).noting(format!(
+        "{}: sudo mothership commit asks whether to vouch for it or drop it",
+        commit.why
+    ));
     item.section = Section::Attention;
     item
 }

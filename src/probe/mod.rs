@@ -122,7 +122,15 @@ fn round(setting: &Setting, state: &mut State) -> Result<()> {
     let signing = setting.credentials.join(unit::SIGNING);
     let bytes = credential(unit::SIGNING)?.context("the probe has no signing key")?;
     let key = sign::parse_key(&bytes, &signing)?;
-    let commit = commit(&git, &dir, &tip, &found.updates, &setting.host, &key)?;
+    let commit = commit(
+        &git,
+        &dir,
+        &tip,
+        &anchor,
+        &found.updates,
+        &setting.host,
+        &key,
+    )?;
     git.out(&[
         "push",
         "--quiet",
@@ -244,6 +252,7 @@ fn commit(
     git: &Git,
     dir: &Path,
     base: &str,
+    accepted: &str,
     updates: &[Update],
     host: &str,
     key: &ssh_key::PrivateKey,
@@ -301,7 +310,7 @@ fn commit(
         lines.join("\n")
     );
     let who = format!("{host}/probe <probe@{host}>");
-    checked::signed_commit(git, &tree, base, &who, &message, key)
+    checked::signed_commit(git, &tree, base, accepted, &who, &message, key)
 }
 
 #[cfg(test)]

@@ -17,11 +17,13 @@ use crate::{
 use anyhow::Result;
 
 pub fn run() -> Result<()> {
-    let mut stage = checked::stage()?;
+    let mut prompt = Prompt::new();
+    let Some(mut stage) = checked::stage(&mut prompt)? else {
+        return Ok(());
+    };
     let report = scan::collect(&stage.dir)?;
     let signer = stage.machine_signer()?;
     let key = sign::require_machine_key()?;
-    let mut prompt = Prompt::new();
     let answers = match ask(&report, &mut stage, signer.as_ref(), &mut prompt) {
         Err(e) if prompt::stopped(&e) => {
             println!("Nothing changed.");

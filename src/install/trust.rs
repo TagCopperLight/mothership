@@ -71,7 +71,9 @@ fn recover(prompt: &mut Prompt, hostname: &str, fleet: &Fleet, anchored: bool) -
         }
         checked::sync_from(admin, Remote::Skip, Anchor::Tip)?;
     }
-    let stage = checked::stage()?;
+    let Some(stage) = checked::stage(prompt)? else {
+        bail!("install stopped before the fleet trusted this machine");
+    };
     let staged = Fleet::load_at(&stage.dir)?;
     let entries = crate::trust::pending(&staged)?;
     let mut keys = staged.keys().clone();

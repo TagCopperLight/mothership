@@ -97,7 +97,7 @@ fn a_chain_signed_by_listed_keys_passes_and_stops_at_the_first_unsigned_commit()
     let signed = repo.commit("Signed", Some(&laptop_file));
     repo.write("types/a/system.toml", "packages = [\"evil\"]\n");
     let unsigned = repo.commit("Unsigned", None);
-    repo.commit("After", Some(&laptop_file));
+    repo.commit("Unsigned too", None);
 
     let checked = repo.check(&anchor);
     assert_eq!(checked.commit, signed);
@@ -105,6 +105,109 @@ fn a_chain_signed_by_listed_keys_passes_and_stops_at_the_first_unsigned_commit()
     assert_eq!(refused.commit, unsigned);
     assert_eq!(refused.subject, "Unsigned");
     assert_eq!(refused.why, "nobody signed it");
+}
+
+#[test]
+fn a_full_signer_vouches_for_the_unsigned_commits_before_it() {
+    let repo = Repo::new();
+    let (laptop, laptop_file) = repo.key("laptop");
+    repo.write(SIGNERS, &line("laptop", &laptop, ""));
+    let anchor = repo.commit("Signers", None);
+    repo.write("types/a/system.toml", "packages = [\"zeta\"]\n");
+    repo.commit("Unsigned", None);
+    let vouched = repo.commit("Vouch", Some(&laptop_file));
+    repo.write("types/a/system.toml", "packages = []\n");
+    let after = repo.commit("After", Some(&laptop_file));
+
+    let checked = repo.check(&anchor);
+    assert!(checked.refused.is_none());
+    assert_eq!(checked.commit, after);
+    assert_eq!(checked.steps[0].parent, anchor);
+    assert_eq!(checked.steps[0].commit, vouched);
+    assert_eq!(checked.steps[0].reach, Reach::Everything);
+
+    repo.commit("Unsigned again", None);
+    let checked = repo.check(&anchor);
+    assert_eq!(checked.commit, after);
+    assert_eq!(checked.refused.unwrap().subject, "Unsigned again");
+}
+
+#[test]
+fn a_signer_can_not_vouch_for_a_line_that_leaves_the_last_accepted_commit() {
+    let repo = Repo::new();
+    let (laptop, laptop_file) = repo.key("laptop");
+    repo.write(SIGNERS, &line("laptop", &laptop, ""));
+    let first = repo.commit("Signers", None);
+    repo.write("types/a/system.toml", "packages = [\"old\"]\n");
+    let old = repo.commit("Old, signed", Some(&laptop_file));
+    repo.git(&["reset", "-q", "--hard", &first]);
+    repo.write("types/a/system.toml", "packages = []\n");
+    let anchor = repo.commit("Accepted", Some(&laptop_file));
+    repo.git(&["checkout", "-q", "--detach", &old]);
+    repo.git(&["merge", "-q", "-s", "ours", "--no-edit", &anchor]);
+    repo.commit("Signed on top", Some(&laptop_file));
+
+    let checked = repo.check(&anchor);
+    assert_eq!(checked.commit, anchor);
+    assert_eq!(
+        checked.refused.unwrap().why,
+        format!("it doesn't follow {} on main's line", short(&anchor))
+    );
+}
+
+#[test]
+fn a_signer_vouches_only_within_its_reach_and_the_probe_never_vouches() {
+    let repo = Repo::new();
+    let (laptop, _) = repo.key("laptop");
+    let (minipc, minipc_file) = repo.key("minipc");
+    let (probe, probe_file) = repo.key("probe");
+    let (rogue, rogue_file) = repo.key("rogue");
+    let signers = line("laptop", &laptop, "")
+        + "\n"
+        + &line("minipc", &minipc, "types/minipc")
+        + "\n"
+        + &line("probe", &probe, "versions");
+    repo.write(SIGNERS, &signers);
+    let service = "types/server/services/db/service.toml";
+    repo.write(service, &pinned("16.4.3", OLD));
+    repo.write("types/server/services/db/compose.yaml", "services: {}\n");
+    let anchor = repo.commit("Signers", None);
+    let refused = || {
+        let checked = repo.check(&anchor);
+        assert_eq!(checked.commit, anchor);
+        assert_eq!(checked.refused.unwrap().subject, "Unsigned");
+    };
+
+    repo.write("types/server/system.toml", "packages = []\n");
+    let unsigned = repo.commit("Unsigned", None);
+    repo.write("types/minipc/system.toml", "packages = []\n");
+    repo.commit("Vouch for another type", Some(&minipc_file));
+    refused();
+
+    repo.git(&["reset", "-q", "--hard", &anchor]);
+    repo.write(service, &pinned("16.5.0", NEW));
+    repo.commit("Unsigned", None);
+    repo.commit("Vouch for versions", Some(&probe_file));
+    refused();
+    let git = Git::at(repo.work.join(".git"));
+    let tip = repo.git(&["rev-parse", "HEAD"]);
+    let tree = repo.git(&["rev-parse", "HEAD^{tree}"]);
+    let error = signed_commit(&git, &tree, &tip, &anchor, "probe <p@x>", "Again", &probe)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        error,
+        "the fleet's machines would refuse this commit, so nothing changed: probe may change \
+         only versions, so it can't vouch for the commits before it"
+    );
+    let vouched = signed_commit(&git, &tree, &tip, &anchor, "me <m@x>", "Vouch", &laptop);
+    assert!(vouched.is_ok());
+
+    repo.git(&["reset", "-q", "--hard", &unsigned]);
+    repo.write(SIGNERS, &(signers + "\n" + &line("rogue", &rogue, "")));
+    repo.commit("Let me in", None);
+    repo.commit("Vouch for myself", Some(&rogue_file));
+    refused();
 }
 
 #[test]

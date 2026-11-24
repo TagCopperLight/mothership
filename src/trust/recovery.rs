@@ -68,7 +68,9 @@ fn name(path: &Path, key: &x25519::Identity) -> Result<()> {
 fn change(prompt: &mut Prompt) -> Result<()> {
     let admin = fleet::admin()?;
     checked::sync(&admin, Remote::Fetch)?;
-    let stage = checked::stage()?;
+    let Some(stage) = checked::stage(prompt)? else {
+        return Ok(());
+    };
     let old = secrets::identity(&prompt.hidden("The fleet's recovery key now:")?)?;
     let old_public = secrets::public(&old);
     if old_public != Fleet::load_at(&stage.dir)?.recovery.key {

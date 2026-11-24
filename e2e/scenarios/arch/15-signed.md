@@ -19,7 +19,7 @@ $ cd /var/lib/mothership/fleet && git commit -qam "Add zeta" && git push -q
 $ sudo mothership scan
 Needs attention · 1
   Fleet commits
-    \+ [0-9a-f]{12} Add zeta +refused, \d{4}-\d\d-\d\d, claims to be by Me +nobody signed it: remove it from main, then push (re)
+    \+ [0-9a-f]{12} Add zeta +refused, \d{4}-\d\d-\d\d, claims to be by Me +nobody signed it: sudo mothership commit asks whether to vouch for it or drop it (re)
 
 1 to review     sudo mothership review
 \d+ ignored (re)
@@ -27,7 +27,20 @@ $ echo n | sudo mothership apply | head -1
 This machine refuses [0-9a-f]{12} "Add zeta" of \d{4}-\d\d-\d\d, which claims to be by Me, and what follows it: nobody signed it (re)
 ```
 
-It also tries to sign itself in, with a key of its own.
+A command that signs shows me the commit and asks what to do with it. I answer nothing, and
+nothing changes.
+
+```console
+$ echo n | sudo mothership commit "On top" > ~/out; grep -A1 "^main holds" ~/out; tail -1 ~/out
+main holds 1 commit after [0-9a-f]{12}, the last one this machine accepts: (re)
+  [0-9a-f]{12} Me, \d{4}-\d\d-\d\d: Add zeta (re)
+Nothing changed.
+$ git -C /var/lib/mothership/fleet log -1 --format=%s
+Add zeta
+```
+
+It also tries to sign itself in, with a key of its own. I drop that commit: main and origin go
+back to the last commit this machine accepts.
 
 ```console
 $ ssh-keygen -q -t ed25519 -N '' -f ~/rogue && cd /var/lib/mothership/fleet &&
@@ -35,19 +48,22 @@ $ ssh-keygen -q -t ed25519 -N '' -f ~/rogue && cd /var/lib/mothership/fleet &&
 > git -c gpg.format=ssh -c user.signingkey=$HOME/rogue commit -S -qam "Let me in" &&
 > git push -qf
 $ sudo mothership scan | grep refused
-    \+ [0-9a-f]{12} Let me in +refused, \d{4}-\d\d-\d\d, claims to be by Me +a key the fleet doesn't list signed it: remove it from main, then push (re)
-$ echo y | sudo mothership commit "On top" 2>&1 | tail -1
-Error: the fleet's main goes past [0-9a-f]{12}, the last commit this machine accepts: remove the commits after it from main, then push (re)
+    \+ [0-9a-f]{12} Let me in +refused, \d{4}-\d\d-\d\d, claims to be by Me +a key the fleet doesn't list signed it: sudo mothership commit asks whether to vouch for it or drop it (re)
+$ echo d | sudo mothership commit "On top" | tail -1
+Nothing to commit.
+$ cd /var/lib/mothership/fleet && git fetch -q && git log --format=%s origin/main | grep -c "Let me in"; git status -sb | head -1
+0
+## main...origin/main
 ```
 
-I drop it. The agent's work on a branch applies once I bring it in and commit it through
-mothership.
+The agent's work on a branch applies once I bring it in and vouch for it.
 
 ```console
-$ cd /var/lib/mothership/fleet && git reset -q --hard HEAD~ && git push -qf &&
-> git checkout -q -b agent && sed -i 's/^  "gamma",$/  "gamma",\n  "zeta",/' types/workstation/system.toml &&
-> git commit -qam "Add zeta" && git checkout -q main && git merge --squash -q agent >/dev/null &&
-> echo y | sudo mothership commit "Add the agent's zeta" >/dev/null
+$ cd /var/lib/mothership/fleet && git checkout -q -b agent &&
+> sed -i 's/^  "gamma",$/  "gamma",\n  "zeta",/' types/workstation/system.toml &&
+> git commit -qam "Add zeta" && git checkout -q main && git merge -q agent &&
+> printf 'v\ny\n' | sudo mothership commit "Vouch for the agent's zeta" | tail -1
+Committed [0-9a-f]{12} Vouch for the agent's zeta (re)
 $ echo y | sudo mothership apply > ~/out; head -3 ~/out
 Coming from the fleet · 1
   Packages

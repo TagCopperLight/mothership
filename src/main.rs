@@ -146,11 +146,13 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         (Command::Commit, [message]) => {
             let mut prompt = Prompt::new();
             let admin = fleet::admin()?;
-            let stage = checked::stage()?;
+            let Some(stage) = checked::stage(&mut prompt)? else {
+                return Ok(());
+            };
             stage.take_checkout(&admin)?;
             let key = trust::sign::require_machine_key()?;
             let outcome = stage.commit(&admin, message, &key, &mut prompt, Advance::KeepEdits)?;
-            if let Outcome::Unchanged = outcome {
+            if let Outcome::Unchanged(_) = outcome {
                 println!("Nothing to commit.");
             }
             Ok(())
@@ -159,14 +161,13 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             system::host::check(host)?;
             let message = format!("Trust {host} as {type_name}");
             let mut uploads = Vec::new();
-            let (outcome, base) = edit_fleet(&message, |fleet, prompt| {
+            let outcome = edit_fleet(&message, |fleet, prompt| {
                 uploads = trust::trust_host(fleet, fleet.keys(), host, type_name, keys, prompt)?;
                 Ok(())
             })?;
             let code = match outcome {
                 Outcome::Declined => return Ok(()),
-                Outcome::Unchanged => base,
-                Outcome::Pushed(commit) => commit,
+                Outcome::Unchanged(commit) | Outcome::Pushed(commit) => commit,
             };
             trust::github::add(&fleet::admin()?, &uploads)?;
             println!("On {host}, type this code: {}", checked::short(&code));
@@ -174,12 +175,12 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         }
         (Command::Retire, [host]) => {
             system::host::check(host)?;
-            let (outcome, _) = edit_fleet(&format!("Retire {host}"), |fleet, _| {
+            let outcome = edit_fleet(&format!("Retire {host}"), |fleet, _| {
                 trust::retire_host(fleet, host)
             })?;
             match outcome {
                 Outcome::Declined => Ok(()),
-                Outcome::Unchanged | Outcome::Pushed(_) => {
+                Outcome::Unchanged(_) | Outcome::Pushed(_) => {
                     trust::github::remove(&fleet::admin()?, host)
                 }
             }
@@ -200,15 +201,15 @@ fn run(args: &[String]) -> anyhow::Result<()> {
 fn edit_fleet(
     message: &str,
     command: impl FnOnce(&Fleet, &mut Prompt) -> anyhow::Result<()>,
-) -> anyhow::Result<(Outcome, String)> {
+) -> anyhow::Result<Outcome> {
     let key = trust::sign::require_machine_key()?;
     let mut prompt = Prompt::new();
-    let stage = checked::stage()?;
-    let base = stage.base().to_owned();
+    let Some(stage) = checked::stage(&mut prompt)? else {
+        return Ok(Outcome::Declined);
+    };
     let fleet = Fleet::load_at(&stage.dir)?;
     command(&fleet, &mut prompt)?;
-    let outcome = stage.commit(fleet.admin(), message, &key, &mut prompt, Advance::Merge)?;
-    Ok((outcome, base))
+    stage.commit(fleet.admin(), message, &key, &mut prompt, Advance::Merge)
 }
 
 fn start_services(interface: Option<&str>) -> anyhow::Result<()> {
