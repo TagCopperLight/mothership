@@ -1,7 +1,7 @@
 FROM debian:trixie AS machine
 RUN apt-get update && apt-get install -y --no-install-recommends sudo git dpkg-dev curl ca-certificates ucf \
  && curl -fsSL -o /tmp/chezmoi.deb \
-    https://github.com/twpayne/chezmoi/releases/download/v2.74.1/chezmoi_2.74.1_linux_amd64.deb \
+    https://github.com/twpayne/chezmoi/releases/download/v2.74.2/chezmoi_2.74.2_linux_amd64.deb \
  && apt-get install -y /tmp/chezmoi.deb && rm /tmp/chezmoi.deb
 
 COPY debian-packages /build

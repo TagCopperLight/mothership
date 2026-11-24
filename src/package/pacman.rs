@@ -108,7 +108,7 @@ pub fn cannot_install(aur: &Aur, name: &str) -> Result<Option<String>> {
         },
     };
     Ok(Some(format!(
-        "It is in neither pacman's repos nor the AUR: {why}"
+        "it is in neither pacman's repos nor the AUR ({why})"
     )))
 }
 

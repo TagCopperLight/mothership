@@ -31,7 +31,7 @@ import binary
 
 CACHE = Path.home() / ".cache/mothership-vm"
 CLOUD_IMAGE = CACHE / "debian-13-genericcloud-amd64.qcow2"
-CHEZMOI = CACHE / "chezmoi_2.74.1_linux_amd64.deb"
+CHEZMOI = CACHE / "chezmoi_2.74.2_linux_amd64.deb"
 PREPARED = CACHE / "debian-services.qcow2"
 LOG = CACHE / "services.log"
 MIRROR = "http://mirrors.aliyun.com/debian"
@@ -293,7 +293,7 @@ def free_port() -> int:
 
 
 def cache_key() -> str:
-    return hashlib.sha256(user_data().encode()).hexdigest()
+    return hashlib.sha256((user_data() + CHEZMOI.name).encode()).hexdigest()
 
 
 def prepared() -> bool:

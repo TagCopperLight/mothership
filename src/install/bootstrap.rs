@@ -5,15 +5,15 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
-const CHEZMOI_VERSION: &str = "2.74.1";
+const CHEZMOI_VERSION: &str = "2.74.2";
 const CHEZMOI_DEBS: [(&str, &str); 2] = [
     (
         "amd64",
-        "d63f7a876066f8de992c5a47046049ad569e05d8ab30d8507f123281d7cea15c",
+        "0493cbc4872a6dfdf4418b5a9b7d72fd8d863459740f64625374e5fce6d5081f",
     ),
     (
         "arm64",
-        "a348c5fa9d51cebb8a38db0711df4658a1d6ad79aa2667c4b58b5f4b08630a4d",
+        "32d4b8c2191d7f48e785f4709ecfa1c3f808225f13ca487cdb31b7d81d50d29b",
     ),
 ];
 

@@ -19,19 +19,20 @@ $ sudo groupadd mine && sudo usermod -aG mine me
 ```
 
 `zeta` is in the AUR, so review lists it like any package. `omega` is in neither pacman's
-repos nor the AUR, so it goes into the packages apply checks but never installs. The service's unit file and the group come from nothing the fleet holds, so review
-doesn't offer to add them.
+repos nor the AUR, so review refuses to add it: only I list such a package, by hand, in
+`built_packages`. The service's unit file and the group come from nothing the fleet holds,
+so review doesn't offer to add them.
 
 ```console
-$ printf 'a\na\np\np\np\ny\n' | sudo mothership review
+$ printf 'a\np\na\np\np\np\ny\n' | sudo mothership review
 [1/5] Packages
     + omega  installed  An app built on this machine
   a  add         add it to `packages` in system.toml
   r  revert      uninstall
   i ignore · p pass · q quit
   › a
-  It is in neither pacman's repos nor the AUR: yay -Si omega failed: -> No AUR package found for omega
-  It goes into `built_packages`.
+  failed: it is in neither pacman's repos nor the AUR (yay -Si omega failed: -> No AUR package found for omega). List it in `built_packages` by hand, with where it comes from
+  › p
 [2/5] Packages
     + zeta  installed  An app only the AUR has
   a  add         add it to `packages` in system.toml
@@ -57,12 +58,11 @@ $ printf 'a\na\np\np\np\ny\n' | sudo mothership review
 ...
 ```
 
-Only the packages reached the fleet.
+Only `zeta` reached the fleet.
 
 ```console
 $ grep -E 'zeta|omega' /var/lib/mothership/fleet/types/workstation/system.toml
   "zeta",
-built_packages = ["omega"]
 $ git -C /var/lib/mothership/fleet show --name-only --format= HEAD
 types/workstation/system.toml
 ```

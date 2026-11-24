@@ -51,11 +51,11 @@ Changed on this machine · 3
 \d+ ignored (re)
 ```
 
-Review adds both packages. apt can't install `omega`, so it goes into `built_packages`. The
+Review adds `beta`. apt can't install `omega`, so review refuses it and I pass. The
 file's diff and its revert both come from the package apt keeps in its cache.
 
 ```console
-$ printf 'a\na\nr\ny\n' | sudo mothership review
+$ printf 'a\na\np\nr\ny\n' | sudo mothership review
 [1/3] Packages
     + beta  installed  An app the fleet never lists
   a  add         add it to `packages` in system.toml
@@ -68,8 +68,8 @@ $ printf 'a\na\nr\ny\n' | sudo mothership review
   r  revert      uninstall
   i ignore · p pass · q quit
   › a
-  It is in none of apt's sources.
-  It goes into `built_packages`.
+  failed: it is in none of apt's sources. List it in `built_packages` by hand, with where it comes from
+  › p
 [3/3] Files
     ~ /etc/gamma.conf  edited  owned by gamma
       @@ -1 +1 @@
@@ -80,19 +80,17 @@ $ printf 'a\na\nr\ny\n' | sudo mothership review
   r  revert      restore the package's version
   i ignore · p pass · q quit
   › r
-2 added, 1 reverted
-Review on machine: 2 added:
+1 added, 1 reverted, 1 passed
+Review on machine: 1 added:
   M types/server/system.toml
 Then on this machine:
   /etc/gamma.conf: restore the package's version
 Commit, push and revert [y/N]? y
-Committed [0-9a-f]{12} Review on machine: 2 added (re)
+Committed [0-9a-f]{12} Review on machine: 1 added (re)
 $ cat /etc/gamma.conf
 volume = 5
 $ git -C /var/lib/mothership/fleet show -U0 HEAD | grep '^[+-] '
 +  "beta",
-$ grep built_packages /var/lib/mothership/fleet/types/server/system.toml
-built_packages = ["omega"]
 ```
 
 The fleet drops `alpha` and `gamma`. Apply removes `gamma` and deletes its unedited config
@@ -110,7 +108,7 @@ Coming from the fleet · 2
     - alpha  uninstall  A library other packages need
     - gamma  uninstall  An app with a config file
 
-1 changed on this machine, for sudo mothership review
+2 changed on this machine, for sudo mothership review
 Apply [y/N]? y
 ...
 $ dpkg-query -W -f '${Package} ${db:Status-Abbrev}\n' alpha epsilon

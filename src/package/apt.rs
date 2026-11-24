@@ -23,7 +23,7 @@ pub fn cannot_install(name: &str) -> Result<Option<String>> {
     Ok(offered
         .trim()
         .is_empty()
-        .then(|| "It is in none of apt's sources.".to_owned()))
+        .then(|| "it is in none of apt's sources".to_owned()))
 }
 
 pub fn install(names: &[&str]) -> Result<()> {

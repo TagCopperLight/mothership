@@ -172,7 +172,8 @@ impl Add {
         let member = || member.context("the item belongs to no user");
         match self {
             Add::ListPackage(name) => {
-                declare(fleet, None, package_key(fleet, name)?, name, name.into())?
+                require_installable(fleet, name)?;
+                declare(fleet, None, Key::Packages, name, name.into())?
             }
             Add::UnlistPackage(name) => {
                 undeclare(fleet, None, &[Key::Packages, Key::BuiltPackages], name)?
@@ -290,13 +291,13 @@ fn one_line(line: &str) -> Result<&str> {
     Ok(line)
 }
 
-fn package_key(fleet: &Fleet, name: &str) -> Result<Key> {
-    let Some(why) = Distro::here()?.cannot_install(&fleet.aur(), name)? else {
-        return Ok(Key::Packages);
-    };
-    println!("  {why}");
-    println!("  It goes into `built_packages`.");
-    Ok(Key::BuiltPackages)
+fn require_installable(fleet: &Fleet, name: &str) -> Result<()> {
+    match Distro::here()?.cannot_install(&fleet.aur(), name)? {
+        None => Ok(()),
+        Some(why) => {
+            bail!("{why}. List it in `built_packages` by hand, with where it comes from")
+        }
+    }
 }
 
 #[cfg(test)]
