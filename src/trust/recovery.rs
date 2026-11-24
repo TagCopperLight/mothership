@@ -88,7 +88,8 @@ fn change(prompt: &mut Prompt) -> Result<()> {
     trust::reseal_everything(&fleet, &keys, &old_public, prompt)?;
     let key = sign::recovery_key(&old);
     let message = "Change the recovery key";
-    if let Outcome::Pushed(_) = stage.commit(&admin, message, &key, prompt, Advance::Merge)? {
+    let who = checked::author(&admin)?;
+    if let Outcome::Pushed(_) = stage.commit(&admin, &who, message, &key, prompt, Advance::Merge)? {
         println!("The old recovery key opens what git history keeps, so change those secrets too.");
     }
     Ok(())

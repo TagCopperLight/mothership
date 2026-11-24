@@ -151,7 +151,9 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             };
             stage.take_checkout(&admin)?;
             let key = trust::sign::require_machine_key()?;
-            let outcome = stage.commit(&admin, message, &key, &mut prompt, Advance::KeepEdits)?;
+            let who = checked::author(&admin)?;
+            let outcome =
+                stage.commit(&admin, &who, message, &key, &mut prompt, Advance::KeepEdits)?;
             if let Outcome::Unchanged(_) = outcome {
                 println!("Nothing to commit.");
             }
@@ -209,7 +211,15 @@ fn edit_fleet(
     };
     let fleet = Fleet::load_at(&stage.dir)?;
     command(&fleet, &mut prompt)?;
-    stage.commit(fleet.admin(), message, &key, &mut prompt, Advance::Merge)
+    let who = checked::author(fleet.admin())?;
+    stage.commit(
+        fleet.admin(),
+        &who,
+        message,
+        &key,
+        &mut prompt,
+        Advance::Merge,
+    )
 }
 
 fn start_services(interface: Option<&str>) -> anyhow::Result<()> {

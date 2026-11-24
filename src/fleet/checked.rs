@@ -825,12 +825,7 @@ impl Stage {
         Ok(Some(why))
     }
 
-    pub fn prepare(
-        &self,
-        admin: &User,
-        message: &str,
-        key: &PrivateKey,
-    ) -> Result<Option<Prepared>> {
+    pub fn prepare(&self, who: &str, message: &str, key: &PrivateKey) -> Result<Option<Prepared>> {
         let git = Git::at(GIT_DIR);
         let tree = self.tree()?;
         if self.base == self.accepted
@@ -838,16 +833,7 @@ impl Stage {
         {
             return Ok(None);
         }
-        let config = |name: &str| -> Result<String> {
-            author(admin, name)?.with_context(|| {
-                format!(
-                    "{} has no git {name}: set it with `git -C {DIR} config {name} …`",
-                    admin.name
-                )
-            })
-        };
-        let who = format!("{} <{}>", config("user.name")?, config("user.email")?);
-        let commit = signed_commit(&git, &tree, &self.base, &self.accepted, &who, message, key)?;
+        let commit = signed_commit(&git, &tree, &self.base, &self.accepted, who, message, key)?;
         Ok(Some(Prepared {
             base: self.base.clone(),
             commit,
@@ -858,12 +844,13 @@ impl Stage {
     pub fn commit(
         self,
         admin: &User,
+        who: &str,
         message: &str,
         key: &PrivateKey,
         prompt: &mut Prompt,
         advance: Advance,
     ) -> Result<Outcome> {
-        let prepared = self.prepare(admin, message, key)?;
+        let prepared = self.prepare(who, message, key)?;
         let base = self.base.clone();
         self.finish()?;
         let Some(prepared) = prepared else {
@@ -950,15 +937,30 @@ fn in_checkout(admin: &User, args: &[&str]) -> Result<String> {
     cmd::stdout(As::User(admin), "git", &[&["-C", DIR][..], args].concat())
 }
 
-pub fn author(admin: &User, name: &str) -> Result<Option<String>> {
-    let args = ["-C", DIR, "config", name];
-    let value = cmd::bytes_allowing_exit(As::User(admin), "git", &args, 1)?;
-    let value = String::from_utf8(value)?.trim().to_owned();
-    Ok((!value.is_empty()).then_some(value))
+pub fn author(admin: &User) -> Result<String> {
+    author_if_set(admin)?.with_context(|| {
+        format!(
+            "{} has no git user.name and user.email: set them in their ~/.gitconfig",
+            admin.name
+        )
+    })
 }
 
-pub fn set_author(admin: &User, name: &str, value: &str) -> Result<()> {
-    in_checkout(admin, &["config", name, value]).map(drop)
+pub fn author_if_set(admin: &User) -> Result<Option<String>> {
+    author_from(|key| git_config(As::User(admin), &["-C", DIR, "config", key]))
+}
+
+pub fn author_from(read: impl Fn(&str) -> Result<Option<String>>) -> Result<Option<String>> {
+    Ok(match (read("user.name")?, read("user.email")?) {
+        (Some(name), Some(email)) => Some(format!("{name} <{email}>")),
+        _ => None,
+    })
+}
+
+pub fn git_config(who: As, args: &[&str]) -> Result<Option<String>> {
+    let value = cmd::bytes_allowing_exit(who, "git", args, 1)?;
+    let value = String::from_utf8(value)?.trim().to_owned();
+    Ok((!value.is_empty()).then_some(value))
 }
 
 pub fn origin(admin: &User) -> Result<String> {

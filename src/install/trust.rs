@@ -3,13 +3,17 @@ use crate::{
         self, Fleet,
         checked::{self, Advance, Anchor, Outcome, Remote},
     },
+    home::snapshot::Snapshot,
     secrets,
     trust::github,
     trust::sign,
+    util::cmd::As,
     util::prompt::Prompt,
 };
-use anyhow::{Result, bail};
-use std::path::Path;
+use anyhow::{Context, Result, bail};
+use std::{ffi::OsStr, fs, path::Path};
+
+const GITCONFIG: &str = ".gitconfig";
 
 #[derive(Clone, Copy)]
 enum Next {
@@ -86,19 +90,48 @@ fn recover(prompt: &mut Prompt, hostname: &str, fleet: &Fleet, anchored: bool) -
         &entries,
         prompt,
     )?;
-    for (name, question) in [
-        ("user.name", "Your name, for the fleet's commits:"),
-        ("user.email", "Your email, for the fleet's commits:"),
-    ] {
-        if checked::author(admin, name)?.is_none() {
-            checked::set_author(admin, name, &prompt.line(question)?)?;
-        }
-    }
+    let who = author(&staged, prompt)?;
     let message = format!("Trust {hostname} as {}", staged.type_name);
     let key = sign::recovery_key(&age);
-    if let Outcome::Declined = stage.commit(admin, &message, &key, prompt, Advance::Merge)? {
+    if let Outcome::Declined = stage.commit(admin, &who, &message, &key, prompt, Advance::Merge)? {
         bail!("install stopped before the fleet trusted this machine");
     }
     github::add(admin, &uploads)?;
     checked::sync(admin, Remote::Skip).map(drop)
+}
+
+fn author(fleet: &Fleet, prompt: &mut Prompt) -> Result<String> {
+    let admin = fleet.admin();
+    if let Some(who) = checked::author_if_set(admin)? {
+        return Ok(who);
+    }
+    if let Some(who) = fleet_author(fleet)? {
+        return Ok(who);
+    }
+    let name = prompt.line("Your name, for the fleet's commits:")?;
+    let email = prompt.line("Your email, for the fleet's commits:")?;
+    Ok(format!("{name} <{email}>"))
+}
+
+fn fleet_author(fleet: &Fleet) -> Result<Option<String>> {
+    let admin = fleet.admin();
+    let member = fleet
+        .members
+        .iter()
+        .find(|member| member.name == admin.name)
+        .with_context(|| format!("{} lists no user {}", fleet.type_name, admin.name))?;
+    let root = member.chezmoi_root(fleet);
+    let empty = Snapshot::take(admin, &[])?;
+    let target = admin.home.join(GITCONFIG);
+    let managed = root.output(&empty, &[OsStr::new("managed"), target.as_os_str()])?;
+    if managed.trim_ascii().is_empty() {
+        return Ok(None);
+    }
+    let config = tempfile::NamedTempFile::new()?;
+    fs::write(
+        config.path(),
+        root.output(&empty, &[OsStr::new("cat"), target.as_os_str()])?,
+    )?;
+    let path = config.path().to_string_lossy();
+    checked::author_from(|key| checked::git_config(As::Root, &["config", "--file", &path, key]))
 }

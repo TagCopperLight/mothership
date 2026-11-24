@@ -36,7 +36,7 @@ pub fn run() -> Result<()> {
         parts if parts.is_empty() => format!("Review on {}", host::name()?),
         parts => format!("Review on {}: {}", host::name()?, parts.join(", ")),
     };
-    let prepared = stage.prepare(fleet.admin(), &message, &key)?;
+    let prepared = stage.prepare(&checked::author(fleet.admin())?, &message, &key)?;
     if prepared.is_none() && answers.reverts.is_empty() {
         return stage.finish();
     }
