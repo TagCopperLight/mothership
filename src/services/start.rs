@@ -6,12 +6,7 @@ use super::{
 };
 use crate::util::http::Curl;
 use anyhow::{Result, bail};
-use std::{
-    thread,
-    time::{Duration, Instant},
-};
-
-const ADDRESS_WAIT: Duration = Duration::from_secs(30);
+use std::{thread, time::Duration};
 
 pub fn services(
     engine: &dyn Engine,
@@ -61,8 +56,7 @@ fn one(engine: &dyn Engine, places: &Places, name: &str, facing: Option<&str>) -
 }
 
 pub fn wait_for_address(interface: &str) -> Result<()> {
-    let start = Instant::now();
-    while port::addresses(interface)?.is_empty() && start.elapsed() < ADDRESS_WAIT {
+    while port::addresses(interface)?.is_empty() {
         thread::sleep(Duration::from_secs(1));
     }
     Ok(())

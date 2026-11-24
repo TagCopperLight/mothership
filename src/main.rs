@@ -14,7 +14,7 @@ mod trust;
 mod usage;
 mod util;
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use fleet::{
     Fleet,
     checked::{self, Advance, Outcome, Remote},
@@ -233,31 +233,49 @@ fn start_services(interface: Option<&str>) -> anyhow::Result<()> {
     {
         bail!("{interface} isn't a network interface");
     }
-    if let Some(interface) = interface {
-        services::start::wait_for_address(interface)?;
-    }
-    match lock()? {
-        Some(_lock) => services::start::command(interface),
-        None => {
-            println!(
-                "Another mothership command is running: scan shows a service this leaves stopped"
-            );
-            Ok(())
+    let _lock = match interface {
+        Some(interface) => {
+            services::start::wait_for_address(interface)?;
+            wait_for_lock()?
         }
-    }
+        None => match lock()? {
+            Some(lock) => lock,
+            None => {
+                println!("Another mothership command is running, and it starts the services");
+                return Ok(());
+            }
+        },
+    };
+    services::start::command(interface)
 }
 
 fn lock() -> anyhow::Result<Option<std::fs::File>> {
-    use anyhow::Context;
-    use std::os::fd::AsRawFd;
+    let file = lock_file()?;
+    match flock(&file, libc::LOCK_EX | libc::LOCK_NB) {
+        Ok(()) => Ok(Some(file)),
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(e) => Err(e).context("locking mothership"),
+    }
+}
+
+fn wait_for_lock() -> anyhow::Result<std::fs::File> {
+    let file = lock_file()?;
+    flock(&file, libc::LOCK_EX).context("locking mothership")?;
+    Ok(file)
+}
+
+fn lock_file() -> anyhow::Result<std::fs::File> {
     std::fs::create_dir_all(LOCK_DIR)?;
     let path = std::path::Path::new(LOCK_DIR).join("lock");
-    let file =
-        std::fs::File::create(&path).with_context(|| format!("opening {}", path.display()))?;
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        return Ok(None);
+    std::fs::File::create(&path).with_context(|| format!("opening {}", path.display()))
+}
+
+fn flock(file: &std::fs::File, operation: libc::c_int) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    match unsafe { libc::flock(file.as_raw_fd(), operation) } {
+        0 => Ok(()),
+        _ => Err(std::io::Error::last_os_error()),
     }
-    Ok(Some(file))
 }
 
 const LOCK_DIR: &str = "/var/lib/mothership";

@@ -630,8 +630,11 @@ def interface(vm: VM, apply) -> None:
     expect(apply(), "app: it waits for stand0 to have an address", code=1)
     assert running(vm, "extra"), "Docker's start starts every service, restart policy or not"
     assert not running(vm, "app"), "app waits for stand0"
-    vm.run(f"sudo ip link add {STAND_IN} type dummy && sleep 3 && "
-           f"sudo ip address add 10.99.0.2/24 dev {STAND_IN} && sudo ip link set {STAND_IN} up")
+    vm.run(f"sudo ip link add {STAND_IN} type dummy && sleep 40")
+    waiting = vm.run(f"systemctl is-active mothership-services-start@{STAND_IN}", check=False)
+    assert waiting.stdout.strip() == "activating", "the start unit waits as long as stand0 has no address"
+    vm.run(f"sudo flock /var/lib/mothership/lock sh -c 'ip address add 10.99.0.2/24 dev {STAND_IN} && "
+           f"ip link set {STAND_IN} up && sleep 10'")
     deadline = time.time() + 90
     while reach(vm, "udp", 53, "10.99.0.2") != "1.0.0":
         if time.time() > deadline:
