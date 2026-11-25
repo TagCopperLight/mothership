@@ -58,7 +58,7 @@ Root decrypts `/etc` and container secrets with its own key, and each user's che
 
 ### Finding new secrets
 
-Scan guesses a new file is a secret when other users can't read it, or when it sits in a folder they can't enter. Review then offers to add it encrypted first, and in clear second. Adding a file in clear settles it: scan doesn't guess again from its permissions.
+Scan guesses a new file is a secret when other users can't read it, or when it sits in a folder they can't enter. Review then offers to add it encrypted first, and in clear second. Adding a file encrypted also makes it readable by its owner only on the machine, once the owner confirms the commit. Adding a file in clear settles it: scan doesn't guess again from its permissions.
 
 Permissions miss a token an app writes into a file anyone can read, or into one the fleet already tracks in clear. So scan also reads each file it shows for what a secret looks like: a private key, an age key, or a common API token such as GitHub's. Review then offers that file only encrypted, and when the fleet held it in clear, reminds the owner to change the secret, since git history keeps the old version. Review can also mark any other file **secret**.
 

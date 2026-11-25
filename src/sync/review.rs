@@ -1,5 +1,5 @@
 use crate::{
-    fleet::edit::{self, Add},
+    fleet::edit::{self, Add, Applied, OwnerOnly},
     fleet::{
         Fleet,
         checked::{self, Advance, Stage},
@@ -43,10 +43,13 @@ pub fn run() -> Result<()> {
     if let Some(prepared) = &prepared {
         prepared.show()?;
     }
-    if !answers.reverts.is_empty() {
+    if !answers.reverts.is_empty() || !answers.owner_only.is_empty() {
         println!("Then on this machine:");
         for (subject, revert) in &answers.reverts {
             println!("  {}: {}", subject, revert.1.describe());
+        }
+        for (subject, _) in &answers.owner_only {
+            println!("  {subject}: make it readable by its owner only");
         }
     }
     let question = match (&prepared, answers.reverts.is_empty()) {
@@ -61,6 +64,9 @@ pub fn run() -> Result<()> {
     if let Some(prepared) = prepared {
         prepared.publish(fleet.admin(), Advance::Merge)?;
     }
+    for (_, owner_only) in &answers.owner_only {
+        owner_only.run()?;
+    }
     revert_all(fleet, &answers.reverts)?;
     stage.finish()
 }
@@ -68,6 +74,7 @@ pub fn run() -> Result<()> {
 struct Answers<'a> {
     tally: Tally,
     reverts: Vec<(String, revert::Owned<'a>)>,
+    owner_only: Vec<(String, OwnerOnly)>,
 }
 
 #[derive(Default)]
@@ -160,6 +167,7 @@ fn ask<'a>(
 
     let mut tally = Tally::default();
     let mut reverts = Vec::new();
+    let mut owner_only = Vec::new();
     let mut last: Option<String> = None;
     let mut seen = 0;
     'items: for (n, item) in mine.iter().enumerate() {
@@ -215,11 +223,19 @@ fn ask<'a>(
             let Some(answer) = prompt.ask("  ›", &keys)? else {
                 break 'items;
             };
+            let mut then = None;
             let outcome = match answer {
                 Answer::Quit => break 'items,
                 Answer::Add(add) | Answer::Secret(add) => add
                     .apply(fleet, member, prompt, &item.seen)
-                    .map(|added| added.then_some("added to the fleet")),
+                    .map(|applied| match applied {
+                        Applied::Declined => None,
+                        Applied::Added => Some("added to the fleet"),
+                        Applied::AddedThen(owner_only) => {
+                            then = Some(owner_only);
+                            Some("added to the fleet")
+                        }
+                    }),
                 Answer::Revert => {
                     let revert = item.revert.as_ref().expect("revert is offered with one");
                     confirm_revert(revert, prompt).map(|go| {
@@ -248,6 +264,7 @@ fn ask<'a>(
                 keys.retain(|(key, _)| *key != answer.key());
                 continue;
             }
+            owner_only.extend(then.map(|then| (item.subject.clone(), then)));
             tally.count(answer);
             last = Some(format!("{}: {done}", style::clean(&item.subject)));
             break;
@@ -277,7 +294,11 @@ fn ask<'a>(
             style.command("apply")
         );
     }
-    Ok(Answers { tally, reverts })
+    Ok(Answers {
+        tally,
+        reverts,
+        owner_only,
+    })
 }
 
 fn choices<'a>(

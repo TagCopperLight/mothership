@@ -1,4 +1,4 @@
-use super::{FILE_MODE, append_line};
+use super::{Applied, FILE_MODE, append_line};
 use crate::{
     fleet::{
         Fleet, Member,
@@ -9,6 +9,7 @@ use crate::{
     home::snapshot::Snapshot,
     secrets::{AGE, Storage},
     sync::preview::Seen,
+    system::user::User,
     trust,
     util::file,
     util::prompt::Prompt,
@@ -30,7 +31,7 @@ pub fn track(
     storage: Storage,
     prompt: &mut Prompt,
     seen: &Seen,
-) -> Result<bool> {
+) -> Result<Applied> {
     let root = member.chezmoi_root(fleet);
     let snapshot = taken(member, path, seen)?;
     let shown = snapshot.path(member.user(), path)?;
@@ -38,11 +39,10 @@ pub fn track(
         let count = walk::files(&shown)?.len();
         let files = style::count(count, "file");
         if !prompt.confirm(&format!("  That adds {files}. Go on"))? {
-            return Ok(false);
+            return Ok(Applied::Declined);
         }
     }
-    chezmoi_add(fleet, member, &root, &snapshot, path, storage)?;
-    Ok(true)
+    chezmoi_add(fleet, member, &root, &snapshot, path, storage)
 }
 
 pub fn update(
@@ -52,7 +52,7 @@ pub fn update(
     storage: Storage,
     prompt: &mut Prompt,
     seen: &Seen,
-) -> Result<bool> {
+) -> Result<Applied> {
     let root = member.chezmoi_root(fleet);
     let source = root.source_path(path)?;
     let name = source
@@ -72,7 +72,7 @@ pub fn update(
         );
     }
     if link && !confirm_shared(fleet, member, &source, prompt)? {
-        return Ok(false);
+        return Ok(Applied::Declined);
     }
     if link && !clear {
         trust::Readers::new(prompt).approve(fleet, &source)?;
@@ -84,12 +84,13 @@ pub fn update(
         let args = [OsStr::new("re-add"), path.as_os_str()];
         root.run(&own_list(fleet, member)?, &snapshot, &args)?;
     } else {
-        chezmoi_add(fleet, member, &root, &snapshot, path, Storage::Encrypted)?;
+        let applied = chezmoi_add(fleet, member, &root, &snapshot, path, Storage::Encrypted)?;
         if clear {
             println!("  git history keeps the version in clear, so change it.");
         }
+        return Ok(applied);
     }
-    Ok(true)
+    Ok(Applied::Added)
 }
 
 pub fn forget(fleet: &Fleet, member: &Member, path: &Path) -> Result<()> {
@@ -110,19 +111,19 @@ pub fn pref(
     key: &str,
     value: &str,
     prompt: &mut Prompt,
-) -> Result<bool> {
+) -> Result<Applied> {
     let source = member.chezmoi_root(fleet).source_path(user_js)?;
     let file = match fs::symlink_metadata(&source)?.is_symlink() {
         true => {
             if !confirm_shared(fleet, member, &source, prompt)? {
-                return Ok(false);
+                return Ok(Applied::Declined);
             }
             homes::target(&fleet.dir, &source)?
         }
         false => source,
     };
     set_pref(&file, key, value)?;
-    Ok(true)
+    Ok(Applied::Added)
 }
 
 fn taken(member: &Member, path: &Path, seen: &Seen) -> Result<Snapshot> {
@@ -142,12 +143,29 @@ fn files_in(shown: &Path) -> Result<Vec<(PathBuf, fs::Metadata)>> {
         .collect())
 }
 
+pub struct OwnerOnly {
+    user: User,
+    path: PathBuf,
+}
+
+impl OwnerOnly {
+    pub fn run(&self) -> Result<()> {
+        self.user.with_rights(|| keep_owner_only(&self.path))
+    }
+}
+
+fn readable_by_others(shown: &Path) -> Result<Vec<(PathBuf, u32)>> {
+    Ok(files_in(shown)?
+        .into_iter()
+        .filter(|(_, meta)| meta.is_file())
+        .map(|(file, meta)| (file, meta.permissions().mode()))
+        .filter(|(_, mode)| mode & 0o077 != 0)
+        .collect())
+}
+
 fn keep_owner_only(shown: &Path) -> Result<()> {
-    for (file, meta) in files_in(shown)? {
-        if meta.is_file() {
-            let mode = meta.permissions().mode() & 0o700;
-            fs::set_permissions(&file, fs::Permissions::from_mode(mode))?;
-        }
+    for (file, mode) in readable_by_others(shown)? {
+        fs::set_permissions(&file, fs::Permissions::from_mode(mode & 0o700))?;
     }
     Ok(())
 }
@@ -215,11 +233,11 @@ fn chezmoi_add(
     snapshot: &Snapshot,
     path: &Path,
     storage: Storage,
-) -> Result<()> {
+) -> Result<Applied> {
     let args = [OsStr::new("add"), path.as_os_str()];
     if storage == Storage::Clear {
         root.output(snapshot, &args)?;
-        return Ok(());
+        return Ok(Applied::Added);
     }
     if !member.open {
         bail!(
@@ -229,10 +247,17 @@ fn chezmoi_add(
     }
     let user = member.user();
     let shown = snapshot.path(user, path)?;
-    user.with_rights(|| keep_owner_only(path))?;
+    let open = !readable_by_others(&shown)?.is_empty();
     keep_owner_only(&shown)?;
     let args = [OsStr::new("add"), OsStr::new("--encrypt"), path.as_os_str()];
-    root.run(&own_list(fleet, member)?, snapshot, &args)
+    root.run(&own_list(fleet, member)?, snapshot, &args)?;
+    Ok(match open {
+        true => Applied::AddedThen(OwnerOnly {
+            user: user.clone(),
+            path: path.to_path_buf(),
+        }),
+        false => Applied::Added,
+    })
 }
 
 fn set_pref(source: &Path, key: &str, value: &str) -> Result<()> {

@@ -4,6 +4,7 @@ mod home;
 pub mod secret;
 
 use doc::{declare, edit_toml, tool_entry, undeclare};
+pub use home::OwnerOnly;
 
 use crate::{
     fleet::{self, Fleet, Manager, Member, Tool, homes},
@@ -168,7 +169,7 @@ impl Add {
         member: Option<&Member>,
         prompt: &mut Prompt,
         seen: &Seen,
-    ) -> Result<bool> {
+    ) -> Result<Applied> {
         let member = || member.context("the item belongs to no user");
         match self {
             Add::ListPackage(name) => {
@@ -231,7 +232,7 @@ impl Add {
                     "  mothership then manages {name}'s account, services and files here. Go on"
                 );
                 if !prompt.confirm(&question)? {
-                    return Ok(false);
+                    return Ok(Applied::Declined);
                 }
                 list_user(fleet, name)?
             }
@@ -241,8 +242,14 @@ impl Add {
                 FILE_MODE,
             )?,
         }
-        Ok(true)
+        Ok(Applied::Added)
     }
+}
+
+pub enum Applied {
+    Declined,
+    Added,
+    AddedThen(OwnerOnly),
 }
 
 fn list_user(fleet: &Fleet, name: &str) -> Result<()> {

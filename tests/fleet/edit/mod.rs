@@ -101,7 +101,8 @@ impl Checkout {
 
     fn try_apply_seen(&self, add: Add, answers: &'static str, seen: &Seen) -> Result<bool> {
         let me = &self.fleet.members[0];
-        add.apply(&self.fleet, Some(me), &mut Prompt::answering(answers), seen)
+        let applied = add.apply(&self.fleet, Some(me), &mut Prompt::answering(answers), seen)?;
+        Ok(!matches!(applied, Applied::Declined))
     }
 
     fn shown_home(&self, path: &Path) -> Seen {

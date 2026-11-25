@@ -44,6 +44,22 @@ Changed on this machine · 3
 \d+ ignored (re)
 ```
 
+I answer **secret** for the token, then change my mind at the last question: its mode stays as
+it was.
+
+```console
+$ printf 'p\ns\ny\np\nn\n' | sudo mothership review | tail -7
+1 added, 2 passed
+Review on machine: 1 added:
+  A types/workstation/users/me/home/dot_config/app/encrypted_private_token.age
+Then on this machine:
+  ~/.config/app: make it readable by its owner only
+Commit and push [y/N]? n
+Nothing changed.
+$ stat -c '%a' ~/.config/app/token
+644
+```
+
 Review offers the marked ones encrypted first. I answer **secret** for all three, the token too.
 The fleet holds no secret in clear.
 
@@ -78,6 +94,8 @@ Review on machine: 3 added:
   A types/workstation/etc/wifi.conf.age
   A types/workstation/users/me/home/dot_config/app/encrypted_private_token.age
   A types/workstation/users/me/home/private_dot_ssh/encrypted_private_id_test.age
+Then on this machine:
+  ~/.config/app: make it readable by its owner only
 Commit and push [y/N]? y
 Committed [0-9a-f]{12} Review on machine: 3 added (re)
 $ stat -c '%a' ~/.config/app/token
