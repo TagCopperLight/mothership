@@ -1,10 +1,10 @@
 use super::{
     account,
     confirm::Unconfirmed,
-    deploy::{self, Outcome, Places, Wanted},
+    deploy::{self, Places, Wanted},
     docker::Docker,
     docker_config, registry, start,
-    state::{Deployed, State},
+    state::State,
 };
 use crate::{fleet::Fleet, probe, util::file, util::http::Curl};
 use anyhow::{Context, Result, bail};
@@ -133,45 +133,19 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
     deploys.sort();
     deploys.dedup();
     for name in deploys {
-        let service = fleet
-            .services
-            .iter()
-            .find(|s| s.name == name)
-            .with_context(|| format!("the fleet has no service {name}"))?;
+        let service = super::find(&fleet.services, name)?;
         let rendered = service.render(fleet.root_keys())?;
         let wanted = Wanted {
-            service,
-            key: super::key(&fleet.type_name, service),
-            fleet: deploy::fingerprint(service, &rendered),
-            rendered: &rendered,
             overwrite: overwrite
                 .iter()
                 .filter(|(owner, _)| *owner == name)
                 .map(|(_, file)| file.clone())
                 .collect(),
+            ..Wanted::of(fleet, service, &rendered)
         };
-        let before = state.services.get(name).cloned();
-        let mut save = |entry: &Deployed| {
-            state.services.insert(name.to_owned(), entry.clone());
-            state.save()
-        };
-        let deployed = deploy::deploy(
-            &docker,
-            &places,
-            &wanted,
-            before.as_ref(),
-            &mut unconfirmed,
-            &mut save,
-        );
-        match deployed {
-            Ok((entry, outcome)) => {
-                println!("{}", crate::util::style::clean(&said(name, &outcome)));
-                state.services.insert(name.to_owned(), entry);
-            }
-            Err(e) => failed.push(format!("{name}: {e:#}")),
+        if let Err(e) = deploy::record(&docker, &places, &wanted, &mut state, &mut unconfirmed) {
+            failed.push(format!("{name}: {e:#}"));
         }
-        state.save()?;
-        unconfirmed.save()?;
     }
     if !failed.is_empty() {
         bail!("couldn't apply {}", failed.join("\n"));
@@ -200,21 +174,6 @@ fn teardown(fleet: &Fleet) -> Result<()> {
     Ok(())
 }
 
-fn said(name: &str, outcome: &Outcome) -> String {
-    match outcome {
-        Outcome::Started => format!("Started {name}"),
-        Outcome::Updated => format!("Updated {name}"),
-        Outcome::Unhealthy(why) => format!("Started {name}, which isn't healthy: {why}"),
-        Outcome::RolledBack(why) => {
-            format!("{name} failed, so it runs its last healthy versions again: {why}")
-        }
-        Outcome::Blocked(pins) => {
-            format!("Left {name} alone: {pins} failed its health check here before")
-        }
-        Outcome::Refused(why) => format!("Left {name} alone: {why}"),
-    }
-}
-
 pub fn problems() -> Result<Vec<String>> {
     let places = Places::here()?;
     let mut problems = Vec::new();
@@ -222,10 +181,15 @@ pub fn problems() -> Result<Vec<String>> {
         if let Some(why) = entry.problem_for(&entry.fleet) {
             problems.push(format!("{name}: {why}"));
         }
-        if entry.running.is_empty() {
-            continue;
-        }
-        if let deploy::Binding::Waiting(interface) = deploy::binding(&places, name)?.binding {
+        let interface = match &entry.waiting {
+            Some(waiting) => Some(waiting.interface.clone()),
+            None if entry.running.is_empty() => None,
+            None => match deploy::binding(&places, name)?.binding {
+                deploy::Binding::Waiting(interface) => Some(interface),
+                _ => None,
+            },
+        };
+        if let Some(interface) = interface {
             problems.push(format!(
                 "{name}: it waits for {interface} to have an address"
             ));

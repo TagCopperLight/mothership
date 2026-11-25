@@ -1,10 +1,11 @@
 use super::{
-    deploy::{self, Binding, Bindings, Places, binding},
+    confirm::Unconfirmed,
+    deploy::{self, Binding, Bindings, Places, Wanted, binding},
     docker::{Docker, Engine, Project},
     port, registry,
     state::State,
 };
-use crate::util::http::Curl;
+use crate::{fleet::Fleet, util::http::Curl};
 use anyhow::{Result, bail};
 use std::{thread, time::Duration};
 
@@ -55,6 +56,46 @@ fn one(engine: &dyn Engine, places: &Places, name: &str, facing: Option<&str>) -
     }
 }
 
+fn waiting(
+    engine: &dyn Engine,
+    places: &Places,
+    state: &mut State,
+    facing: Option<&str>,
+) -> Result<Vec<String>> {
+    let ready: Vec<(String, String)> = state
+        .services
+        .iter()
+        .filter_map(|(name, entry)| {
+            let waiting = entry.waiting.as_ref()?;
+            facing
+                .is_none_or(|interface| interface == waiting.interface)
+                .then(|| (name.clone(), waiting.fleet.clone()))
+        })
+        .collect();
+    if ready.is_empty() {
+        return Ok(Vec::new());
+    }
+    let fleet = Fleet::load()?;
+    let mut unconfirmed = Unconfirmed::load()?;
+    let mut failed = Vec::new();
+    for (name, applied) in ready {
+        let mut one = || -> Result<()> {
+            let service = super::find(&fleet.services, &name)?;
+            let rendered = service.render(fleet.root_keys())?;
+            let wanted = Wanted::of(&fleet, service, &rendered);
+            if wanted.fleet != applied {
+                println!("Left {name} alone: the fleet changed since apply, so apply starts it");
+                return Ok(());
+            }
+            deploy::record(engine, places, &wanted, state, &mut unconfirmed)
+        };
+        if let Err(e) = one() {
+            failed.push(format!("{name} didn't start: {e:#}"));
+        }
+    }
+    Ok(failed)
+}
+
 pub fn wait_for_address(interface: &str) -> Result<()> {
     while port::addresses(interface)?.is_empty() {
         thread::sleep(Duration::from_secs(1));
@@ -71,7 +112,9 @@ pub fn command(interface: Option<&str>) -> Result<()> {
     if !docker.answers() {
         return Ok(());
     }
-    let failed = services(&docker, &places, &State::load()?, interface, &|_| true);
+    let mut state = State::load()?;
+    let mut failed = services(&docker, &places, &state, interface, &|_| true);
+    failed.extend(waiting(&docker, &places, &mut state, interface)?);
     if !failed.is_empty() {
         bail!("{}", failed.join("\n"));
     }

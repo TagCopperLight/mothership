@@ -27,6 +27,15 @@ pub struct Deployed {
     pub failed: BTreeSet<(String, Pin)>,
     pub problem: Option<Problem>,
     pub update: Option<Update>,
+    pub waiting: Option<Waiting>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Waiting {
+    pub interface: String,
+    pub fleet: String,
+    pub to: Pins,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

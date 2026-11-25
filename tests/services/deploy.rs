@@ -491,28 +491,20 @@ fn a_service_facing_an_interface_follows_its_addresses_and_waits_without_one() {
     let text = fs::read_to_string(&toml).unwrap();
     fs::write(&toml, format!("{text}ports.wg0 = [\"53/udp\"]\n")).unwrap();
     let service = load(&world.fleet).unwrap().remove(0);
-    let rendered = service.render(&Keys::default()).unwrap();
-    let wanted = Wanted {
-        service: &service,
-        key: "server/app".into(),
-        fleet: fingerprint(&service, &rendered),
-        rendered: &rendered,
-        overwrite: Vec::new(),
-    };
-    let err = deploy(
-        &engine,
-        &world.places,
-        &wanted,
-        None,
-        &mut world.unconfirmed,
-        &mut |_| Ok(()),
-    )
-    .unwrap_err();
-    assert!(format!("{err:#}").contains("publishes on wg0, which has no address yet"));
-    engine.calls();
+    let (waiting, outcome) = world.deploy(&engine, &service, None);
+    assert_eq!(outcome, Outcome::Waiting("wg0".into()));
+    assert!(engine.calls().is_empty());
+    assert!(waiting.running.is_empty());
+    let recorded = waiting.waiting.clone().unwrap();
+    assert_eq!(
+        (recorded.interface.as_str(), &recorded.to),
+        ("wg0", &service.pins())
+    );
 
     world.places.lookup = |_| Ok(vec!["100.64.0.1".parse()?]);
-    let (entry, _) = world.deploy(&engine, &service, None);
+    let (entry, outcome) = world.deploy(&engine, &service, Some(&waiting));
+    assert_eq!(outcome, Outcome::Started);
+    assert_eq!(entry.waiting, None);
     let host = |world: &World| {
         let text = fs::read_to_string(world.places.project("app").join(OVERRIDE)).unwrap();
         let config: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -520,7 +512,7 @@ fn a_service_facing_an_interface_follows_its_addresses_and_waits_without_one() {
     };
     assert_eq!(host(&world), "100.64.0.1");
     let mut state = crate::services::state::State::default();
-    state.services.insert("app".into(), entry);
+    state.services.insert("app".into(), entry.clone());
     let start = |world: &World, facing: Option<&str>| {
         engine.calls();
         let failed =
@@ -538,6 +530,29 @@ fn a_service_facing_an_interface_follows_its_addresses_and_waits_without_one() {
     world.places.lookup = |_| Ok(Vec::new());
     assert!(start(&world, None).is_empty());
     assert_eq!(host(&world), "100.64.0.2");
+
+    world.pin("1.0.1", B);
+    let text = fs::read_to_string(&toml).unwrap();
+    fs::write(&toml, format!("{text}ports.wg0 = [\"53/udp\"]\n")).unwrap();
+    let newer = load(&world.fleet).unwrap().remove(0);
+    let (held, outcome) = world.deploy(&engine, &newer, Some(&entry));
+    assert_eq!(outcome, Outcome::Waiting("wg0".into()));
+    assert!(engine.calls().is_empty());
+    assert_eq!(held.running, entry.running);
+    world.places.lookup = |_| Ok(vec!["100.64.0.2".parse()?]);
+    let (_, outcome) = world.deploy(&engine, &newer, Some(&held));
+    assert_eq!(outcome, Outcome::Updated);
+    assert_eq!(
+        engine.calls(),
+        [
+            "config",
+            "pull",
+            "stop",
+            "snapshot",
+            "up app:1.0.1",
+            "drop snapshot"
+        ]
+    );
 }
 
 #[test]

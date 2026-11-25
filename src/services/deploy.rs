@@ -4,9 +4,9 @@ use super::{
     docker::{Engine, Health, Project},
     link,
     port::{self, Bound},
-    state::{Deployed, Pins, Problem, Step, Update},
+    state::{Deployed, Pins, Problem, State, Step, Update, Waiting},
 };
-use crate::{util::file, util::hash, util::walk};
+use crate::{fleet::Fleet, util::file, util::hash, util::style, util::walk};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use std::{
@@ -61,6 +61,27 @@ pub enum Outcome {
     RolledBack(String),
     Blocked(String),
     Refused(String),
+    Waiting(String),
+}
+
+impl Outcome {
+    fn said(&self, name: &str) -> String {
+        match self {
+            Outcome::Started => format!("Started {name}"),
+            Outcome::Updated => format!("Updated {name}"),
+            Outcome::Unhealthy(why) => format!("Started {name}, which isn't healthy: {why}"),
+            Outcome::RolledBack(why) => {
+                format!("{name} failed, so it runs its last healthy versions again: {why}")
+            }
+            Outcome::Blocked(pins) => {
+                format!("Left {name} alone: {pins} failed its health check here before")
+            }
+            Outcome::Refused(why) => format!("Left {name} alone: {why}"),
+            Outcome::Waiting(interface) => {
+                format!("{name} waits for {interface} to have an address, and starts then")
+            }
+        }
+    }
 }
 
 pub fn fingerprint(service: &Service, rendered: &Rendered) -> String {
@@ -184,8 +205,8 @@ fn write_override(
             entry["ports"] = match port::bind(&image.ports, &places.lookup)? {
                 Bound::Ready(entries) => entries.into(),
                 Bound::Waiting(interface) => bail!(
-                    "{} publishes on {interface}, which has no address yet: apply again once \
-                     it has one",
+                    "{} publishes on {interface}, which lost its address: apply again once it \
+                     has one",
                     service.name
                 ),
             };
@@ -374,6 +395,15 @@ pub fn deploy(
         }
         unconfirmed.confirm(&wanted.key, image_name);
     }
+    if let Some(interface) = unbound(places, service)? {
+        entry.waiting = Some(Waiting {
+            interface: interface.clone(),
+            fleet: wanted.fleet.clone(),
+            to: pins,
+        });
+        return Ok((entry, Outcome::Waiting(interface)));
+    }
+    entry.waiting = None;
 
     let dir = places.project(name);
     let previous = places.previous(name);
@@ -449,6 +479,57 @@ pub fn deploy(
             .with_context(|| format!("removing {}", previous.display()))?;
     }
     Ok((entry, outcome))
+}
+
+pub fn unbound(places: &Places, service: &Service) -> Result<Option<String>> {
+    for image in service.images.values() {
+        if let Bound::Waiting(interface) = port::bind(&image.ports, &places.lookup)? {
+            return Ok(Some(interface));
+        }
+    }
+    Ok(None)
+}
+
+pub fn record(
+    engine: &dyn Engine,
+    places: &Places,
+    wanted: &Wanted,
+    state: &mut State,
+    unconfirmed: &mut Unconfirmed,
+) -> Result<()> {
+    let name = &wanted.service.name;
+    let before = state.services.get(name).cloned();
+    let mut save = |entry: &Deployed| {
+        state.services.insert(name.clone(), entry.clone());
+        state.save()
+    };
+    let deployed = deploy(
+        engine,
+        places,
+        wanted,
+        before.as_ref(),
+        unconfirmed,
+        &mut save,
+    );
+    if let Ok((entry, outcome)) = &deployed {
+        println!("{}", style::clean(&outcome.said(name)));
+        state.services.insert(name.clone(), entry.clone());
+    }
+    state.save()?;
+    unconfirmed.save()?;
+    deployed.map(drop)
+}
+
+impl<'a> Wanted<'a> {
+    pub fn of(fleet: &Fleet, service: &'a Service, rendered: &'a Rendered) -> Wanted<'a> {
+        Wanted {
+            service,
+            key: super::key(&fleet.type_name, service),
+            fleet: fingerprint(service, rendered),
+            rendered,
+            overwrite: Vec::new(),
+        }
+    }
 }
 
 fn rolled_back(mut entry: Deployed, why: &str, after: Health) -> Deployed {

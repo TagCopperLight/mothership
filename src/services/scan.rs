@@ -161,17 +161,19 @@ fn unowned(places: &Places, owned: &BTreeSet<&str>) -> Result<Vec<PathBuf>> {
 fn binding_item(places: &Places, name: &str) -> Result<Option<Item>> {
     Ok(match deploy::binding(places, name)?.binding {
         Binding::Current => None,
-        Binding::Waiting(interface) => Some(
-            Item::new(Kind::Container, Change::Unreadable, name, "waiting")
-                .noting(format!("{interface} has no address yet"))
-                .because("it starts when the interface comes up"),
-        ),
+        Binding::Waiting(interface) => Some(waiting_item(name, &interface)),
         Binding::Stale(_) => Some(fleet_item(
             Item::new(Kind::Container, Change::Edited, name, "other addresses")
                 .noting("an interface it faces has other addresses than the ones it listens on")
                 .reverting(Action::Start(name.to_owned())),
         )),
     })
+}
+
+fn waiting_item(name: &str, interface: &str) -> Item {
+    Item::new(Kind::Container, Change::Unreadable, name, "waiting")
+        .noting(format!("{interface} has no address yet"))
+        .because("it starts when the interface comes up")
 }
 
 fn login_item(fleet: &Fleet) -> Result<Option<Item>> {
@@ -231,6 +233,19 @@ fn service_items(
                 .noting("its last update didn't finish: apply puts back the versions before it")
                 .reverting(Action::Deploy(service.name.clone())),
         ));
+    } else if let Some(waiting) = entry
+        .waiting
+        .as_ref()
+        .filter(|waiting| waiting.fleet == fingerprint)
+    {
+        items.push(match deploy::unbound(places, service)? {
+            Some(interface) => waiting_item(&service.name, &interface),
+            None => fleet_item(
+                Item::new(Kind::Container, Change::Edited, &service.name, "ready")
+                    .noting(format!("{} has an address now", waiting.interface))
+                    .reverting(Action::Deploy(service.name.clone())),
+            ),
+        });
     } else if entry.fleet != fingerprint {
         let changes: Vec<String> = pins
             .iter()

@@ -74,7 +74,7 @@ Two services can't declare the same port on the same network. A `public` port ta
 
 The system enforces the ports: `services`' Docker can open the declared ports and no others, even when a broken-out container asks it. It doesn't enforce the networks: Docker may open a declared port on any address, so the network each port faces holds as long as Docker does what mothership asks. It may also open ports under 1024, which users without sudo can't, so none of them can take a service's place on such a port while it's stopped. A port from 1024 up has no such guard.
 
-A service facing an interface without an address yet, such as a VPN still connecting, waits. When the address comes, mothership starts the service on it without an apply, after any mothership command running then. When the address changes later, scan shows it and apply moves the service there.
+A service facing an interface without an address yet, such as a VPN still connecting, waits. Apply records the versions it should run, and scan shows it under "Needs attention" until the address comes. Mothership then starts it without an apply, after any mothership command running then: a first start, or an update with its snapshot, health watch and rollback. It runs only what apply recorded: if the fleet changed since, the service waits for the next apply. When the address changes later, scan shows it and apply moves the service there.
 
 ### Links
 

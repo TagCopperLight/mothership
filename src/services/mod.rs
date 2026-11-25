@@ -372,6 +372,13 @@ pub fn load(type_dir: &Path) -> Result<Vec<Service>> {
     Ok(services)
 }
 
+pub fn find<'a>(services: &'a [Service], name: &str) -> Result<&'a Service> {
+    services
+        .iter()
+        .find(|s| s.name == name)
+        .with_context(|| format!("the fleet has no service {name}"))
+}
+
 pub fn published(services: &[Service]) -> Result<BTreeSet<Port>> {
     let mut owners: BTreeMap<Port, Vec<(&Network, String)>> = BTreeMap::new();
     for service in services {

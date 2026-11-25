@@ -44,6 +44,7 @@ VERSIONS = ["1.0.0", "1.0.1", "1.0.2", "1.0.3"]
 TOKEN = "s3cret-token"
 FLEET = "/var/lib/mothership/fleet"
 STAND_IN = "stand0"
+LATE = "late0"
 LINK = "link.app.app.extra.extra"
 
 
@@ -430,6 +431,7 @@ def scenario(vm: VM, registry: Registry, image: str, tmp: Path) -> None:
     vm.copy(binary.BINARY, tmp / "registry.crt", E2E / "signing", tmp / "key.txt", E2E / "ssh",
             E2E / "ssh.pub", fleet(tmp, image, registry, root), E2E / "anchor.sh")
     vm.run(f"""set -e
+sudo systemctl disable --now apt-daily.timer apt-daily-upgrade.timer
 sudo hostnamectl set-hostname minipc
 sudo install -m 755 /tmp/mothership /usr/local/bin/mothership
 sudo install -m 644 /tmp/registry.crt /usr/local/share/ca-certificates/mothership-test.crt
@@ -483,6 +485,8 @@ sudo ip link set {STAND_IN} up
     def pin(version: str) -> str:
         text = pinned(image, registry, version, mine=True, callers=callers)
         return f"cat > types/server/services/app/service.toml <<'EOF'\n{text}EOF"
+
+    late(vm, image, registry, commit, apply)
 
     expect(vm.run("sudo mothership secret app token", input="n3w-token\ny\n"), "Committed")
     link = vm.run(f"readlink {FLEET}/types/server/services/app/secrets/token.age").stdout
@@ -652,6 +656,41 @@ def interface(vm: VM, apply) -> None:
     expect(vm.run("sudo mothership scan"), "extra", "start it")
     apply()
     assert running(vm, "extra"), "apply starts a service whose containers all stopped"
+
+
+def late(vm: VM, image: str, registry: Registry, commit, apply) -> None:
+    folder = "types/server/services/late"
+    toml = (pinned(image, registry, "1.0.0", mine=False).replace("[images.app]", "[images.late]")
+            + f'ports.{LATE} = ["8053/udp"]\n')
+    commit("Add late", f"""mkdir -p {folder}
+cat > {folder}/service.toml <<'END'
+{toml}END
+cat > {folder}/compose.yaml <<'END'
+services:
+  late:
+    restart: unless-stopped
+    volumes:
+      - /srv/late:/data
+END""")
+    expect(apply(), "late waits for late0 to have an address, and starts then",
+           "late: it waits for late0 to have an address", code=1)
+    expect(vm.run("sudo mothership scan"), "late0 has no address yet")
+    assert not running(vm, "late"), "late waits for late0"
+    vm.run(f"sudo ip link add {LATE} type dummy && sudo ip link set {LATE} up && "
+           f"sudo ip address add 10.98.0.1/24 dev {LATE}")
+    deadline = time.time() + 180
+    unit = f"sudo journalctl -u mothership-services-start@{LATE} --no-pager"
+    while "Started late" not in vm.run(unit).stdout:
+        if time.time() > deadline:
+            sys.exit(f"late didn't start when {LATE} came up: see {LOG}")
+        time.sleep(3)
+    assert "isn't healthy" not in vm.run(unit).stdout, f"late starts healthy on {LATE}"
+    expect(vm.run("sudo ss -ulnp"), "10.98.0.1:8053")
+    assert "late0" not in vm.run("sudo mothership scan").stdout, "late no longer waits"
+    commit("Drop late", f"git rm -q -r {folder}")
+    expect(apply(), "Removed late")
+    vm.run(f"sudo ip link del {LATE}")
+    expect(apply(), "Nothing to apply.")
 
 
 def restart_manager(vm: VM) -> None:
