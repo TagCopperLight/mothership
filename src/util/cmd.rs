@@ -64,6 +64,18 @@ pub fn bytes<S: AsRef<OsStr>>(who: As, program: &str, args: &[S]) -> Result<Vec<
     capture(who.command(program, args), program, args, limit, None, None)
 }
 
+pub fn bytes_with_env<S: AsRef<OsStr>>(
+    who: As,
+    program: &str,
+    args: &[S],
+    env: &[(&str, &str)],
+) -> Result<Vec<u8>> {
+    let limit = who.limit(USER_QUERY_LIMIT);
+    let mut command = who.command(program, args);
+    command.envs(env.iter().copied());
+    capture(command, program, args, limit, None, None)
+}
+
 pub fn bytes_allowing_exit<S: AsRef<OsStr>>(
     who: As,
     program: &str,

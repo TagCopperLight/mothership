@@ -2,7 +2,14 @@ use crate::util::cmd;
 use anyhow::{Context, Result, bail};
 use std::{fs, process::Command, time::Duration};
 
-const LIMIT: Duration = Duration::from_secs(90);
+const QUERY_LIMIT: Duration = Duration::from_secs(90);
+const DOWNLOAD_LIMIT: Duration = Duration::from_secs(10 * 60);
+
+#[derive(Clone, Copy)]
+enum Transfer {
+    Query,
+    Download,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Response {
@@ -56,8 +63,32 @@ fn quoted(text: &str) -> Result<String> {
     ))
 }
 
+pub fn get(url: &str) -> Result<Vec<u8>> {
+    fetch(url, Transfer::Query)
+}
+
+pub fn download(url: &str) -> Result<Vec<u8>> {
+    fetch(url, Transfer::Download)
+}
+
+fn fetch(url: &str, transfer: Transfer) -> Result<Vec<u8>> {
+    let request = Request {
+        method: "GET",
+        url,
+        headers: Vec::new(),
+        body: None,
+    };
+    Ok(Curl.send_as(&request, transfer)?.ok(url)?.body)
+}
+
 impl Http for Curl {
     fn send(&self, request: &Request) -> Result<Response> {
+        self.send_as(request, Transfer::Query)
+    }
+}
+
+impl Curl {
+    fn send_as(&self, request: &Request, transfer: Transfer) -> Result<Response> {
         let dir = tempfile::TempDir::new()?;
         let (head, body, input) = (
             dir.path().join("head"),
@@ -72,8 +103,14 @@ impl Http for Curl {
             "write-out = \"%{http_code}\"".to_owned(),
             "silent".to_owned(),
             "show-error".to_owned(),
-            format!("max-time = {}", LIMIT.as_secs()),
         ];
+        match transfer {
+            Transfer::Query => config.push(format!("max-time = {}", QUERY_LIMIT.as_secs())),
+            Transfer::Download => {
+                config.push(format!("max-time = {}", DOWNLOAD_LIMIT.as_secs()));
+                config.push("location".to_owned());
+            }
+        }
         if request.method == "HEAD" {
             config.push("head".to_owned());
         }

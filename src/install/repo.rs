@@ -8,8 +8,8 @@ use crate::{
     trust::github,
     trust::ssh,
     util::cmd::{self, As},
-    util::file,
     util::prompt::Prompt,
+    util::{file, http},
 };
 use anyhow::{Context, Result, bail};
 use std::{fs, path::Path};
@@ -36,7 +36,7 @@ fn known_hosts_lines(known: &str, lines: &[String]) -> String {
 }
 
 fn know_github() -> Result<()> {
-    let text = cmd::bytes(As::Root, "curl", &["-fsSL", github::META])?;
+    let text = http::get(github::META)?;
     let path = Path::new(KNOWN_HOSTS);
     let known = file::read_if_any(path)?.unwrap_or_default();
     let added = known_hosts_lines(&known, &github::known_hosts(&text)?);
@@ -47,21 +47,25 @@ fn know_github() -> Result<()> {
 }
 
 fn lets_in(url: &str, owner: &User) -> Result<bool> {
-    let mut probe = As::User(owner).command("git", &["ls-remote", "--", url]);
-    probe
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
-    let out = probe.output().context("running git")?;
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    match out.status.success() {
-        true => Ok(true),
-        false if stderr.contains("Permission denied (") => Ok(false),
-        false if stderr.contains("Host key verification failed") => bail!(
+    let env = [
+        ("GIT_TERMINAL_PROMPT", "0"),
+        ("GIT_SSH_COMMAND", "ssh -o BatchMode=yes"),
+    ];
+    let Err(error) = cmd::bytes_with_env(As::User(owner), "git", &["ls-remote", "--", url], &env)
+    else {
+        return Ok(true);
+    };
+    let reason = format!("{error:#}");
+    if reason.contains("Permission denied (") {
+        return Ok(false);
+    }
+    if reason.contains("Host key verification failed") {
+        bail!(
             "this machine doesn't know {url}'s host key: add it to {KNOWN_HOSTS}, after checking \
              it, and run install again"
-        ),
-        false => bail!("git can't read {url}: {}", stderr.trim()),
+        );
     }
+    bail!("git can't read {url}: {reason}")
 }
 
 pub fn clone(

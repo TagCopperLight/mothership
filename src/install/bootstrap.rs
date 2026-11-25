@@ -1,6 +1,9 @@
 use crate::{
     package::Distro,
-    util::cmd::{self, As},
+    util::{
+        cmd::{self, As},
+        file, http,
+    },
 };
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
@@ -57,7 +60,7 @@ fn download_chezmoi_deb(dir: &Path) -> Result<PathBuf> {
         format!("https://github.com/twpayne/chezmoi/releases/download/v{CHEZMOI_VERSION}/{name}");
     let deb = dir.join(&name);
     let path = deb.to_string_lossy();
-    cmd::root("curl", &["-fsSL", "-o", &path, &url])?;
+    file::write(&deb, &http::download(&url)?, 0o644)?;
     let actual = cmd::stdout(As::Root, "sha256sum", &[&*path])?;
     if actual.split_whitespace().next() != Some(*wanted) {
         bail!("{name} isn't the chezmoi {CHEZMOI_VERSION} install knows");

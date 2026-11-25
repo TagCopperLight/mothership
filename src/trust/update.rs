@@ -1,8 +1,6 @@
 use crate::{
     fleet::{self, MANIFEST, Manifest, Pin},
-    util::cmd::{self, As},
-    util::file,
-    util::hash,
+    util::{file, hash, http},
 };
 use anyhow::{Context, Result, bail};
 use std::{env, fs, os::unix::process::CommandExt, path::Path, process::Command};
@@ -49,7 +47,7 @@ pub fn follow_fleet(approve: &mut dyn FnMut() -> Result<bool>) -> Result<Outcome
 
 fn download(version: &str, sha256: &str) -> Result<Vec<u8>> {
     let url = format!("{RELEASES}/v{version}/mothership-{}", env::consts::ARCH);
-    let bytes = cmd::bytes(As::Root, "curl", &["-fsSL", &url])?;
+    let bytes = http::download(&url)?;
     if hash::sha256(&bytes) != sha256 {
         bail!("{url} isn't the binary {MANIFEST} names");
     }
