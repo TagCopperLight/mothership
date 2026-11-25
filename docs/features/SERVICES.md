@@ -70,7 +70,7 @@ Each port names the network it listens on:
 - `local`: the machine itself only;
 - an interface, such as `vpn0`: that interface's addresses only. Mothership knows no VPN: the fleet names the interface.
 
-Two services can't declare the same port on the same network. A `public` port takes every address, so it clashes with that port on any network.
+A port and protocol, such as `53/udp`, is declared once per machine, whatever its network. Rootless Docker can't see the machine's addresses: it forwards every published port to one address of its own, so the same port on two networks would land in the same place.
 
 The system enforces the ports: `services`' Docker can open the declared ports and no others, even when a broken-out container asks it. It doesn't enforce the networks: Docker may open a declared port on any address, so the network each port faces holds as long as Docker does what mothership asks. It may also open ports under 1024, which users without sudo can't, so none of them can take a service's place on such a port while it's stopped. A port from 1024 up has no such guard.
 

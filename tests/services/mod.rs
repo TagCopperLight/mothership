@@ -334,14 +334,17 @@ fn two_services_never_publish_the_same_port_on_one_network() {
         "web",
         "ports.public = [\"443/tcp\", \"443/udp\"]",
     );
-    published_service(dir.path(), "local", "ports.local = [\"53/udp\"]");
+    published_service(dir.path(), "local", "ports.local = [\"5353/udp\"]");
     let services = load(dir.path()).unwrap();
     let rules: Vec<String> = published(&services)
         .unwrap()
         .iter()
         .map(Port::bind_rule)
         .collect();
-    assert_eq!(rules, ["tcp:53", "udp:53", "tcp:443", "udp:443"]);
+    assert_eq!(
+        rules,
+        ["tcp:53", "udp:53", "tcp:443", "udp:443", "udp:5353"]
+    );
     assert_eq!(
         interfaces(&services).into_iter().collect::<Vec<_>>(),
         ["tailscale0"]
@@ -352,12 +355,12 @@ fn two_services_never_publish_the_same_port_on_one_network() {
         err,
         "dns's images.app and other's images.app both publish 53/udp on tailscale0"
     );
-    published_service(dir.path(), "other", "ports.public = [\"53/tcp\"]");
+    published_service(dir.path(), "other", "ports.local = [\"53/tcp\"]");
     let err = format!("{:#}", load(dir.path()).err().unwrap());
     assert_eq!(
         err,
-        "dns's images.app publishes 53/tcp on tailscale0, and other's images.app on public: \
-         public takes every address"
+        "dns's images.app publishes 53/tcp on tailscale0, and other's images.app on local: \
+         rootless Docker forwards a port to one place whatever its network"
     );
 }
 
@@ -386,7 +389,7 @@ fn services_docker_may_bind_only_the_declared_ports() {
     published_service(
         dir.path(),
         "app",
-        "ports.public = [\"80/tcp\"]\nports.local = [\"443/udp\"]\nports.wg0 = [\"443/udp\"]",
+        "ports.public = [\"80/tcp\"]\nports.local = [\"443/udp\"]\nports.wg0 = [\"8443/udp\"]",
     );
     let services = load(dir.path()).unwrap();
     let unit = account::unit("/usr/bin/dockerd-rootless.sh", &user, &services).unwrap();
@@ -399,6 +402,7 @@ fn services_docker_may_bind_only_the_declared_ports() {
         [
             "SocketBindAllow=tcp:80",
             "SocketBindAllow=udp:443",
+            "SocketBindAllow=udp:8443",
             "SocketBindDeny=1-65535"
         ]
     );

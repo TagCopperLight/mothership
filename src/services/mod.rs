@@ -380,27 +380,23 @@ pub fn find<'a>(services: &'a [Service], name: &str) -> Result<&'a Service> {
 }
 
 pub fn published(services: &[Service]) -> Result<BTreeSet<Port>> {
-    let mut owners: BTreeMap<Port, Vec<(&Network, String)>> = BTreeMap::new();
+    let mut owners: BTreeMap<Port, (&Network, String)> = BTreeMap::new();
     for service in services {
         for (name, image) in &service.images {
             let owner = format!("{}'s images.{name}", service.name);
             for published in &image.ports {
-                let taken = owners.entry(published.port).or_default();
-                if let Some((network, first)) =
-                    taken.iter().find(|(n, _)| n.clashes(&published.network))
-                {
+                if let Some((network, first)) = owners.get(&published.port) {
                     match *network == &published.network {
                         true => bail!("{first} and {owner} both publish {published}"),
                         false => bail!(
-                            "{first} publishes {} on {network}, and {owner} on {}: {} takes \
-                             every address",
+                            "{first} publishes {} on {network}, and {owner} on {}: rootless \
+                             Docker forwards a port to one place whatever its network",
                             published.port,
-                            published.network,
-                            Network::Public
+                            published.network
                         ),
                     }
                 }
-                taken.push((&published.network, owner.clone()));
+                owners.insert(published.port, (&published.network, owner.clone()));
             }
         }
     }

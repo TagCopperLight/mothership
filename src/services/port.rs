@@ -143,10 +143,6 @@ impl fmt::Display for Network {
 }
 
 impl Network {
-    pub fn clashes(&self, other: &Network) -> bool {
-        self == other || *self == Network::Public || *other == Network::Public
-    }
-
     pub fn interface(&self) -> Option<&str> {
         match self {
             Network::Interface(name) => Some(name),
