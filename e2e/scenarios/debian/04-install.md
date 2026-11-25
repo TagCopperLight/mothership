@@ -2,11 +2,12 @@
 
 The machine comes with Debian and nothing of mothership: no fleet, no keys and no `machine.toml`.
 I installed `beta` by hand, as Debian's installer would leave a package the fleet never lists.
+`epsilon` too, and it pulls in `alpha`, which the fleet lists, as a dependency.
 
 ```console
 $ git clone -q --bare /var/lib/mothership/fleet ~/fleet.git
 $ sudo rm -r /var/lib/mothership /etc/mothership
-$ sudo apt-get install -y beta > /dev/null 2>&1
+$ sudo apt-get install -y beta epsilon > /dev/null 2>&1
 ```
 
 No machine that signs for the fleet is at hand, so I type the recovery key. Install trusts the
@@ -51,17 +52,17 @@ Trust box as server:
   A machines/box.toml
 Commit and push [y/N]? y
 Committed [0-9a-f]{12} Trust box as server (re)
-Coming from the fleet · 3
+Coming from the fleet · 2
   Packages
-    + alpha            install
     + gamma            install
   Files
     + /etc/fleet.conf  create
 
-1 changed on this machine, for sudo mothership review
+2 changed on this machine, for sudo mothership review
 ...
-The fleet's packages don't need these 1:
+The fleet's packages don't need these 2:
   beta
+  epsilon
 Remove them [y/N]? y
 ...
 ✓ Nothing differs from the server type
@@ -72,9 +73,11 @@ box
 $ dpkg-query -W -f '${Package} ${db:Status-Abbrev}\n' alpha gamma
 alpha ii
 gamma ii
-$ dpkg-query -W -f '${db:Status-Abbrev}\n' beta
+$ dpkg-query -W -f '${db:Status-Abbrev}\n' beta epsilon
 ...
 [exit 1]
+$ apt-mark showmanual alpha
+alpha
 $ git -C /home/me/fleet.git log --format=%s
 Trust box as server
 The fleet

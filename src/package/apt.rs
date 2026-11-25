@@ -33,14 +33,19 @@ pub fn install(names: &[&str]) -> Result<()> {
 }
 
 pub fn uninstall(db: &Db, keep: &[&str], names: &[&str]) -> Result<BTreeSet<String>> {
-    if !keep.is_empty() {
-        cmd::root("apt-mark", &[&["manual"], keep].concat())?;
-    }
+    mark_manual(&[], keep)?;
     let before = autoremovable(&[])?;
     cmd::root("apt-mark", &[&["auto"], names].concat())?;
     super::or_restore(remove_unneeded(db, &before), || {
         cmd::root("apt-mark", &[&["manual"], names].concat())
     })
+}
+
+fn mark_manual(options: &[&str], names: &[&str]) -> Result<()> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    cmd::root("apt-mark", &[options, &["manual"], names].concat())
 }
 
 fn remove_unneeded(db: &Db, before: &BTreeSet<String>) -> Result<BTreeSet<String>> {
@@ -81,6 +86,12 @@ pub fn keep_only(
     confirm: &mut dyn FnMut() -> Result<bool>,
 ) -> Result<()> {
     let db = Db::load()?;
+    let listed: Vec<String> = keep
+        .iter()
+        .filter(|name| db.resolve(name).is_some())
+        .cloned()
+        .collect();
+    let listed: Vec<&str> = listed.iter().map(String::as_str).collect();
     keep.extend(db.needing(&runs_the_machine(&db)?));
     let manual = cmd::stdout(As::Root, "apt-mark", &["showmanual"])?;
     let unmark: Vec<&str> = manual.lines().filter(|n| !keep.contains(*n)).collect();
@@ -93,6 +104,7 @@ pub fn keep_only(
     }
     let option = format!("Dir::State::extended_states={}", states.path().display());
     let trial = ["-o", option.as_str()];
+    mark_manual(&trial, &listed)?;
     cmd::root("apt-mark", &[&trial[..], &["auto"], &unmark[..]].concat())?;
     let unneeded = autoremovable(&trial)?;
     if unneeded.is_empty() {
@@ -105,6 +117,7 @@ pub fn keep_only(
     if !confirm()? {
         return Ok(());
     }
+    mark_manual(&[], &listed)?;
     cmd::root("apt-mark", &[&["auto"], &unmark[..]].concat())?;
     remove(&db, &unneeded)
 }
