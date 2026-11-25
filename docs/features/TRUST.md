@@ -76,6 +76,8 @@ Each user of each machine has their own SSH key, `~/.ssh/id_ed25519`, so retirin
 
 A user lists who may log in to it, such as `ssh_from = ["office-pc", "build-server/ci"]`: every user of a type, or one user of a type. Mothership gives their public keys to the home's templates, and the home writes its own `authorized_keys` from them, with any other keys it wants. A name the fleet lacks, or a list with no key left, stops mothership rather than writing an empty file that would lock everyone out. So `retire` refuses to remove a user's last key.
 
+Before signing, each command that signs loads the changed fleet for every type and machine, and refuses a change that would stop any machine from loading it.
+
 ## Choices
 
 - **Signatures checked by root, not the git host's branch protection.** Anything that can push, the git host included, stays outside what root trusts.

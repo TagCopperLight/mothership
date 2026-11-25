@@ -24,14 +24,12 @@ $ yes | sudo mothership retire machine 2>&1 | tail -1
 Error: machine stays: types/workstation/users/me/user.toml's ssh_from finds no SSH key in the fleet, so every login would be refused
 ```
 
-A name the fleet lacks stops mothership before it writes anything, and so does a list with no key
-in it.
+A name the fleet lacks stops commit before it signs anything, as the fleet wouldn't load.
 
 ```console
 $ cd /var/lib/mothership/fleet/types/workstation/users/me &&
-> sed -i 's/"workstation"/"workstaton"/' user.toml && echo y | sudo mothership commit "Typo" >/dev/null
-$ sudo mothership apply 2>&1 | tail -1
-Error: /var/lib/mothership/current/types/workstation/users/me/user.toml's ssh_from names workstaton, and the fleet has no type workstaton
-$ cat ~/.ssh/authorized_keys | wc -l
-1
+> sed -i 's/"workstation"/"workstaton"/' user.toml && echo y | sudo mothership commit "Typo" 2>&1 | tail -1
+Error: machines couldn't load the fleet after this change, so nothing changed: loading the workstation type: /var/lib/mothership/staging/types/workstation/users/me/user.toml's ssh_from names workstaton, and the fleet has no type workstaton
+$ git -C /var/lib/mothership/fleet log -1 --format=%s
+Let workstation users in
 ```

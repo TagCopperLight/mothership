@@ -927,6 +927,8 @@ impl Stage {
         {
             return Ok(None);
         }
+        super::check_loads(&self.dir)
+            .context("machines couldn't load the fleet after this change, so nothing changed")?;
         let commit = signed_commit(&git, &tree, &self.base, &self.accepted, who, message, key)?;
         Ok(Some(Prepared {
             base: self.base.clone(),

@@ -44,13 +44,11 @@ ls: cannot access '/etc/option.conf': No such file or directory
 [exit 2]
 ```
 
-An option the type doesn't offer stops everything.
+Commit refuses an option the type doesn't offer, as the machine couldn't load the fleet.
 
 ```console
 $ cd /var/lib/mothership/fleet &&
 > sed -i '1a options = ["nope"]' machines/machine.toml &&
-> echo y | sudo mothership commit "Turn on nope" >/dev/null
-$ sudo mothership scan
-Error: the machine turns on nope, and /var/lib/mothership/current/types/workstation/system.toml has no [options.nope]
-[exit 1]
+> echo y | sudo mothership commit "Turn on nope" 2>&1 | tail -1
+Error: machines couldn't load the fleet after this change, so nothing changed: loading machine: workstation has no option nope
 ```

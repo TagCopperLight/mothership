@@ -568,6 +568,22 @@ fn profiles(fleet_dir: &Path, machines: &Machines, dir: &Path) -> Result<Vec<Pro
     Ok(profiles)
 }
 
+pub fn check_loads(fleet_dir: &Path) -> Result<()> {
+    for type_name in types(fleet_dir)? {
+        Repo::new(
+            fleet_dir.to_path_buf(),
+            &type_name,
+            &[],
+            &Hardware::default(),
+        )
+        .with_context(|| format!("loading the {type_name} type"))?;
+    }
+    for (name, entry) in Machines::load(fleet_dir)?.entries() {
+        Machines::check_options(fleet_dir, entry).with_context(|| format!("loading {name}"))?;
+    }
+    Ok(())
+}
+
 pub fn check_logins(fleet_dir: &Path) -> Result<()> {
     let machines = Machines::load(fleet_dir)?;
     for type_name in types(fleet_dir)? {

@@ -220,6 +220,10 @@ impl Machines {
         Ok(())
     }
 
+    pub fn entries(&self) -> impl Iterator<Item = (&String, &Entry)> {
+        self.0.iter()
+    }
+
     pub fn get(&self, name: &str) -> Option<&Entry> {
         self.0.get(name)
     }
