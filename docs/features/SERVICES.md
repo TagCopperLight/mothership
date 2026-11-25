@@ -6,7 +6,7 @@ A service is a set of containers that work together, such as an app and its data
 
 1. The fleet records exactly what runs, so a rebuild brings back the same containers.
 2. A container that breaks out gets no more than the files of the account running the services, never root.
-3. A service listens only on the ports and networks the fleet declares, such as a VPN interface alone. On a port under 1024, a user without sudo can't take its place while it's stopped.
+3. A service listens only on the ports the fleet declares, each on the network the fleet names, such as a VPN interface alone. On a port under 1024, a user without sudo can't take its place while it's stopped.
 4. A service calls another service only when the fleet allows it.
 5. A container reaches programs on its own machine and on other machines, such as a proxy forwarding to a backend elsewhere.
 6. Each service keeps its data in one place, outside Docker, so backups, scan and install find it.
@@ -70,7 +70,7 @@ Each port names the network it listens on:
 
 Two services can't declare the same port on the same network. A `public` port takes every address, so it clashes with that port on any network.
 
-The system enforces the list: `services`' Docker can open the declared ports and no others, even when a broken-out container asks it. It may also open ports under 1024, which users without sudo can't, so none of them can take a service's place on such a port while it's stopped. A port from 1024 up has no such guard.
+The system enforces the ports: `services`' Docker can open the declared ports and no others, even when a broken-out container asks it. It doesn't enforce the networks: Docker may open a declared port on any address, so the network each port faces holds as long as Docker does what mothership asks. It may also open ports under 1024, which users without sudo can't, so none of them can take a service's place on such a port while it's stopped. A port from 1024 up has no such guard.
 
 A service facing an interface without an address yet, such as a VPN still connecting, waits. When the address comes, mothership starts the service on it without an apply, after any mothership command running then. When the address changes later, scan shows it and apply moves the service there.
 
