@@ -4,7 +4,10 @@ pub mod state;
 pub mod unit;
 
 use crate::{
-    fleet::git::{GIT_DIR, Git, short},
+    fleet::{
+        git::{GIT_DIR, Git, short},
+        sync::CHECKED,
+    },
     services::{self, recipe, registry::Client},
     trust::github,
     trust::sign,
@@ -21,7 +24,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const ROOT_CHECKED: &str = "refs/mothership/checked";
 const TIP: &str = "refs/probe/main";
 
 struct Setting {
@@ -172,13 +174,13 @@ fn known_hosts(setting: &Setting) -> Result<PathBuf> {
 
 fn root_checked() -> Result<String> {
     let git = Path::new(GIT_DIR);
-    if let Some(text) = file::read_if_any(&git.join(ROOT_CHECKED))? {
+    if let Some(text) = file::read_if_any(&git.join(CHECKED))? {
         return Ok(text.trim().to_owned());
     }
     let packed = file::read_if_any(&git.join("packed-refs"))?.unwrap_or_default();
     packed
         .lines()
-        .find_map(|line| line.strip_suffix(&format!(" {ROOT_CHECKED}")))
+        .find_map(|line| line.strip_suffix(&format!(" {CHECKED}")))
         .map(str::to_owned)
         .context("this machine has checked no commit of the fleet yet")
 }
