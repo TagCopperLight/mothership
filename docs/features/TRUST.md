@@ -18,7 +18,7 @@ Anyone who can push to the fleet's repo could change what every machine runs as 
 
 Each machine has a signing key that only root reads, `/etc/mothership/signing`. Its public half sits in the machine's file in `machines/`, with the folders it may sign ([FLEET](FLEET.md#machines)).
 
-A machine applies a commit only when a key listed in the commit **before** it signed it. A commit that adds a signing key must then be signed by a key already listed, so nobody can sign themselves in.
+A machine applies a commit only when a key listed in the commit **before** it signed it. A commit that adds a signing key must then be signed by a key already listed, so nobody can sign themselves in. A commit that lists no signer and no recovery key leaves nothing to check the next one against, so that one needs no signature: this is how a new fleet starts.
 
 Only `main` counts, along its main line: when a branch is merged, the machine checks the merge commit, not each commit of the branch. A signed merge vouches for everything it brings, so agents can work on branches without signing keys, and the owner merges what they did.
 
