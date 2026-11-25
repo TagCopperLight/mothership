@@ -5,7 +5,7 @@ pub mod unit;
 
 use crate::{
     fleet::checked::{self, GIT_DIR, Git},
-    services::{self, registry::Client},
+    services::{self, recipe, registry::Client},
     trust::github,
     trust::sign,
     util::file,
@@ -88,7 +88,17 @@ fn round(setting: &Setting, state: &mut State) -> Result<()> {
     let registry = Client::new(Box::new(Curl), credential(unit::LOGINS)?.as_deref())?;
     let now = now()?;
     let round = plan::Round::at(state, now);
-    let verify = |item: &Watched, pin: &Pin| built_from_accepted(&git, &tip, &registry, item, pin);
+    let verify = |item: &Watched, pin: &Pin| match recipe::built_from(
+        &git,
+        &tip,
+        &registry,
+        &item.service,
+        &item.image,
+        pin,
+    )? {
+        Some(why) => bail!("{why}"),
+        None => Ok(()),
+    };
     let found = plan::plan(&watched, &registry, state, now, round, &verify);
     for notice in state.notices.values() {
         println!("{notice}");
@@ -159,49 +169,6 @@ fn known_hosts(setting: &Setting) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn recipe_path(service: &str) -> String {
-    let (type_name, name) = service.split_once('/').expect("service_of names both");
-    format!(
-        "types/{type_name}/{}/{name}/{}",
-        services::SERVICES,
-        services::DOCKERFILE
-    )
-}
-
-fn built_from_accepted(
-    git: &Git,
-    tip: &str,
-    registry: &Client,
-    item: &Watched,
-    pin: &Pin,
-) -> Result<()> {
-    if !item.image.recipe {
-        return Ok(());
-    }
-    let shown = format!("{}:{}", item.image.image, pin.version);
-    let labels = registry.labels(&item.image.image, &pin.digest)?;
-    let commit = labels
-        .get(services::REVISION_LABEL)
-        .with_context(|| format!("{shown} names no {}", services::REVISION_LABEL))?;
-    if commit.len() != 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
-        bail!("{shown} names {commit} as its commit, which isn't one");
-    }
-    if !git.is_ancestor(commit, tip)? {
-        bail!(
-            "{shown} was built from {}, which isn't on the fleet's main as machines accept it",
-            checked::short(commit)
-        );
-    }
-    let path = recipe_path(&item.service);
-    if git.blob(commit, &path)? != git.blob(tip, &path)? {
-        bail!(
-            "{shown} was built from {}, whose {path} isn't the current one",
-            checked::short(commit)
-        );
-    }
-    Ok(())
-}
-
 fn root_checked() -> Result<String> {
     let git = Path::new(GIT_DIR);
     if let Some(text) = file::read_if_any(&git.join(ROOT_CHECKED))? {
@@ -234,7 +201,7 @@ fn watched(git: &Git, commit: &str) -> Result<Vec<Watched>> {
         let images = services::parse(&text).with_context(|| format!("parsing {path}"))?;
         for (name, image) in images {
             let dockerfile = match image.recipe {
-                true => git.blob(commit, &recipe_path(&service))?,
+                true => git.blob(commit, &recipe::path(&service))?,
                 false => None,
             };
             watched.push(Watched {

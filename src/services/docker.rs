@@ -45,7 +45,7 @@ pub trait Engine {
     fn snapshot(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()>;
     fn restore(&self, name: &str, data: &Path, parts: &[PathBuf]) -> Result<()>;
     fn drop_snapshot(&self, name: &str) -> Result<()>;
-    fn confirm(&self, image: &Image, pin: &Pin) -> Result<Option<String>>;
+    fn confirm(&self, service: &str, image: &Image, pin: &Pin) -> Result<Option<String>>;
     fn link(&self, network: &str) -> Result<()>;
 }
 
@@ -318,8 +318,11 @@ impl Engine for Docker {
         self.in_namespace(DROP_SNAPSHOT, &[&snapshot])
     }
 
-    fn confirm(&self, image: &Image, pin: &Pin) -> Result<Option<String>> {
-        self.registry.contradicts(image, pin)
+    fn confirm(&self, service: &str, image: &Image, pin: &Pin) -> Result<Option<String>> {
+        match self.registry.contradicts(image, pin)? {
+            Some(why) => Ok(Some(why)),
+            None => super::confirm::origin(&self.registry, service, image, pin),
+        }
     }
 
     fn link(&self, network: &str) -> Result<()> {

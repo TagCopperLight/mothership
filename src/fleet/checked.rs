@@ -413,6 +413,11 @@ pub enum Anchor<'a> {
     Tip,
 }
 
+pub fn accepted(git: &Git) -> Result<String> {
+    git.rev(CHECKED)?
+        .context("this machine trusts no commit of the fleet yet")
+}
+
 pub fn anchored() -> Result<bool> {
     Ok(Path::new(GIT_DIR).exists() && Git::at(GIT_DIR).rev(CHECKED)?.is_some())
 }

@@ -6,6 +6,7 @@ pub mod deploy;
 pub mod docker;
 pub mod link;
 mod port;
+pub mod recipe;
 pub mod registry;
 pub mod scan;
 pub mod start;
@@ -230,6 +231,7 @@ pub fn ask_republished(fleet: &Fleet, ask: &mut dyn FnMut(&str) -> Result<bool>)
         &fleet.type_name,
         &fleet.services,
         &client,
+        &|service, image, pin| confirm::origin(&client, service, image, pin),
         &mut unconfirmed,
         ask,
     )?;

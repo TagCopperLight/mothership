@@ -1,24 +1,7 @@
 use super::*;
-use crate::services::Pin;
+use crate::{services::Pin, support::git};
 use ssh_key::{Algorithm, PrivateKey, rand_core::OsRng};
-use std::{fs, process::Command};
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.name=Me", "-c", "user.email=me@example.com"])
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_owned()
-}
+use std::fs;
 
 #[test]
 fn the_probes_commit_passes_the_check_every_machine_runs() {
@@ -70,73 +53,4 @@ fn the_probes_commit_passes_the_check_every_machine_runs() {
         git(work, &["log", "-1", "--format=%an <%ae>%n%B", &commit]),
         "minipc/probe <probe@minipc>\nUpdate 1 image\n\nserver/db db: 16.4 to 16.5"
     );
-}
-
-fn caddy() -> Watched {
-    Watched {
-        service: "server/caddy".into(),
-        name: "caddy".into(),
-        image: services::Image {
-            image: "ghcr.io/me/caddy".into(),
-            version: "2.8.4".into(),
-            digest: String::new(),
-            repo: None,
-            recipe: true,
-            ports: Vec::new(),
-            callers: Default::default(),
-        },
-        dockerfile: None,
-    }
-}
-
-fn labelled_by(commit: &str) -> (Client, Pin) {
-    use crate::services::registry::tests::{labelled, response, serving};
-    let stored = labelled(serde_json::json!({ services::REVISION_LABEL: commit }));
-    let pin = Pin {
-        version: "2.8.4".into(),
-        digest: stored.top.clone(),
-    };
-    let fake = serving(&stored, Box::new(|_, _, _| response(404, &[], "")));
-    (Client::new(Box::new(fake), None).unwrap(), pin)
-}
-
-#[test]
-fn the_probe_pins_a_recipe_only_when_built_from_the_current_accepted_recipe() {
-    let dir = tempfile::tempdir().unwrap();
-    let work = dir.path();
-    git(work, &["init", "-q", "-b", "main"]);
-    let recipe = work.join("types/server/services/caddy/Dockerfile");
-    fs::create_dir_all(recipe.parent().unwrap()).unwrap();
-    fs::write(&recipe, "FROM caddy:2.8.4\n").unwrap();
-    git(work, &["add", "-A"]);
-    git(work, &["commit", "-qm", "Recipe"]);
-    let built = git(work, &["rev-parse", "HEAD"]);
-    fs::write(work.join("notes"), "").unwrap();
-    git(work, &["add", "-A"]);
-    git(work, &["commit", "-qm", "Notes"]);
-    let tip = git(work, &["rev-parse", "HEAD"]);
-    let repo = Git::at(work.join(".git"));
-
-    let (registry, pin) = labelled_by(&built);
-    built_from_accepted(&repo, &tip, &registry, &caddy(), &pin).unwrap();
-
-    let (registry, pin) = labelled_by(&"f".repeat(40));
-    let err = format!(
-        "{:#}",
-        built_from_accepted(&repo, &tip, &registry, &caddy(), &pin).unwrap_err()
-    );
-    assert!(err.contains("isn't on the fleet's main"), "{err}");
-
-    fs::write(&recipe, "FROM caddy:2.8.5\n").unwrap();
-    git(work, &["commit", "-qam", "Newer recipe"]);
-    let tip = git(work, &["rev-parse", "HEAD"]);
-    let (registry, pin) = labelled_by(&built);
-    let err = format!(
-        "{:#}",
-        built_from_accepted(&repo, &tip, &registry, &caddy(), &pin).unwrap_err()
-    );
-    assert!(err.contains("isn't the current one"), "{err}");
-
-    let (registry, pin) = labelled_by("--upload-pack=x");
-    assert!(built_from_accepted(&repo, &tip, &registry, &caddy(), &pin).is_err());
 }

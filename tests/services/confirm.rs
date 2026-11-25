@@ -24,6 +24,10 @@ fn services(dir: &std::path::Path) -> Vec<Service> {
     load(dir).unwrap()
 }
 
+fn accepted(_: &str, _: &Image, _: &Pin) -> Result<Option<String>> {
+    Ok(None)
+}
+
 fn waiting() -> Unconfirmed {
     let mut unconfirmed = Unconfirmed::default();
     let pin = Pin {
@@ -47,6 +51,7 @@ fn a_pin_the_registry_agrees_with_runs_without_a_question() {
         "server",
         &services(dir.path()),
         &registry(DIGEST),
+        &accepted,
         &mut unconfirmed,
         &mut ask,
     )
@@ -70,6 +75,7 @@ fn a_republished_tag_runs_the_pinned_digest_only_when_the_admin_agrees() {
             "server",
             &services,
             &registry(OTHER),
+            &accepted,
             &mut unconfirmed,
             &mut ask,
         )
@@ -97,10 +103,33 @@ fn a_tag_the_registry_dropped_is_asked_about_too() {
         "server",
         &services(dir.path()),
         &client,
+        &accepted,
         &mut unconfirmed,
         &mut ask,
     )
     .unwrap();
     assert_eq!(asked, 1);
     assert_eq!(unconfirmed, Unconfirmed::default());
+}
+
+#[test]
+fn a_recipe_built_from_an_unaccepted_commit_waits_without_a_question() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut unconfirmed = waiting();
+    let mut asked = 0;
+    let mut ask = |_: &str| {
+        asked += 1;
+        Ok(true)
+    };
+    ask_republished(
+        "server",
+        &services(dir.path()),
+        &registry(OTHER),
+        &|_, _, _| Ok(Some("it was built from an unaccepted commit".into())),
+        &mut unconfirmed,
+        &mut ask,
+    )
+    .unwrap();
+    assert_eq!(asked, 0);
+    assert_eq!(unconfirmed, waiting());
 }

@@ -1,5 +1,8 @@
-use super::{Pin, Service, registry::Client};
-use crate::util::file;
+use super::{Image, Pin, Service, recipe, registry::Client};
+use crate::{
+    fleet::checked::{self, GIT_DIR, Git},
+    util::file,
+};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
@@ -41,10 +44,24 @@ fn key(service: &str, image: &str) -> String {
     format!("{service}/{image}")
 }
 
+pub type Origin<'a> = &'a dyn Fn(&str, &Image, &Pin) -> Result<Option<String>>;
+
+pub fn origin(
+    registry: &Client,
+    service: &str,
+    image: &Image,
+    pin: &Pin,
+) -> Result<Option<String>> {
+    let git = Git::at(GIT_DIR);
+    let accepted = checked::accepted(&git)?;
+    recipe::built_from(&git, &accepted, registry, service, image, pin)
+}
+
 pub fn ask_republished(
     type_name: &str,
     services: &[Service],
     registry: &Client,
+    origin: Origin,
     unconfirmed: &mut Unconfirmed,
     ask: &mut dyn FnMut(&str) -> Result<bool>,
 ) -> Result<()> {
@@ -53,6 +70,10 @@ pub fn ask_republished(
         for (name, image) in &service.images {
             let pin = image.pin();
             if !unconfirmed.waits(&key, name, &pin) {
+                continue;
+            }
+            if let Some(why) = origin(&key, image, &pin)? {
+                println!("The probe pinned {} for {key}, and {why}.", pin.version);
                 continue;
             }
             let run = match registry.contradicts(image, &pin)? {

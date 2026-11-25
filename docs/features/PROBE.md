@@ -51,7 +51,7 @@ sequenceDiagram
     P->>G: signed commit: new version and digest
     G->>M: the push reaches the machine
     M->>M: root checks the commit (below)
-    M->>R: does this tag still give this digest?
+    M->>R: does this tag still give this digest, built from an accepted recipe?
     M->>M: update the service, roll back on failure
 ```
 
@@ -69,7 +69,7 @@ A recipe image records the fleet commit it was built from. The probe pins it onl
 
 The probe's key could be stolen, so its signer may change only versions and digests. A machine refuses a probe commit that changes anything else, changes a major or a shape, or goes to an older version.
 
-The digest still comes from the probe, so before a machine first runs a pin the probe set, it asks the registry whether that tag gives that digest. A thief can't slip in other bytes under a real tag. A pin the owner commits skips this check: publishers sometimes move a tag to new bytes, and an old pin would then block every reinstall. When a tag moved during the 2-day wait, install asks the owner whether to run the pinned digest anyway.
+The digest still comes from the probe, so before a machine first runs a pin the probe set, it asks the registry whether that tag gives that digest. A thief can't slip in other bytes under a real tag. For a recipe image, the machine also checks that the image names a commit on the fleet's `main` as root accepted it, with the same Dockerfile, as the probe does. A stolen probe could otherwise get the workflow to build another Dockerfile under the same version and pin that digest. A recipe image that fails this check never runs, and install doesn't offer to run it anyway. A pin the owner commits skips these checks: publishers sometimes move a tag to new bytes, and an old pin would then block every reinstall. When a tag moved during the 2-day wait, install asks the owner whether to run the pinned digest anyway.
 
 ### Credentials
 

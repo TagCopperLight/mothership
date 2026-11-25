@@ -92,7 +92,7 @@ impl Engine for Fake {
         self.log(format!("link {network}"));
         Ok(())
     }
-    fn confirm(&self, _: &Image, pin: &Pin) -> Result<Option<String>> {
+    fn confirm(&self, _: &str, _: &Image, pin: &Pin) -> Result<Option<String>> {
         self.log("confirm");
         Ok(match &self.registry {
             Some(digest) if *digest != pin.digest => Some(format!("the registry gives {digest}")),

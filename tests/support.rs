@@ -3,7 +3,7 @@ use crate::{
     sync::item::{Item, Section},
     system::user::{self, User},
 };
-use std::{fs, path::Path};
+use std::{fs, path::Path, process::Command};
 
 pub fn current_user() -> User {
     user::by_uid(unsafe { libc::geteuid() }).unwrap()
@@ -49,4 +49,21 @@ pub fn empty_fleet(dir: &Path) -> Fleet {
     fs::write(type_dir.join(SYSTEM_TOML), "").unwrap();
     let repo = Repo::new(dir.to_path_buf(), "workstation", &[], &Default::default()).unwrap();
     Fleet::of(repo, &current_user())
+}
+
+pub fn git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=Me", "-c", "user.email=me@example.com"])
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }

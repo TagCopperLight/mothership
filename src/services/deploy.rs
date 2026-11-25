@@ -354,7 +354,7 @@ pub fn deploy(
         if !unconfirmed.waits(&wanted.key, image_name, &image.pin()) {
             continue;
         }
-        if let Some(why) = engine.confirm(image, &image.pin())? {
+        if let Some(why) = engine.confirm(&wanted.key, image, &image.pin())? {
             entry.fleet = wanted.fleet.clone();
             entry.problem = Some(Problem {
                 fleet: wanted.fleet.clone(),
