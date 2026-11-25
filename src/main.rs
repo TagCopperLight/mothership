@@ -65,6 +65,10 @@ fn main() -> ExitCode {
             println!("{}", usage::text());
             return ExitCode::SUCCESS;
         }
+        [arg] if matches!(arg.as_str(), "version" | "--version" | "-V") => {
+            println!("mothership {}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
         [install, arg] if install == "install" && help(arg) => {
             println!("{}", usage::install());
             return ExitCode::SUCCESS;

@@ -2,7 +2,7 @@ use crate::util::file;
 use anyhow::Result;
 use std::path::Path;
 
-const COMMANDS: [(&str, &str, &str); 9] = [
+const COMMANDS: [(&str, &str, &str); 10] = [
     ("scan", "", "show what differs from the fleet"),
     ("review", "", "go through this machine's changes"),
     ("apply", "", "bring in the fleet's changes"),
@@ -28,6 +28,7 @@ const COMMANDS: [(&str, &str, &str); 9] = [
         " [options]",
         "set up this machine from the fleet",
     ),
+    ("version", "", "print mothership's version"),
 ];
 
 pub const INSTALL_FLAGS: [(&str, &str); 9] = [
