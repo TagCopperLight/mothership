@@ -48,7 +48,7 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     let root_user = user::by_name("root")?.context("the ISO has a root user")?;
     let title = crate::trust::github::title(&hostname, &admin);
     repo::clone(&url, dir, &root_user, &title, Distro::Arch, prompt)?;
-    let machine = answers::machine(flags, prompt, dir)?;
+    let machine = answers::machine(flags, prompt, dir, &hostname)?;
     answers::check_admin(dir, &machine, &admin)?;
     let fleet = Repo::for_machine(dir.into(), &machine)?;
     boot::check_type(&fleet)?;

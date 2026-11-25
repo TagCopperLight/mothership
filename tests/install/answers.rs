@@ -91,3 +91,24 @@ fn saved_answers_fill_only_what_the_flags_leave_open() {
     assert_eq!(filled.admin.as_deref(), Some("tag"));
     assert_eq!(filled.timezone.as_deref(), Some("Europe/Paris"));
 }
+
+#[test]
+fn a_machine_the_fleet_lists_keeps_its_type_and_options() {
+    let entry = Entry::new("server", &["b".to_owned(), "a".to_owned()]);
+    let flags = |args: &[&str]| parse(args).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let error = |flags: &Flags| {
+        listed(flags, &entry, dir.path(), "box")
+            .err()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(
+        error(&flags(&["--type", "desktop"])),
+        "--type desktop: machines/box.toml says box is a server"
+    );
+    assert_eq!(
+        error(&flags(&["--type", "server", "--option", "a"])),
+        "--option: machines/box.toml lists other options for box"
+    );
+}

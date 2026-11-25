@@ -20,7 +20,7 @@ Install runs on one of two starting points:
 ### Steps
 
 1. **Ask** the fleet's SSH URL, the hostname and which user will own the machine's clone of the fleet.
-2. **Clone the fleet.** Install creates that user's SSH key, prints the command that registers it with the git host, and clones once the host lets it in. When the fleet already has a file for this hostname, as for a reinstall, install takes the type and options from it, and `trust` later replaces its keys. Otherwise it asks for them, and `trust` writes the new file ([FLEET](FLEET.md#machines)).
+2. **Clone the fleet.** Install creates that user's SSH key, prints the command that registers it with the git host, and clones once the host lets it in. When the fleet already has a file for this hostname, as for a reinstall, install takes the type and options from it (a `--type` or `--option` that says otherwise stops install, naming the file), and `trust` later replaces its keys. Otherwise it asks for them, and `trust` writes the new file ([FLEET](FLEET.md#machines)).
 3. **Prepare the disk**, on a live installer only, and install the base system on it.
 4. **Create the users** the type lists, and ask for the clone owner's password.
 5. **Create the machine's keys** (age, SSH, signing) and get the fleet to trust them.

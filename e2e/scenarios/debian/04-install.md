@@ -88,3 +88,12 @@ $ sudo mothership install
 ✓ Nothing differs from the server type
 \d+ ignored (re)
 ```
+
+The fleet now has `machines/box.toml`, so a reinstall of `box` takes the type from it. A `--type`
+that says otherwise stops install before it touches anything, naming the file.
+
+```console
+$ sudo rm -r /var/lib/mothership /etc/mothership
+$ sudo mothership install --admin me --fleet /home/me/fleet.git --type desktop --hostname box 2>&1 | tail -1
+Error: --type desktop: machines/box.toml says box is a server
+```

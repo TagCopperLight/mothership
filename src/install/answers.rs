@@ -1,6 +1,9 @@
 use super::disk::Layout;
 use crate::{
-    fleet::{self, Machine, Repo},
+    fleet::{
+        self, Machine, Repo,
+        machines::{self, Entry, Machines},
+    },
     system::host,
     util::file,
     util::prompt::{Choice, Prompt},
@@ -152,7 +155,42 @@ pub fn fleet_url(flags: &Flags, prompt: &mut Prompt) -> Result<String> {
     }
 }
 
-pub fn machine(flags: &Flags, prompt: &mut Prompt, dir: &Path) -> Result<Machine> {
+pub fn machine(flags: &Flags, prompt: &mut Prompt, dir: &Path, hostname: &str) -> Result<Machine> {
+    match Machines::load(dir)?.get(hostname) {
+        Some(entry) => listed(flags, entry, dir, hostname),
+        None => asked(flags, prompt, dir),
+    }
+}
+
+fn listed(flags: &Flags, entry: &Entry, dir: &Path, hostname: &str) -> Result<Machine> {
+    let file = machines::path(Path::new(""), hostname);
+    if let Some(given) = &flags.device_type
+        && given != &entry.device_type
+    {
+        bail!(
+            "--type {given}: {} says {hostname} is a {}",
+            file.display(),
+            entry.device_type
+        );
+    }
+    let mut given = flags.options.clone();
+    let mut listed = entry.options.clone();
+    given.sort();
+    listed.sort();
+    if flags.device_type.is_some() && given != listed {
+        bail!(
+            "--option: {} lists other options for {hostname}",
+            file.display()
+        );
+    }
+    Machines::check_options(dir, entry)?;
+    Ok(Machine {
+        device_type: entry.device_type.clone(),
+        options: entry.options.clone(),
+    })
+}
+
+fn asked(flags: &Flags, prompt: &mut Prompt, dir: &Path) -> Result<Machine> {
     let types = fleet::types(dir)?;
     let device_type = match &flags.device_type {
         Some(name) if !types.contains(name) => bail!("the fleet has no type {name}"),

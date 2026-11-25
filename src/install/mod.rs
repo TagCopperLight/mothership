@@ -129,7 +129,7 @@ fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<St
             hand_over_root_key(&owner)?;
         }
     }
-    let machine = answers::machine(flags, prompt, dir)?;
+    let machine = answers::machine(flags, prompt, dir, &hostname)?;
     answers::check_admin(dir, &machine, &admin)?;
     host::rename(&hostname)?;
     Here::joining(&hostname, machine).save(Path::new("/"))?;
