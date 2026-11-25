@@ -18,7 +18,7 @@ use std::{
     fs,
     ops::Deref,
     os::unix::fs::{MetadataExt, PermissionsExt},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 pub mod checked;
@@ -485,6 +485,17 @@ impl Repo {
             .cloned()
             .collect()
     }
+}
+
+pub fn check_name(name: &str) -> Result<()> {
+    let plain = matches!(
+        Path::new(name).components().collect::<Vec<_>>()[..],
+        [Component::Normal(part)] if part == name
+    );
+    if !plain {
+        bail!("\"{name}\" isn't a plain name: use one folder name, without / or ..");
+    }
+    Ok(())
 }
 
 pub fn type_dir(fleet_dir: &Path, name: &str) -> PathBuf {

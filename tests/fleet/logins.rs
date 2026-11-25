@@ -70,6 +70,6 @@ fn a_name_the_fleet_lacks_or_no_key_at_all_stops_the_fleet() {
     let error = |entries: &[&str]| from(&fleet, entries).unwrap_err().to_string();
     assert!(error(&["workstaton"]).ends_with("the fleet has no type workstaton"));
     assert!(error(&["minipc/me"]).ends_with("minipc has no user me"));
-    assert!(error(&["minipc/../minipc/tag"]).ends_with("minipc has no user ../minipc/tag"));
+    assert!(error(&["minipc/../minipc/tag"]).ends_with("names minipc/../minipc/tag"));
     assert!(error(&["minipc"]).contains("finds no SSH key"));
 }

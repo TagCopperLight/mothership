@@ -120,3 +120,15 @@ fn a_written_machine_reads_back_the_same() {
     all.write(dir.path(), "minipc").unwrap();
     assert_eq!(Machines::load(dir.path()).unwrap(), all);
 }
+
+#[test]
+fn a_type_or_user_that_is_no_plain_name_is_refused() {
+    let escaping = "type = \"db-server/../workstation\"\n";
+    let error = machines(&[("db.toml", escaping)]).unwrap_err();
+    assert_eq!(
+        format!("{error:#}"),
+        "machines/db.toml's type: \"db-server/../workstation\" isn't a plain name: use one folder name, without / or .."
+    );
+    let user = "type = \"server\"\n[users.\"../dev\"]\n";
+    assert!(machines(&[("db.toml", user)]).is_err());
+}

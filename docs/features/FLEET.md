@@ -60,7 +60,7 @@ age = "age1…"
 ssh = "ssh-ed25519 AAAA…"
 ```
 
-Mothership builds every list from these files: the keys allowed to sign, who opens each secret ([SECRETS](SECRETS.md)), and the SSH keys `ssh_from` gives a home ([TRUST](TRUST.md)). A machine's name lives in this one file, so `trust` writes it and `retire` deletes it. A signer may change a machine's file when it may sign that machine's type, and signs at least what the file lets the machine sign.
+Mothership builds every list from these files: the keys allowed to sign, who opens each secret ([SECRETS](SECRETS.md)), and the SSH keys `ssh_from` gives a home ([TRUST](TRUST.md)). A machine's name lives in this one file, so `trust` writes it and `retire` deletes it. Its type and user names are plain folder names, without `/` or `..`, so they can't lead to another type's folder. A signer may change a machine's file when it may sign that machine's type, and signs at least what the file lets the machine sign.
 
 ### Users
 

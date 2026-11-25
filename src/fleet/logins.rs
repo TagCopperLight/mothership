@@ -1,6 +1,6 @@
-use super::{USERS, machines::Machines, type_dir, types};
+use super::{USERS, check_name, machines::Machines, type_dir, types};
 use crate::util::walk;
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::path::Path;
 
 pub fn resolve(
@@ -26,8 +26,9 @@ pub fn resolve(
         let users = type_dir(fleet_dir, type_name).join(USERS);
         let dirs = match user {
             Some(user) => {
+                check_name(user).with_context(|| format!("{shown}'s ssh_from names {entry}"))?;
                 let dir = users.join(user);
-                if user.contains('/') || matches!(user, "" | "." | "..") || !dir.is_dir() {
+                if !dir.is_dir() {
                     bail!("{shown}'s ssh_from names {entry}, and {type_name} has no user {user}");
                 }
                 vec![dir]

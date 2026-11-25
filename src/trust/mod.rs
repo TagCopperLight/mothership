@@ -429,8 +429,8 @@ fn reader(fleet: &Fleet, text: &str) -> Result<Reader> {
     let (type_name, user) = text
         .split_once('/')
         .with_context(|| format!("{text} is not <type>/root or <type>/<user>"))?;
-    let type_dir = fleet::type_dir(&fleet.dir, type_name);
-    if type_name.is_empty() || type_name.contains("..") || !type_dir.is_dir() {
+    fleet::check_name(type_name)?;
+    if !fleet::type_dir(&fleet.dir, type_name).is_dir() {
         bail!("the fleet has no type {type_name}");
     }
     if user == ROOT {
@@ -440,8 +440,8 @@ fn reader(fleet: &Fleet, text: &str) -> Result<Reader> {
         type_name: type_name.to_owned(),
         user: user.to_owned(),
     };
-    let dir = home.dir(&fleet.dir);
-    if user.is_empty() || user.contains('/') || user.contains("..") || !dir.is_dir() {
+    fleet::check_name(user)?;
+    if !home.dir(&fleet.dir).is_dir() {
         bail!("{type_name} has no user {user}");
     }
     Ok(Reader::Home(home))

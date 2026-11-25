@@ -1,4 +1,4 @@
-use super::{SYSTEM_TOML, System, USERS, homes::Reader, read_toml, type_dir};
+use super::{SYSTEM_TOML, System, USERS, check_name, homes::Reader, read_toml, type_dir};
 use crate::{
     secrets::Recipient,
     system::host,
@@ -176,6 +176,10 @@ impl Machines {
                 .with_context(|| format!("{shown} isn't a machine's file, <name>{SUFFIX}"))?;
             host::check(name).with_context(|| format!("{shown}'s name"))?;
             let entry: Entry = toml::from_str(&text).with_context(|| format!("parsing {shown}"))?;
+            check_name(&entry.device_type).with_context(|| format!("{shown}'s type"))?;
+            for user in entry.users.keys() {
+                check_name(user).with_context(|| format!("{shown}'s users"))?;
+            }
             if entry.keys.signing.is_some() != entry.signs.is_some() {
                 bail!("{shown} needs both a signing key and `signs`, or neither");
             }

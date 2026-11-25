@@ -175,3 +175,22 @@ fn etc_secrets_open_with_root_key_only() {
         b"psk=1"
     );
 }
+
+#[test]
+fn a_name_is_one_plain_folder_name() {
+    for name in ["workstation", "db-server", "dev", ".hidden"] {
+        check_name(name).unwrap();
+    }
+    for name in [
+        "",
+        ".",
+        "..",
+        "a/b",
+        "a/",
+        "/a",
+        "./a",
+        "db-server/../workstation",
+    ] {
+        assert!(check_name(name).is_err(), "{name}");
+    }
+}
