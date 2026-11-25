@@ -1,5 +1,5 @@
 use crate::{
-    fleet::{self, Fleet, homes},
+    fleet::{self, Fleet, Here, homes, machines::Machines, sync},
     secrets::{self, AGE},
     services::{SECRETS, SERVICE_TOML, SERVICES},
     system::host,
@@ -8,16 +8,19 @@ use crate::{
     util::prompt::Prompt,
 };
 use anyhow::{Result, bail};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
-pub struct Wanted {
-    pub type_name: String,
-    pub service: String,
-    pub name: String,
+struct Wanted {
+    type_name: String,
+    service: String,
+    name: String,
 }
 
 impl Wanted {
-    pub fn parse(service: &str, name: &str, own_type: &str) -> Result<Wanted> {
+    fn parse(service: &str, name: &str, own_type: &str) -> Result<Wanted> {
         let (type_name, service) = service.split_once('/').unwrap_or((own_type, service));
         for part in [type_name, service, name] {
             host::check(part)?;
@@ -29,12 +32,20 @@ impl Wanted {
         })
     }
 
-    pub fn shown(&self) -> String {
+    fn shown(&self) -> String {
         format!("{}/{}", self.type_name, self.service)
     }
 }
 
-pub fn set(fleet: &Fleet, wanted: &Wanted, prompt: &mut Prompt) -> Result<()> {
+pub fn run(service: &str, name: &str) -> Result<()> {
+    let dir = Path::new(sync::CURRENT);
+    let machine = Here::load()?.machine(&Machines::load(dir)?)?;
+    let wanted = Wanted::parse(service, name, &machine.device_type)?;
+    let message = format!("Set {} of {}", wanted.name, wanted.shown());
+    trust::commit::edit_fleet(&message, |fleet, prompt| set(fleet, &wanted, prompt)).map(drop)
+}
+
+fn set(fleet: &Fleet, wanted: &Wanted, prompt: &mut Prompt) -> Result<()> {
     let dir = fleet::type_dir(&fleet.dir, &wanted.type_name)
         .join(SERVICES)
         .join(&wanted.service);

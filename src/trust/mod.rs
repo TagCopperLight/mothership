@@ -1,3 +1,4 @@
+pub mod commit;
 pub mod github;
 pub mod recovery;
 pub mod sign;
@@ -7,11 +8,11 @@ pub mod verify;
 
 use crate::{
     fleet::{
-        self, Fleet, Machine, Repo, TYPES,
-        git::{GIT_DIR, Git},
+        self, Fleet, Machine, Repo, TYPES, checkout,
+        git::{GIT_DIR, Git, short},
         homes::{self, Home, Reader},
         machines::{self, Entry, Machines, probe_name, same_key},
-        stage::STAGING,
+        stage::{Outcome, STAGING},
         sync::CHECKED,
     },
     home::chezmoi,
@@ -21,6 +22,7 @@ use crate::{
         user_key,
     },
     services,
+    system::host,
     system::user::User,
     util::file,
     util::prompt::Prompt,
@@ -215,6 +217,27 @@ pub fn options_and_keys(args: &[String]) -> Result<(Vec<String>, &[String])> {
     Ok((options, rest))
 }
 
+pub fn trust(host: &str, type_name: &str, options: Vec<String>, keys: &[String]) -> Result<()> {
+    host::check(host)?;
+    let machine = Machine {
+        device_type: type_name.to_owned(),
+        options,
+    };
+    let message = format!("Trust {host} as {type_name}");
+    let mut uploads = Vec::new();
+    let outcome = commit::edit_fleet(&message, |fleet, prompt| {
+        uploads = trust_host(fleet, fleet.keys(), host, &machine, keys, prompt)?;
+        Ok(())
+    })?;
+    let code = match outcome {
+        Outcome::Declined => return Ok(()),
+        Outcome::Unchanged(commit) | Outcome::Pushed(commit) => commit,
+    };
+    github::add(&checkout::admin()?, &uploads)?;
+    println!("On {host}, type this code: {}", short(&code));
+    Ok(())
+}
+
 pub fn trust_host(
     fleet: &Fleet,
     keys: &Keys,
@@ -390,7 +413,18 @@ fn changed_readers(fleet: &Fleet, after: &Machines) -> Result<Vec<Reader>> {
         .collect())
 }
 
-pub fn retire_host(fleet: &Fleet, host: &str) -> Result<()> {
+pub fn retire(host: &str) -> Result<()> {
+    host::check(host)?;
+    let outcome = commit::edit_fleet(&format!("Retire {host}"), |fleet, _| {
+        retire_host(fleet, host)
+    })?;
+    match outcome {
+        Outcome::Declined => Ok(()),
+        Outcome::Unchanged(_) | Outcome::Pushed(_) => github::remove(&checkout::admin()?, host),
+    }
+}
+
+fn retire_host(fleet: &Fleet, host: &str) -> Result<()> {
     let mut after = fleet.machines.clone();
     let entry = after
         .remove(host)

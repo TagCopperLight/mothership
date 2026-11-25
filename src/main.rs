@@ -16,10 +16,9 @@ mod util;
 
 use anyhow::{Context, bail};
 use fleet::{
-    Fleet, checkout,
+    checkout,
     git::short,
-    stage::{self, Advance, Outcome},
-    sync::{self as fleet_sync, CURRENT, Remote},
+    sync::{self as fleet_sync, Remote},
 };
 use std::process::ExitCode;
 use util::prompt::Prompt;
@@ -147,92 +146,18 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         (Command::Apply, []) => sync::apply::run(),
         (Command::Install, flags) => install::run(flags),
         (Command::Recovery, []) => trust::recovery::change(&mut Prompt::new()),
-        (Command::Commit, [message]) => {
-            let mut prompt = Prompt::new();
-            let admin = checkout::admin()?;
-            let Some(stage) = stage::stage(&mut prompt)? else {
-                return Ok(());
-            };
-            stage.take_checkout(&admin)?;
-            let key = trust::sign::require_machine_key()?;
-            let who = checkout::author(&admin)?;
-            let outcome =
-                stage.commit(&admin, &who, message, &key, &mut prompt, Advance::KeepEdits)?;
-            if let Outcome::Unchanged(_) = outcome {
-                println!("Nothing to commit.");
-            }
-            Ok(())
-        }
+        (Command::Commit, [message]) => trust::commit::run(message),
         (Command::Trust, [host, type_name, rest @ ..]) => {
             let (options, keys) = trust::options_and_keys(rest)?;
             if keys.is_empty() {
                 bail!("usage: {}", usage::of(name));
             }
-            system::host::check(host)?;
-            let machine = fleet::Machine {
-                device_type: type_name.clone(),
-                options,
-            };
-            let message = format!("Trust {host} as {type_name}");
-            let mut uploads = Vec::new();
-            let outcome = edit_fleet(&message, |fleet, prompt| {
-                uploads = trust::trust_host(fleet, fleet.keys(), host, &machine, keys, prompt)?;
-                Ok(())
-            })?;
-            let code = match outcome {
-                Outcome::Declined => return Ok(()),
-                Outcome::Unchanged(commit) | Outcome::Pushed(commit) => commit,
-            };
-            trust::github::add(&checkout::admin()?, &uploads)?;
-            println!("On {host}, type this code: {}", short(&code));
-            Ok(())
+            trust::trust(host, type_name, options, keys)
         }
-        (Command::Retire, [host]) => {
-            system::host::check(host)?;
-            let outcome = edit_fleet(&format!("Retire {host}"), |fleet, _| {
-                trust::retire_host(fleet, host)
-            })?;
-            match outcome {
-                Outcome::Declined => Ok(()),
-                Outcome::Unchanged(_) | Outcome::Pushed(_) => {
-                    trust::github::remove(&checkout::admin()?, host)
-                }
-            }
-        }
-        (Command::Secret, [service, name]) => {
-            let dir = std::path::Path::new(CURRENT);
-            let machine = fleet::Here::load()?.machine(&fleet::machines::Machines::load(dir)?)?;
-            let wanted = fleet::edit::secret::Wanted::parse(service, name, &machine.device_type)?;
-            let message = format!("Set {} of {}", wanted.name, wanted.shown());
-            edit_fleet(&message, |fleet, prompt| {
-                fleet::edit::secret::set(fleet, &wanted, prompt)
-            })
-            .map(drop)
-        }
+        (Command::Retire, [host]) => trust::retire(host),
+        (Command::Secret, [service, name]) => fleet::edit::secret::run(service, name),
         _ => bail!("usage: {}", usage::of(name)),
     }
-}
-
-fn edit_fleet(
-    message: &str,
-    command: impl FnOnce(&Fleet, &mut Prompt) -> anyhow::Result<()>,
-) -> anyhow::Result<Outcome> {
-    let key = trust::sign::require_machine_key()?;
-    let mut prompt = Prompt::new();
-    let Some(stage) = stage::stage(&mut prompt)? else {
-        return Ok(Outcome::Declined);
-    };
-    let fleet = Fleet::load_at(&stage.dir)?;
-    command(&fleet, &mut prompt)?;
-    let who = checkout::author(fleet.admin())?;
-    stage.commit(
-        fleet.admin(),
-        &who,
-        message,
-        &key,
-        &mut prompt,
-        Advance::Merge,
-    )
 }
 
 fn start_services(interface: Option<&str>) -> anyhow::Result<()> {
