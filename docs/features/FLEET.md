@@ -68,7 +68,7 @@ A type lists its users. Mothership creates a listed user the machine lacks, and 
 
 On each machine, one user owns the machine's clone of the fleet, `/var/lib/mothership/fleet`, commits from it and has sudo. Other users can live without sudo, such as an account for AI agents.
 
-Root runs chezmoi for each user, on a copy of their state and with mothership's own config, so users never run chezmoi on the fleet themselves. A home gets a file from `shared/` by linking it, one link per file. Review asks before changing a shared file, since every home linking it gets the change.
+Apply writes each user's chezmoi config, pointing at their home in root's checked copy of the fleet, and runs chezmoi as that user: the user reads the fleet but can't change it. Review runs chezmoi as root, on a copy of the user's state, to bring a file back into the fleet. A home gets a file from `shared/` by linking it, one link per file. Review asks before changing a shared file, since every home linking it gets the change.
 
 ### Hardware
 

@@ -54,7 +54,7 @@ A secret several homes or types need sits once in `shared/.secrets/`, and each p
 
 ### Apply and scan
 
-Root decrypts with the keys on the machine: its own for `/etc` and containers, and each user's key for that user's home, since root runs chezmoi for each user. A secret the machine can't open yet is skipped and listed. Scan compares the decrypted version, so a changed secret shows up like any other difference.
+Root decrypts `/etc` and container secrets with its own key, and each user's chezmoi decrypts that user's home with the user's key. A secret the machine can't open yet is skipped and listed. Scan compares the decrypted version, so a changed secret shows up like any other difference.
 
 ### Finding new secrets
 
