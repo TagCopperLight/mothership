@@ -480,6 +480,11 @@ sudo ip link set {STAND_IN} up
         vm.run(f"cd {FLEET} && {change}")
         expect(vm.run(f"sudo mothership commit '{message}'", input="y\n"), "Committed")
 
+    def rejected(message: str, change: str, why: str) -> None:
+        vm.run(f"cd {FLEET} && {change}")
+        expect(vm.run(f"sudo mothership commit '{message}'", check=False), why, "nothing changed", code=1)
+        vm.run(f"cd {FLEET} && git reset -q --hard")
+
     callers = ["extra/extra"]
 
     def pin(version: str) -> str:
@@ -510,10 +515,8 @@ sudo ip link set {STAND_IN} up
     expect(apply(), "extra sets network_mode: a container stays on its service's networks", code=1)
     commit("Stay on the service network", f"git checkout HEAD~1 -- {extra}/compose.yaml")
     expect(apply(), "Nothing to apply.")
-    commit("Take port 80", f"echo 'ports.public = [\"80/tcp\"]' >> {extra}/service.toml")
-    expect(apply(), "app's images.app and extra's images.extra both publish 80/tcp on public", code=1)
-    commit("Give port 80 back", f"git checkout HEAD~1 -- {extra}/service.toml")
-    expect(apply(), "Nothing to apply.")
+    rejected("Take port 80", f"echo 'ports.public = [\"80/tcp\"]' >> {extra}/service.toml",
+             "app's images.app and extra's images.extra both publish 80/tcp on public")
     commit("Publish 8443/tcp", "sed -i 's/\"443\\/udp\"/\"443\\/udp\", \"8443\\/tcp\"/' "
            "types/server/services/app/service.toml")
     expect(apply(), "Updated app")
@@ -522,10 +525,10 @@ sudo ip link set {STAND_IN} up
     commit("Stop publishing 8443/tcp", "git checkout HEAD~1 -- types/server/services/app/service.toml")
     expect(apply(), "Updated app")
 
-    commit("Drop extra", "git rm -q -r types/server/services/extra types/server/services/lonely")
-    expect(apply(), "app's images.app lets extra call it, and the type has no service extra", code=1)
+    drop = "git rm -q -r types/server/services/extra types/server/services/lonely"
+    rejected("Drop extra", drop, "app's images.app lets extra call it, and the type has no service extra")
     callers.clear()
-    commit("Drop the link to extra", pin("1.0.1"))
+    commit("Drop extra and the link to it", f"{drop} && {pin('1.0.1')}")
     expect(apply(), "Removed extra, keeping /srv/extra", "Removed lonely", "Updated app")
     assert LINK not in vm.run(f"{AS_SERVICES} network ls").stdout, "apply removes a link nobody needs"
     assert data("extra", "version") == "1.0.0", "a dropped service keeps its data"
