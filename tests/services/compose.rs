@@ -191,3 +191,97 @@ fn a_container_keeps_docker_s_default_rights_and_may_get_a_device() {
         "app sets security_opt seccomp:unconfined: only no-new-privileges is allowed"
     );
 }
+
+#[test]
+fn a_key_mothership_doesn_t_know_is_refused() {
+    let app = |extra: Value| {
+        let mut app = json!({"image": "app:1@sha256:1"});
+        app.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        json!({"services": {"app": app}})
+    };
+    for key in [
+        "use_api_socket",
+        "post_start",
+        "pre_stop",
+        "pre_start",
+        "label_file",
+    ] {
+        assert_eq!(
+            err(app(json!({ key: true }))),
+            format!("app sets {key}, which mothership doesn't accept")
+        );
+    }
+    let mut top = app(json!({}));
+    top["models"] = json!({});
+    assert_eq!(
+        err(top),
+        "compose.yaml sets models, which mothership doesn't accept"
+    );
+    assert_eq!(
+        err(json!({"services": {"app": {"image": "app:1@sha256:1"}},
+                   "secrets": {"key": {"external": true}}})),
+        "the secrets entry key sets external, which mothership doesn't accept"
+    );
+}
+
+#[test]
+fn an_env_file_stays_in_the_service_s_folder() {
+    let project = Path::new("/var/lib/mothership/services/app");
+    let env = |file: &str| format!("services:\n  app:\n    env_file: {file}\n");
+    for file in [
+        "app.env",
+        "./app.env",
+        "[app.env, {path: conf/db.env, required: false}]",
+    ] {
+        check_written(&env(file), project).unwrap();
+    }
+    let refused = |file: &str| format!("{:#}", check_written(&env(file), project).unwrap_err());
+    assert_eq!(
+        refused("../other/secrets/token"),
+        "app reads /var/lib/mothership/services/app/../other/secrets/token, outside the service"
+    );
+    assert_eq!(
+        refused("[{path: /srv/app/app.env}]"),
+        "app reads /srv/app/app.env, outside the service"
+    );
+    assert_eq!(
+        refused("${HOME}/.docker/config.json"),
+        "app reads ${HOME}/.docker/config.json: name an env_file without variables"
+    );
+    assert!(refused("~/x").starts_with("app reads ~/x"));
+}
+
+#[test]
+fn compose_yaml_is_checked_before_docker_reads_the_files_it_names() {
+    let refused = |text: &str| format!("{:#}", check_written(text, Path::new("/p")).unwrap_err());
+    assert_eq!(
+        refused("include: [../other/compose.yaml]\nservices: {app: {}}\n"),
+        "compose.yaml sets include, which mothership doesn't accept"
+    );
+    assert_eq!(
+        refused("services:\n  app:\n    extends: {file: ../other/compose.yaml, service: x}\n"),
+        "app sets extends, which mothership doesn't accept"
+    );
+    assert_eq!(
+        refused("x-base: &base\n  use_api_socket: true\nservices:\n  app:\n    <<: *base\n"),
+        "app sets use_api_socket, which mothership doesn't accept"
+    );
+    assert!(
+        check_written(
+            "services:\n  app:\n    !!str use_api_socket: true\n",
+            Path::new("/p")
+        )
+        .is_err()
+    );
+    assert!(check_written("services: {app: {}}\n---\ninclude: [x]\n", Path::new("/p")).is_err());
+    for text in [
+        include_str!("../../e2e/vm/services/types/server/services/app/compose.yaml"),
+        include_str!("../../e2e/vm/services/types/server/services/extra/compose.yaml"),
+        include_str!("../../e2e/vm/services/types/server/services/lonely/compose.yaml"),
+        "x-base: &base\n  restart: always\nservices:\n  app:\n    <<: *base\n    user: \"1000\"\n",
+    ] {
+        check_written(text, Path::new("/p")).unwrap();
+    }
+}

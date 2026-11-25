@@ -52,7 +52,9 @@ Each service is a folder, `types/<type>/services/<name>/`:
 - `secrets/`: the service's encrypted secrets;
 - a `Dockerfile`, when the image is a recipe kept in the fleet ([PROBE](PROBE.md)).
 
-Apply refuses a `compose.yaml` that reaches outside its service: a network mode, an external network, another container's namespaces, another container's volumes, Docker volumes, or files outside the service's folder and `/srv/<name>/`. It also refuses `privileged`, added capabilities and any `security_opt` other than `no-new-privileges`: each one exposes more of the kernel to the container, and a breakout most often needs a kernel bug. Devices stay allowed, such as a GPU for video, since rootless Docker only passes a device the `services` account can open itself.
+Apply accepts only the `compose.yaml` keys it knows, so a key a newer Compose adds stays refused until mothership checks it. It reads them before Docker does, because Compose reads the files that `include`, `extends`, `env_file` and `label_file` name as `services`, which can read every service's secrets. So it refuses `include`, `extends` and `label_file`, and an `env_file` or a secret outside the service's folder.
+
+Apply also refuses a `compose.yaml` that reaches outside its service: a network mode, an external network, another container's namespaces, another container's volumes, Docker volumes, or files outside the service's folder and `/srv/<name>/`. It also refuses `privileged`, added capabilities and any `security_opt` other than `no-new-privileges`: each one exposes more of the kernel to the container, and a breakout most often needs a kernel bug. Devices stay allowed, such as a GPU for video, since rootless Docker only passes a device the `services` account can open itself.
 
 ### Who runs them
 

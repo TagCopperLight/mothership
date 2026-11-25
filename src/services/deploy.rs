@@ -469,9 +469,13 @@ fn prepare(
     let files = write_files(places, wanted, entry)?;
     let images = write_override(places, service, &service.pins(), Stage::Checked)?;
     let data = data_dir(places, &service.name)?;
+    let shown = || format!("checking {}/{COMPOSE}", service.dir.display());
+    let written = project.dir.join(COMPOSE);
+    let text =
+        fs::read_to_string(&written).with_context(|| format!("reading {}", written.display()))?;
+    compose::check_written(&text, &project.dir).with_context(shown)?;
     let checked = engine.config(project)?;
-    compose::check(&checked, &service.name, &project.dir, &data, &images)
-        .with_context(|| format!("checking {}/{COMPOSE}", service.dir.display()))?;
+    compose::check(&checked, &service.name, &project.dir, &data, &images).with_context(shown)?;
     write_override(places, service, &service.pins(), Stage::Published(&checked))?;
     engine.pull(project)?;
     Ok((files, data))
