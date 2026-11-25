@@ -18,7 +18,7 @@ pub fn services(
     state
         .services
         .iter()
-        .filter(|(name, entry)| !entry.running.is_empty() && wanted(name))
+        .filter(|(name, entry)| !entry.running.is_empty() && entry.update.is_none() && wanted(name))
         .filter_map(|(name, _)| {
             one(engine, places, name, facing)
                 .err()

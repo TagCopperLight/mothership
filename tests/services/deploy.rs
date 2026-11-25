@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     secrets::Keys,
-    services::{Image, Pin, load},
+    services::{Image, Pin, load, state::Step},
 };
 use std::{cell::RefCell, collections::VecDeque, os::unix::fs::MetadataExt};
 
@@ -19,6 +19,7 @@ struct Fake {
     envs: RefCell<Vec<Vec<(String, String)>>>,
     health: RefCell<VecDeque<Health>>,
     snapshot_fails: bool,
+    restore_fails: bool,
     registry: Option<String>,
 }
 
@@ -82,7 +83,10 @@ impl Engine for Fake {
     }
     fn restore(&self, _: &str, _: &Path, parts: &[PathBuf]) -> Result<()> {
         self.log(with_parts("restore", parts));
-        Ok(())
+        match self.restore_fails {
+            true => anyhow::bail!("the machine shut down"),
+            false => Ok(()),
+        }
     }
     fn drop_snapshot(&self, _: &str) -> Result<()> {
         self.log("drop snapshot");
@@ -106,6 +110,7 @@ struct World {
     fleet: PathBuf,
     places: Places,
     unconfirmed: Unconfirmed,
+    saved: Option<Deployed>,
 }
 
 impl World {
@@ -124,6 +129,7 @@ impl World {
             fleet,
             places,
             unconfirmed: Unconfirmed::default(),
+            saved: None,
         }
     }
 
@@ -148,6 +154,15 @@ impl World {
         service: &Service,
         before: Option<&Deployed>,
     ) -> (Deployed, Outcome) {
+        self.attempt(engine, service, before).unwrap()
+    }
+
+    fn attempt(
+        &mut self,
+        engine: &Fake,
+        service: &Service,
+        before: Option<&Deployed>,
+    ) -> Result<(Deployed, Outcome)> {
         let rendered = service.render(&Keys::default()).unwrap();
         let wanted = Wanted {
             service,
@@ -156,7 +171,20 @@ impl World {
             rendered: &rendered,
             overwrite: Vec::new(),
         };
-        deploy(engine, &self.places, &wanted, before, &mut self.unconfirmed).unwrap()
+        let mut saved = None;
+        let result = deploy(
+            engine,
+            &self.places,
+            &wanted,
+            before,
+            &mut self.unconfirmed,
+            &mut |entry| {
+                saved = Some(entry.clone());
+                Ok(())
+            },
+        );
+        self.saved = saved;
+        result
     }
 }
 
@@ -258,30 +286,90 @@ fn a_rollback_hands_the_old_version_its_own_secrets() {
 }
 
 #[test]
-fn a_service_snapshots_only_the_parts_it_names() {
+fn an_update_snapshots_the_parts_either_version_names() {
     let mut world = World::new();
     let engine = Fake::default();
+    let snapshotting = |world: &World, parts: &str, version: &str| {
+        world.pin(version, A);
+        let toml = world.fleet.join("services/app/service.toml");
+        let text = fs::read_to_string(&toml).unwrap();
+        fs::write(&toml, format!("snapshot = [{parts}]\n{text}")).unwrap();
+        load(&world.fleet).unwrap().remove(0)
+    };
     let (first, _) = world.deploy(&engine, &world.pin("1.0.0", A), None);
-    engine.calls();
-    let toml = world.fleet.join("services/app/service.toml");
-    let text = fs::read_to_string(&toml).unwrap();
-    fs::write(&toml, format!("snapshot = [\"db\", \"conf/keys\"]\n{text}")).unwrap();
-    let mut service = load(&world.fleet).unwrap().remove(0);
-    service.images.get_mut("app").unwrap().version = "1.0.1".into();
+    let (second, _) = world.deploy(
+        &engine,
+        &snapshotting(&world, "\"db\", \"conf/keys\"", "1.0.1"),
+        Some(&first),
+    );
+    assert!(engine.calls().contains(&"snapshot".to_owned()));
+
     engine
         .health
         .borrow_mut()
         .push_back(Health::Unhealthy("app reports unhealthy".into()));
-    world.deploy(&engine, &service, Some(&first));
+    world.deploy(
+        &engine,
+        &snapshotting(&world, "\"db\"", "1.0.2"),
+        Some(&second),
+    );
     let calls = engine.calls();
     assert!(
-        calls.contains(&"snapshot db conf/keys".to_owned()),
+        calls.contains(&"snapshot conf/keys db".to_owned()),
         "{calls:?}"
     );
     assert!(
-        calls.contains(&"restore db conf/keys".to_owned()),
+        calls.contains(&"restore conf/keys db".to_owned()),
         "{calls:?}"
     );
+}
+
+#[test]
+fn an_update_that_didn_t_finish_rolls_back_from_what_it_kept() {
+    let mut world = World::new();
+    let mut engine = Fake {
+        restore_fails: true,
+        ..Fake::default()
+    };
+    let (first, _) = world.deploy(&engine, &world.pin("1.0.0", A), None);
+    engine.calls();
+    engine
+        .health
+        .borrow_mut()
+        .push_back(Health::Unhealthy("app reports unhealthy".into()));
+    let broken = world.pin("1.0.1", B);
+    assert!(world.attempt(&engine, &broken, Some(&first)).is_err());
+    let unfinished = world.saved.clone().unwrap();
+    assert_eq!(unfinished.running, first.running);
+    let update = unfinished.update.clone().unwrap();
+    assert_eq!(update.to, broken.pins());
+    assert_eq!(update.step, Step::Snapshotted);
+    engine.calls();
+
+    engine.restore_fails = false;
+    let (entry, outcome) = world.deploy(&engine, &broken, Some(&unfinished));
+    assert_eq!(
+        outcome,
+        Outcome::RolledBack("its last update didn't finish".into())
+    );
+    assert_eq!(
+        engine.calls(),
+        ["stop", "restore", "up app:1.0.0", "drop snapshot"]
+    );
+    assert_eq!(
+        fs::read_to_string(world.places.project("app").join("app.conf")).unwrap(),
+        "version 1.0.0\n"
+    );
+    assert!(!world.places.previous("app").exists());
+    assert_eq!(entry.running, first.running);
+    assert_eq!(entry.update, None);
+    assert!(
+        entry
+            .failed
+            .contains(&("app".into(), broken.images["app"].pin()))
+    );
+    let (_, outcome) = world.deploy(&engine, &broken, Some(&entry));
+    assert_eq!(outcome, Outcome::Blocked("images.app 1.0.1".into()));
 }
 
 #[test]
@@ -388,6 +476,7 @@ fn overwriting_an_edited_file_writes_the_fleets_version() {
         &wanted,
         Some(&first),
         &mut world.unconfirmed,
+        &mut |_| Ok(()),
     )
     .unwrap();
     assert_eq!(fs::read_to_string(&conf).unwrap(), "version 1.0.0\n");
@@ -416,6 +505,7 @@ fn a_service_facing_an_interface_follows_its_addresses_and_waits_without_one() {
         &wanted,
         None,
         &mut world.unconfirmed,
+        &mut |_| Ok(()),
     )
     .unwrap_err();
     assert!(format!("{err:#}").contains("publishes on wg0, which has no address yet"));

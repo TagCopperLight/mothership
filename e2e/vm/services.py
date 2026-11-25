@@ -532,7 +532,7 @@ sudo ip link set {STAND_IN} up
     expect(vm.run("sudo mothership scan"), "/srv/extra", "/srv/stray")
 
     commit("Break app", pin("1.0.2"))
-    expect(apply(), "app failed its health check", "these services need attention", code=1)
+    expect(apply(), "app failed, so it runs its last healthy versions again", "these services need attention", code=1)
     assert data("app", "version") == "1.0.1", "the last healthy version runs again"
     assert data("app", "precious") == "kept", "the snapshot is back"
     expect(vm.run("sudo mothership scan"), "not applied", "images.app 1.0.2 failed (app-app-1 reports unhealthy)")

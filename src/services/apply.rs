@@ -4,7 +4,7 @@ use super::{
     deploy::{self, Outcome, Places, Wanted},
     docker::Docker,
     docker_config, registry, start,
-    state::State,
+    state::{Deployed, State},
 };
 use crate::{fleet::Fleet, probe, util::file, util::http::Curl};
 use anyhow::{Context, Result, bail};
@@ -150,8 +150,20 @@ pub fn run(fleet: &Fleet, actions: &[&Action]) -> Result<()> {
                 .map(|(_, file)| file.clone())
                 .collect(),
         };
-        let before = state.services.get(name);
-        match deploy::deploy(&docker, &places, &wanted, before, &mut unconfirmed) {
+        let before = state.services.get(name).cloned();
+        let mut save = |entry: &Deployed| {
+            state.services.insert(name.to_owned(), entry.clone());
+            state.save()
+        };
+        let deployed = deploy::deploy(
+            &docker,
+            &places,
+            &wanted,
+            before.as_ref(),
+            &mut unconfirmed,
+            &mut save,
+        );
+        match deployed {
             Ok((entry, outcome)) => {
                 println!("{}", crate::util::style::clean(&said(name, &outcome)));
                 state.services.insert(name.to_owned(), entry);
@@ -193,9 +205,9 @@ fn said(name: &str, outcome: &Outcome) -> String {
         Outcome::Started => format!("Started {name}"),
         Outcome::Updated => format!("Updated {name}"),
         Outcome::Unhealthy(why) => format!("Started {name}, which isn't healthy: {why}"),
-        Outcome::RolledBack(why) => format!(
-            "{name} failed its health check, so it runs its last healthy versions again: {why}"
-        ),
+        Outcome::RolledBack(why) => {
+            format!("{name} failed, so it runs its last healthy versions again: {why}")
+        }
         Outcome::Blocked(pins) => {
             format!("Left {name} alone: {pins} failed its health check here before")
         }

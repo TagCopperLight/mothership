@@ -4,7 +4,7 @@ use super::{
     docker::{Engine, Health, Project},
     link,
     port::{self, Bound},
-    state::{Deployed, Pins, Problem},
+    state::{Deployed, Pins, Problem, Step, Update},
 };
 use crate::{util::file, util::hash, util::walk};
 use anyhow::{Context, Result, bail};
@@ -327,20 +327,30 @@ pub struct Wanted<'a> {
     pub overwrite: Vec<PathBuf>,
 }
 
+pub type Save<'a> = &'a mut dyn FnMut(&Deployed) -> Result<()>;
+
 pub fn deploy(
     engine: &dyn Engine,
     places: &Places,
     wanted: &Wanted,
     before: Option<&Deployed>,
     unconfirmed: &mut Unconfirmed,
+    save: Save,
 ) -> Result<(Deployed, Outcome)> {
     let service = wanted.service;
     let name = &service.name;
+    let mut entry = before.cloned().unwrap_or_default();
+    if entry.update.is_some() {
+        let why = "its last update didn't finish".to_owned();
+        let after = roll_back(engine, places, name, &mut entry, save).with_context(|| {
+            format!("{name}'s last update didn't finish, and putting it back failed")
+        })?;
+        return Ok((rolled_back(entry, &why, after), Outcome::RolledBack(why)));
+    }
     if service.unbuilt() {
         bail!("{name} waits for the fleet's CI to build its recipe");
     }
     let pins = service.pins();
-    let mut entry = before.cloned().unwrap_or_default();
     let blocked = describe(&entry.failed_in(&pins));
     if !blocked.is_empty() {
         entry.fleet = wanted.fleet.clone();
@@ -370,6 +380,13 @@ pub fn deploy(
     let update = !entry.running.is_empty();
     if update {
         keep_copy(&dir, &previous)?;
+        entry.update = Some(Update {
+            fleet: wanted.fleet.clone(),
+            to: pins.clone(),
+            parts: covering(&entry.snapshot, &service.snapshot),
+            step: Step::Started,
+        });
+        save(&entry)?;
     }
     let project = Project {
         name,
@@ -380,16 +397,18 @@ pub fn deploy(
         Ok(prepared) => prepared,
         Err(e) if update => {
             put_back(&dir, &previous)?;
+            entry.update = None;
+            save(&entry)?;
             return Err(e);
         }
         Err(e) => return Err(e),
     };
-    let mut snapshotted = false;
     let started = (|| {
-        if update {
+        if let Some(update) = &mut entry.update {
             engine.stop(name)?;
-            engine.snapshot(name, &data, &service.snapshot)?;
-            snapshotted = true;
+            engine.snapshot(name, &data, &update.parts)?;
+            update.step = Step::Snapshotted;
+            save(&entry)?;
         }
         join_links(engine, places, name)?;
         engine.up(&project)?;
@@ -400,54 +419,22 @@ pub fn deploy(
         Ok(Health::Unhealthy(why)) => Some(why),
         Err(e) => Some(format!("{e:#}")),
     };
-    entry.fleet = wanted.fleet.clone();
     let outcome = match failure {
         Some(why) if update => {
-            let after = roll_back(
-                engine,
-                places,
-                &project,
-                &data,
-                &previous,
-                snapshotted.then_some(&service.snapshot[..]),
-            )
-            .with_context(|| format!("{name} failed ({why}), and putting it back failed too"))?;
-            engine.drop_snapshot(name)?;
-            let failed: Vec<(&String, &super::Pin)> = pins
-                .iter()
-                .filter(|(image, pin)| entry.running.get(*image) != Some(pin))
-                .collect();
-            let what = match failed.is_empty() {
-                true => "its new files".to_owned(),
-                false => describe(&failed),
-            };
-            let mut problem = format!(
-                "{what} failed ({why}), so it runs {} again",
-                describe(&entry.running.iter().collect::<Vec<_>>())
-            );
-            if let Health::Unhealthy(again) = after {
-                problem.push_str(&format!(", which isn't healthy either: {again}"));
-            }
-            entry
-                .failed
-                .extend(failed.into_iter().map(|(i, p)| (i.clone(), p.clone())));
-            entry.problem = Some(Problem {
-                fleet: wanted.fleet.clone(),
-                why: problem,
-            });
-            return Ok((entry, Outcome::RolledBack(why)));
+            let after = roll_back(engine, places, name, &mut entry, save).with_context(|| {
+                format!("{name} failed ({why}), and putting it back failed too")
+            })?;
+            return Ok((rolled_back(entry, &why, after), Outcome::RolledBack(why)));
         }
         Some(why) => Outcome::Unhealthy(why),
         None if update => Outcome::Updated,
         None => Outcome::Started,
     };
-    if update {
-        engine.drop_snapshot(name)?;
-        fs::remove_dir_all(&previous)
-            .with_context(|| format!("removing {}", previous.display()))?;
-    }
+    entry.fleet = wanted.fleet.clone();
     entry.files = files;
     entry.running = pins;
+    entry.snapshot = service.snapshot.clone();
+    entry.update = None;
     entry.problem = match &outcome {
         Outcome::Unhealthy(why) => Some(Problem {
             fleet: wanted.fleet.clone(),
@@ -455,7 +442,52 @@ pub fn deploy(
         }),
         _ => None,
     };
+    if update {
+        save(&entry)?;
+        engine.drop_snapshot(name)?;
+        fs::remove_dir_all(&previous)
+            .with_context(|| format!("removing {}", previous.display()))?;
+    }
     Ok((entry, outcome))
+}
+
+fn rolled_back(mut entry: Deployed, why: &str, after: Health) -> Deployed {
+    let update = entry.update.take().expect("only an update rolls back");
+    let failed: Vec<(&String, &super::Pin)> = update
+        .to
+        .iter()
+        .filter(|(image, pin)| entry.running.get(*image) != Some(pin))
+        .collect();
+    let what = match failed.is_empty() {
+        true => "its new files".to_owned(),
+        false => describe(&failed),
+    };
+    let mut problem = format!(
+        "{what} failed ({why}), so it runs {} again",
+        describe(&entry.running.iter().collect::<Vec<_>>())
+    );
+    if let Health::Unhealthy(again) = after {
+        problem.push_str(&format!(", which isn't healthy either: {again}"));
+    }
+    let failed: Vec<(String, super::Pin)> = failed
+        .into_iter()
+        .map(|(image, pin)| (image.clone(), pin.clone()))
+        .collect();
+    entry.failed.extend(failed);
+    entry.fleet = update.fleet.clone();
+    entry.problem = Some(Problem {
+        fleet: update.fleet,
+        why: problem,
+    });
+    entry
+}
+
+fn covering(old: &[PathBuf], new: &[PathBuf]) -> Vec<PathBuf> {
+    if old.is_empty() || new.is_empty() {
+        return Vec::new();
+    }
+    let parts: BTreeSet<&PathBuf> = old.iter().chain(new).collect();
+    parts.into_iter().cloned().collect()
 }
 
 fn prepare(
@@ -506,26 +538,32 @@ fn put_back(dir: &Path, copy: &Path) -> Result<()> {
 fn roll_back(
     engine: &dyn Engine,
     places: &Places,
-    project: &Project,
-    data: &Path,
-    previous: &Path,
-    snapshot: Option<&[PathBuf]>,
+    name: &str,
+    entry: &mut Deployed,
+    save: Save,
 ) -> Result<Health> {
-    engine.stop(project.name)?;
-    if let Some(parts) = snapshot {
-        engine.restore(project.name, data, parts)?;
+    engine.stop(name)?;
+    let update = entry.update.as_mut().expect("only an update rolls back");
+    if update.step != Step::PutBack {
+        if update.step == Step::Snapshotted {
+            engine.restore(name, &places.data(name), &update.parts)?;
+        }
+        put_back(&places.project(name), &places.previous(name))?;
+        update.step = Step::PutBack;
+        save(entry)?;
     }
-    put_back(&project.dir, previous)?;
-    if let Binding::Stale(config) = binding(places, project.name)?.binding {
-        write_config(places, project.name, &config)?;
+    if let Binding::Stale(config) = binding(places, name)?.binding {
+        write_config(places, name, &config)?;
     }
-    join_links(engine, places, project.name)?;
+    join_links(engine, places, name)?;
     engine.up(&Project {
-        name: project.name,
-        dir: project.dir.clone(),
-        env: written_env(places, project.name)?,
+        name,
+        dir: places.project(name),
+        env: written_env(places, name)?,
     })?;
-    engine.health(project.name)
+    let health = engine.health(name)?;
+    engine.drop_snapshot(name)?;
+    Ok(health)
 }
 
 pub fn join_links(engine: &dyn Engine, places: &Places, name: &str) -> Result<()> {

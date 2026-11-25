@@ -225,7 +225,13 @@ fn service_items(
         )]);
     };
     let mut items = edited(places, &service.name, entry)?;
-    if entry.fleet != fingerprint {
+    if entry.update.is_some() {
+        items.push(fleet_item(
+            Item::new(Kind::Container, Change::Edited, &service.name, "unfinished")
+                .noting("its last update didn't finish: apply puts back the versions before it")
+                .reverting(Action::Deploy(service.name.clone())),
+        ));
+    } else if entry.fleet != fingerprint {
         let changes: Vec<String> = pins
             .iter()
             .filter(|(image, pin)| entry.running.get(*image) != Some(pin))
@@ -346,6 +352,7 @@ fn containers(fleet: &Fleet, state: &State, places: &Places, docker: &Docker) ->
             ))
         };
         if !entry.running.is_empty()
+            && entry.update.is_none()
             && !up.contains(name)
             && fleet.services.iter().any(|s| &s.name == name)
             && current()?

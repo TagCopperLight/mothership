@@ -22,9 +22,28 @@ pub struct State {
 pub struct Deployed {
     pub fleet: String,
     pub running: Pins,
+    pub snapshot: Vec<PathBuf>,
     pub files: BTreeMap<PathBuf, String>,
     pub failed: BTreeSet<(String, Pin)>,
     pub problem: Option<Problem>,
+    pub update: Option<Update>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Update {
+    pub fleet: String,
+    pub to: Pins,
+    pub parts: Vec<PathBuf>,
+    pub step: Step,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Step {
+    Started,
+    Snapshotted,
+    PutBack,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
