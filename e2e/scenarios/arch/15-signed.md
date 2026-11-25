@@ -27,13 +27,15 @@ $ echo n | sudo mothership apply | head -1
 This machine refuses [0-9a-f]{12} "Add zeta" of \d{4}-\d\d-\d\d, which claims to be by Me, and what follows it: nobody signed it (re)
 ```
 
-A command that signs shows me the commit and asks what to do with it. I answer nothing, and
-nothing changes.
+A command that signs shows me the commit and the files it changes, and asks what to do with it.
+I answer nothing, and nothing changes.
 
 ```console
-$ echo n | sudo mothership commit "On top" > ~/out; grep -A1 "^main holds" ~/out; tail -1 ~/out
+$ echo n | sudo mothership commit "On top" > ~/out; grep -A3 "^main holds" ~/out; tail -1 ~/out
 main holds 1 commit after [0-9a-f]{12}, the last one this machine accepts: (re)
   [0-9a-f]{12} Me, \d{4}-\d\d-\d\d: Add zeta (re)
+They change:
+  M types/workstation/system.toml
 Nothing changed.
 $ git -C /var/lib/mothership/fleet log -1 --format=%s
 Add zeta

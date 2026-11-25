@@ -64,7 +64,7 @@ All of them run with `sudo`, except `version`.
 | `apply` | Moves to the mothership release the fleet names, then brings the fleet's changes since the last apply, after showing the plan. It never undoes a change made on the machine. |
 | `scan` | Lists how the machine differs from its type: what changed on the machine, what's coming from the fleet, and what needs attention. |
 | `review` | Goes through the machine's changes one by one: **add** it to the fleet, **revert** it, **ignore** it, or **pass** on it until the next review. Nothing changes until its last question: it then commits and pushes the answers, signed, and reverts. |
-| `commit <message>` | Signs and pushes your own edits in the fleet's folder. |
+| `commit <message>` | Signs and pushes your own edits in the fleet's folder. It lists the files they change, so you read the edits in a git app first. |
 | `trust <host> <type> [--option <option>]... <name>=<key>...` | Writes a machine's file in `machines/` with its keys, encrypts again the secrets those keys open, adds the keys to GitHub, and prints the code to type on that machine. |
 | `retire <host>` | Deletes a machine's file, removes its keys from GitHub, and lists the secrets you should change. |
 | `secret <service> <name>` | Reads a value and encrypts it into the service's secrets, for the type's root keys and the recovery key. `<service>` may be `<type>/<service>`. |

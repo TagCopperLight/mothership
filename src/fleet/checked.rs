@@ -7,6 +7,7 @@ use crate::{
     secrets,
     services::{self, confirm::Unconfirmed},
     system::user::User,
+    trust::github,
     trust::sign::{self, Commit, Reach, Signer},
     util::cmd::{self, As},
     util::file,
@@ -739,10 +740,13 @@ fn settle(git: &Git, accepted: &str, tip: &str, prompt: &mut Prompt) -> Result<S
         "--format=  %h %an, %as: %s",
         &range,
     ])?;
-    let args = ["-c", "core.quotePath=false", "diff", accepted, tip];
-    let diff = cmd::output(git.command(&args), "git", &args)?;
-    for line in log.lines().chain(String::from_utf8_lossy(&diff).lines()) {
+    for line in log.lines() {
         println!("{}", style::clean(line));
+    }
+    println!("They change:");
+    print_files(git, accepted, tip)?;
+    if let Some(repo) = github::repo(&origin(&super::admin()?)?) {
+        println!("Read them at https://github.com/{repo}/compare/{accepted}...{tip}");
     }
     let answers = [
         ('v', Settle::Vouch),
@@ -751,6 +755,23 @@ fn settle(git: &Git, accepted: &str, tip: &str, prompt: &mut Prompt) -> Result<S
     ];
     let question = "v vouch for them, signing on top · d drop them from main · n change nothing ›";
     Ok(prompt.ask(question, &answers)?.unwrap_or(Settle::Nothing))
+}
+
+fn print_files(git: &Git, base: &str, commit: &str) -> Result<()> {
+    let args = [
+        "-c",
+        "core.quotePath=false",
+        "diff-tree",
+        "-r",
+        "--name-status",
+        base,
+        commit,
+    ];
+    let files = cmd::output(git.command(&args), "git", &args)?;
+    for line in String::from_utf8_lossy(&files).lines() {
+        println!("  {}", style::clean(&line.replacen('\t', " ", 1)));
+    }
+    Ok(())
 }
 
 fn drop_after(git: &Git, admin: &User, accepted: &str, main: &str) -> Result<()> {
@@ -906,6 +927,9 @@ impl Stage {
             return Ok(Outcome::Unchanged(base));
         };
         prepared.show()?;
+        if let Advance::KeepEdits = advance {
+            println!("These are the edits in {DIR}: read them there in a git app.");
+        }
         if !prompt.confirm("Commit and push")? {
             println!("Nothing changed.");
             return Ok(Outcome::Declined);
@@ -920,22 +944,8 @@ impl Stage {
 
 impl Prepared {
     pub fn show(&self) -> Result<()> {
-        let git = Git::at(GIT_DIR);
-        let args = [
-            "-c",
-            "core.quotePath=false",
-            "diff-tree",
-            "-r",
-            "--name-status",
-            &self.base,
-            &self.commit,
-        ];
-        let files = cmd::output(git.command(&args), "git", &args)?;
         println!("{}:", self.message);
-        for line in String::from_utf8_lossy(&files).lines() {
-            println!("  {}", line.replacen('\t', " ", 1));
-        }
-        Ok(())
+        print_files(&Git::at(GIT_DIR), &self.base, &self.commit)
     }
 
     pub fn publish(self, admin: &User, advance: Advance) -> Result<String> {

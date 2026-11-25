@@ -22,7 +22,7 @@ A machine applies a commit only when a key listed in the commit **before** it si
 
 Only `main` counts, along its main line: when a branch is merged, the machine checks the merge commit, not each commit of the branch. A signed merge vouches for everything it brings, so agents can work on branches without signing keys, and the owner merges what they did.
 
-A refused commit on `main`, such as one nobody signed, stops every machine at the commit before it, and scan shows who pushed it and why the machine refused it. A later commit can vouch for it: the machine then checks the whole change since the last commit it accepted, against the signers that commit lists, as if one commit made it. Each command that signs, such as `commit`, shows the refused commits and their diff first, and asks whether to vouch for them, drop them from `main` and `origin`, or stop. A signer limited to some folders vouches only for changes inside them, and the probe never vouches, so it waits while a refused commit remains.
+A refused commit on `main`, such as one nobody signed, stops every machine at the commit before it, and scan shows who pushed it and why the machine refused it. A later commit can vouch for it: the machine then checks the whole change since the last commit it accepted, against the signers that commit lists, as if one commit made it. Each command that signs, such as `commit`, lists the refused commits and the files they change first, with a link to compare them on GitHub when the fleet lives there, and asks whether to vouch for them, drop them from `main` and `origin`, or stop. A signer limited to some folders vouches only for changes inside them, and the probe never vouches, so it waits while a refused commit remains.
 
 ### Limited signers
 
