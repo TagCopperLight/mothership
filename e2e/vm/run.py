@@ -70,10 +70,14 @@ def site(dir: Path) -> Path:
     dir.mkdir()
     work = dir.parent / "fleet"
     shutil.copytree(HERE / "fleet", work)
-    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    key = dir.parent / "recovery-signing"
+    shutil.copy(HERE.parent / "recovery-signing", key)
+    key.chmod(0o600)
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+           "-c", "gpg.format=ssh", "-c", f"user.signingkey={key}"]
     subprocess.run([*git, "init", "-q", "-b", "main"], cwd=work, check=True)
     subprocess.run([*git, "add", "-A"], cwd=work, check=True)
-    subprocess.run([*git, "commit", "-qm", "The fleet"], cwd=work, check=True)
+    subprocess.run([*git, "commit", "-S", "-qm", "The fleet"], cwd=work, check=True)
     subprocess.run(["git", "clone", "-q", "--bare", str(work), str(dir / "fleet.git")], check=True)
     subprocess.run(["tar", "--owner=0", "--group=0", "-cf", str(dir / "fleet.tar"), "-C", str(dir), "fleet.git"], check=True)
     shutil.copy(binary.BINARY, dir / "mothership")
@@ -227,14 +231,11 @@ def install(args: list[str], port: int, log) -> None:
         for question in ["New password:", "Retype new password:"]:
             wait(vm, question)
             vm.sendline(PASSWORD)
-        wait(vm, "r type the recovery key")
-        vm.send("r")
+        wait(vm, "No machine signs for the fleet yet")
         wait(vm, "Recovery key:")
         secret = next(line for line in (HERE.parent / "recovery.txt").read_text().splitlines()
                       if line.startswith("AGE-SECRET-KEY-"))
         vm.sendline(secret)
-        wait(vm, "Trust the fleet as it is")
-        vm.send("y")
         wait(vm, "vmtest may change:")
         vm.sendline("*")
         for question, answer in [("Your name", "Tester"), ("Your email", "tester@example.com")]:

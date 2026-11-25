@@ -23,7 +23,7 @@ which `ops` then signs and pushes from. The commit's author comes from the fleet
 for `ops`, and the clone keeps no author of its own.
 
 ```console
-$ printf 'ops-password\nops-password\nr\n%s\ny\n\ny\ny\n' "$(grep AGE-SECRET ~/recovery.txt)" |
+$ printf 'ops-password\nops-password\nr\n%s\nv\n\ny\ny\n' "$(grep AGE-SECRET ~/recovery.txt)" |
 > sudo mothership install --admin ops --fleet /opt/fleet.git --type server --hostname box > ~/out 2>&1
 $ stat -c %U /var/lib/mothership/fleet
 ops

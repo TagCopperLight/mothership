@@ -117,6 +117,11 @@ impl Git {
         Machines::parse(files).with_context(|| format!("reading {MACHINES}/ in {}", short(commit)))
     }
 
+    fn commit(&self, commit: &str) -> Result<Commit> {
+        let args = ["cat-file", "commit", commit];
+        Commit::parse(&cmd::output(self.command(&args), "git", &args)?)
+    }
+
     fn signers(&self, commit: &str) -> Result<Vec<Signer>> {
         self.machines(commit)?.signers()
     }
@@ -254,8 +259,7 @@ fn approve(git: &Git, base: &str, commit: &str) -> Result<Option<Signer>> {
     if trusted.is_empty() {
         return Ok(None);
     }
-    let args = ["cat-file", "commit", commit];
-    let signed = Commit::parse(&cmd::output(git.command(&args), "git", &args)?)?;
+    let signed = git.commit(commit)?;
     let Some(signer) = signed.signer(&trusted) else {
         bail!(match signed.signature {
             None => "nobody signed it",
@@ -411,6 +415,7 @@ pub enum Remote {
 pub enum Anchor<'a> {
     Kept,
     Code(&'a str),
+    SignedBy(&'a Signer),
     Tip,
 }
 
@@ -446,6 +451,8 @@ pub fn sync_from(admin: &User, remote: Remote, anchor: Anchor) -> Result<Sync> {
             }
             checked.unwrap_or(commit)
         }
+        (Anchor::SignedBy(_), Some(checked)) => checked,
+        (Anchor::SignedBy(signer), None) => newest_signed(&git, &tip, signer)?,
         (Anchor::Tip, _) => tip.clone(),
     };
     if fresh {
@@ -467,6 +474,23 @@ pub fn sync_from(admin: &User, remote: Remote, anchor: Anchor) -> Result<Sync> {
     Ok(Sync {
         refused: checked.refused,
     })
+}
+
+fn newest_signed(git: &Git, tip: &str, signer: &Signer) -> Result<String> {
+    for commit in git.out(&["rev-list", "--first-parent", tip])?.lines() {
+        if git
+            .commit(commit)?
+            .signer(std::slice::from_ref(signer))
+            .is_some()
+        {
+            return Ok(commit.to_owned());
+        }
+    }
+    bail!(
+        "no commit on the fleet's main is signed by the {} key, so nothing tells which commits \
+         to trust: trust this machine from one that signs for the fleet",
+        signer.name
+    )
 }
 
 fn fetch(git: &Git, admin: &User, remote: Remote) -> Result<(String, String)> {

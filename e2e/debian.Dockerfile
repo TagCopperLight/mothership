@@ -17,8 +17,22 @@ RUN for group in repo local extra; do mkdir "/$group" \
 COPY bin/systemctl bin/loginctl bin/hostnamectl /usr/local/bin/
 RUN touch /var/log/systemctl.log && chmod 666 /var/log/systemctl.log
 
+FROM debian:trixie AS signed
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client
+COPY fleet /fleet
+COPY signing.pub ssh.pub recovery-signing /tmp/
+RUN chmod 600 /tmp/recovery-signing \
+ && printf 'type = "server"\nsigns = "everything"\n\n[keys]\nsigning = "%s"\n\n[users.me]\nssh = "%s"\n' \
+    "$(cut -d' ' -f1,2 /tmp/signing.pub)" "$(cut -d' ' -f1,2 /tmp/ssh.pub)" \
+    | install -D -m 644 /dev/stdin /fleet/machines/machine.toml \
+ && cd /fleet \
+ && git init -q -b main \
+ && git add -A \
+ && git -c user.name=Me -c user.email=me@example.com -c gpg.format=ssh \
+    -c user.signingkey=/tmp/recovery-signing commit -S -q -m "The fleet"
+
 FROM machine
-COPY fleet /var/lib/mothership/fleet
+COPY --from=signed /fleet /var/lib/mothership/fleet
 COPY chezmoi/server.toml /tmp/chezmoi.toml
 COPY signing signing.pub /tmp/
 COPY ssh ssh.pub /tmp/
@@ -32,14 +46,8 @@ RUN useradd -m -G sudo -s /bin/bash me \
  && install -o me -g me -m 644 /tmp/ssh.pub /home/me/.ssh/id_ed25519.pub \
  && install -m 440 /var/lib/mothership/fleet/types/server/etc/sudoers.d/sudo /etc/sudoers.d/sudo \
  && printf 'name = "machine"\n' | install -D -m 644 /dev/stdin /etc/mothership/machine.toml \
- && printf 'type = "server"\nsigns = "everything"\n\n[keys]\nsigning = "%s"\n\n[users.me]\nssh = "%s"\n' \
-    "$(cut -d' ' -f1,2 /tmp/signing.pub)" "$(cut -d' ' -f1,2 /tmp/ssh.pub)" \
-    | install -D -m 644 /dev/stdin /var/lib/mothership/fleet/machines/machine.toml \
  && chown -R me:me /var/lib/mothership/fleet \
  && cd /var/lib/mothership/fleet \
- && runuser -u me -- git init -q -b main \
- && runuser -u me -- git add -A \
- && runuser -u me -- git -c user.name=Me -c user.email=me@example.com commit -q -m "The fleet" \
  && install -d -o me -g me /srv/fleet.git \
  && runuser -u me -- git init -q --bare /srv/fleet.git \
  && runuser -u me -- git remote add origin /srv/fleet.git \

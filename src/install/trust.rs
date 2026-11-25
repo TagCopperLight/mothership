@@ -7,7 +7,7 @@ use crate::{
     secrets,
     trust::github,
     trust::recovery,
-    trust::sign::{self, Reach},
+    trust::sign::{self, Reach, Signer},
     util::cmd::As,
     util::prompt::Prompt,
 };
@@ -70,30 +70,35 @@ pub fn keys(prompt: &mut Prompt) -> Result<()> {
 }
 
 fn recover(prompt: &mut Prompt, fleet: &Fleet, anchored: bool) -> Result<()> {
+    let admin = fleet.admin();
     let age = match &fleet.recovery {
         None => {
             println!("The fleet has no recovery key yet:");
-            recovery::new_key(prompt)?
+            let age = recovery::new_key(prompt)?;
+            if !anchored {
+                println!("The fleet's newest commits:");
+                for line in checked::newest(admin, 5)? {
+                    println!("  {line}");
+                }
+                if !prompt.confirm("Trust the fleet as it is")? {
+                    bail!("install stopped before the fleet trusted this machine");
+                }
+                checked::sync_from(admin, Remote::Skip, Anchor::Tip)?;
+            }
+            age
         }
         Some(named) => {
             let age = secrets::identity(&prompt.hidden("Recovery key:")?)?;
             if secrets::public(&age) != named.key {
                 return Err(recovery::wrong_key());
             }
+            if !anchored {
+                let signer = Signer::recovery(&sign::public(&sign::recovery_key(&age))?)?;
+                checked::sync_from(admin, Remote::Skip, Anchor::SignedBy(&signer))?;
+            }
             age
         }
     };
-    let admin = fleet.admin();
-    if !anchored {
-        println!("The fleet's newest commits:");
-        for line in checked::newest(admin, 5)? {
-            println!("  {line}");
-        }
-        if !prompt.confirm("Trust the fleet as it is")? {
-            bail!("install stopped before the fleet trusted this machine");
-        }
-        checked::sync_from(admin, Remote::Skip, Anchor::Tip)?;
-    }
     let Some(stage) = checked::stage(prompt)? else {
         bail!("install stopped before the fleet trusted this machine");
     };

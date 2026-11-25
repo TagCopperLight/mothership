@@ -26,10 +26,11 @@ FROM machine
 COPY fleet /var/lib/mothership/fleet
 COPY chezmoi/workstation.toml /tmp/chezmoi.toml
 COPY recovery.txt /tmp/recovery.txt
-COPY signing signing.pub /tmp/
+COPY signing signing.pub recovery-signing /tmp/
 COPY ssh ssh.pub /tmp/
 COPY anchor.sh /tmp/anchor.sh
 RUN useradd -m -G wheel -s /bin/bash me \
+ && chown me /tmp/recovery-signing && chmod 600 /tmp/recovery-signing \
  && install -D -m 600 /tmp/signing /etc/mothership/signing \
  && install -d -o me -g me -m 700 /home/me/.ssh \
  && install -o me -g me -m 600 /tmp/ssh /home/me/.ssh/id_ed25519 \
@@ -44,7 +45,8 @@ RUN useradd -m -G wheel -s /bin/bash me \
  && cd /var/lib/mothership/fleet \
  && runuser -u me -- git init -q -b main \
  && runuser -u me -- git add -A \
- && runuser -u me -- git -c user.name=Me -c user.email=me@example.com commit -q -m "The fleet" \
+ && runuser -u me -- git -c user.name=Me -c user.email=me@example.com -c gpg.format=ssh \
+    -c user.signingkey=/tmp/recovery-signing commit -S -q -m "The fleet" \
  && install -d -o me -g me /srv/fleet.git \
  && runuser -u me -- git init -q --bare /srv/fleet.git \
  && runuser -u me -- git remote add origin /srv/fleet.git \

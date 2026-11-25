@@ -444,3 +444,19 @@ fn a_new_machine_still_checks_the_pins_the_probe_set_before_its_anchor() {
     inherited(&git, &full, &mut unconfirmed).unwrap();
     assert_eq!(unconfirmed, Unconfirmed::default());
 }
+
+#[test]
+fn a_recovery_install_anchors_at_the_newest_commit_the_recovery_key_signed() {
+    let repo = Repo::new();
+    let (recovery, recovery_file) = repo.key("recovery");
+    let signer = Signer::recovery(&sign::public(&recovery).unwrap()).unwrap();
+    let git = Git::at(repo.work.join(".git"));
+    let unsigned = repo.commit("Unsigned", None);
+    assert!(newest_signed(&git, &unsigned, &signer).is_err());
+    let signed = repo.commit("Signed", Some(&recovery_file));
+    let (other, other_file) = repo.key("other");
+    repo.machine("other", &other, EVERYTHING);
+    repo.commit("Signed by another key", Some(&other_file));
+    let tip = repo.commit("Pushed with a stolen login", None);
+    assert_eq!(newest_signed(&git, &tip, &signer).unwrap(), signed);
+}
