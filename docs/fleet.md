@@ -1,7 +1,7 @@
 # Writing a fleet
 
 ```text
-mothership.toml           the recovery key, and the mothership release every machine runs
+mothership.toml           the recovery key, which install adds, and the mothership release every machine runs
 machines/desk.toml        a machine's type, options, the folders it may sign, and its public keys
 shared/                   files and secrets several homes get, linked from each home or root's secrets
 types/workstation/

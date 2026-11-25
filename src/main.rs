@@ -144,9 +144,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         (Command::Review, []) => sync::review::run(),
         (Command::Apply, []) => sync::apply::run(),
         (Command::Install, flags) => install::run(flags),
-        (Command::Recovery, []) => {
-            trust::recovery::run(std::path::Path::new(fleet::DIR), &mut Prompt::new())
-        }
+        (Command::Recovery, []) => trust::recovery::change(&mut Prompt::new()),
         (Command::Commit, [message]) => {
             let mut prompt = Prompt::new();
             let admin = fleet::admin()?;

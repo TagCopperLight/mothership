@@ -4,15 +4,14 @@ use crate::{
         checked::{self, Advance, Outcome, Remote},
     },
     secrets::{self, Keys},
-    system::user,
     trust,
     trust::sign,
     util::file,
     util::prompt::Prompt,
 };
 use age::{secrecy::ExposeSecret, x25519};
-use anyhow::{Context, Result, bail};
-use std::{fs, os::unix::fs::MetadataExt, path::Path};
+use anyhow::{Context, Result, anyhow, bail};
+use std::path::Path;
 use toml_edit::{DocumentMut, Item, Table};
 
 #[derive(Clone, Copy)]
@@ -21,22 +20,19 @@ enum From {
     Typed,
 }
 
-pub fn run(dir: &Path, prompt: &mut Prompt) -> Result<()> {
-    if Manifest::read(dir)?.recovery().is_some() {
-        return change(prompt);
-    }
-    let key = new_key(prompt)?;
-    let path = dir.join(MANIFEST);
-    name(&path, &key)?;
-    user::by_uid(fs::metadata(dir)?.uid())?.own(&path)?;
-    println!(
-        "The fleet's {MANIFEST} names it now. Commit and push the fleet: machines accept this \
-         first commit unsigned, and check every commit after it."
-    );
-    Ok(())
+pub fn wrong_key() -> anyhow::Error {
+    anyhow!("that isn't the recovery key the fleet's {MANIFEST} names")
 }
 
-fn new_key(prompt: &mut Prompt) -> Result<x25519::Identity> {
+pub fn claim(dir: &Path, key: &x25519::Identity) -> Result<()> {
+    match Manifest::read(dir)?.recovery() {
+        None => name(&dir.join(MANIFEST), key),
+        Some(named) if named.key == secrets::public(key) => Ok(()),
+        Some(_) => Err(wrong_key()),
+    }
+}
+
+pub fn new_key(prompt: &mut Prompt) -> Result<x25519::Identity> {
     let answers = [('n', From::New), ('t', From::Typed)];
     match prompt.ask("n make a new one · t type the one you have ›", &answers)? {
         None => bail!("the fleet's recovery key stays as it was"),
@@ -65,7 +61,7 @@ fn name(path: &Path, key: &x25519::Identity) -> Result<()> {
     file::write(path, doc.to_string().as_bytes(), 0o644)
 }
 
-fn change(prompt: &mut Prompt) -> Result<()> {
+pub fn change(prompt: &mut Prompt) -> Result<()> {
     let admin = fleet::admin()?;
     checked::sync(&admin, Remote::Fetch)?;
     let Some(stage) = checked::stage(prompt)? else {
@@ -73,8 +69,8 @@ fn change(prompt: &mut Prompt) -> Result<()> {
     };
     let old = secrets::identity(&prompt.hidden("The fleet's recovery key now:")?)?;
     let old_public = secrets::public(&old);
-    if old_public != Fleet::load_at(&stage.dir)?.recovery.key {
-        bail!("that isn't the recovery key the fleet's {MANIFEST} names");
+    if old_public != Fleet::load_at(&stage.dir)?.named_recovery()?.key {
+        return Err(wrong_key());
     }
     println!("The new recovery key:");
     let new = new_key(prompt)?;

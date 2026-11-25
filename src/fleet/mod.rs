@@ -57,7 +57,7 @@ pub struct Repo {
     pub secret_etc: BTreeSet<PathBuf>,
     pub ignore: Ignore,
     pub profiles: Vec<Profile>,
-    pub recovery: Recipient,
+    pub recovery: Option<Recipient>,
     pub services: Vec<services::Service>,
     pub probe_host: Option<String>,
     pub machines: Machines,
@@ -294,9 +294,7 @@ impl Repo {
     ) -> Result<Self> {
         homes::check(&dir)?;
         let manifest = Manifest::read(&dir)?;
-        let recovery = manifest.recovery().with_context(|| {
-            format!("the fleet's {MANIFEST} names no recovery key: run `mothership recovery`")
-        })?;
+        let recovery = manifest.recovery();
         let probe_host = manifest.probe_host().map(str::to_owned);
         let type_dir = type_dir(&dir, device_type);
         let system_path = type_dir.join(SYSTEM_TOML);
@@ -423,8 +421,14 @@ impl Repo {
             .any(|r| r.key == public)
     }
 
-    pub fn sealed(&self, readers: &[Reader]) -> Vec<Recipient> {
-        self.machines.sealed(readers, Some(&self.recovery))
+    pub fn named_recovery(&self) -> Result<&Recipient> {
+        self.recovery
+            .as_ref()
+            .with_context(|| format!("the fleet's {MANIFEST} names no recovery key"))
+    }
+
+    pub fn sealed(&self, readers: &[Reader]) -> Result<Vec<Recipient>> {
+        Ok(self.machines.sealed(readers, Some(self.named_recovery()?)))
     }
 
     pub fn options(&self) -> Vec<String> {

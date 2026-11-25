@@ -11,7 +11,7 @@ const COMMANDS: [(&str, &str, &str); 10] = [
         " <message>",
         "sign and push your edits in the fleet's folder",
     ),
-    ("recovery", "", "name or replace the fleet's recovery key"),
+    ("recovery", "", "replace the fleet's recovery key"),
     (
         "trust",
         " <host> <type> <key>...",

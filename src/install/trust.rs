@@ -6,7 +6,8 @@ use crate::{
     home::snapshot::Snapshot,
     secrets,
     trust::github,
-    trust::sign,
+    trust::recovery,
+    trust::sign::{self, Reach},
     util::cmd::As,
     util::prompt::Prompt,
 };
@@ -31,8 +32,20 @@ pub fn keys(prompt: &mut Prompt) -> Result<()> {
         };
         crate::trust::create_keys(&fleet)?;
         let command = crate::trust::trust_command(&fleet)?;
+        let vouched = fleet
+            .machines
+            .signers()?
+            .iter()
+            .any(|signer| signer.reach != Reach::Versions);
         match &command {
             None if anchored => return Ok(()),
+            _ if !vouched => {
+                println!(
+                    "No machine signs for the fleet yet, so the recovery key lets this one in."
+                );
+                recover(prompt, &fleet, anchored)?;
+                continue;
+            }
             None => println!("This machine needs a fleet commit to trust first."),
             Some(command) => {
                 println!("Run this on a machine that signs for the fleet:");
@@ -57,13 +70,19 @@ pub fn keys(prompt: &mut Prompt) -> Result<()> {
 }
 
 fn recover(prompt: &mut Prompt, fleet: &Fleet, anchored: bool) -> Result<()> {
-    let age = secrets::identity(&prompt.hidden("Recovery key:")?)?;
-    if secrets::public(&age) != fleet.recovery.key {
-        bail!(
-            "that isn't the recovery key the fleet's {} names",
-            fleet::MANIFEST
-        );
-    }
+    let age = match &fleet.recovery {
+        None => {
+            println!("The fleet has no recovery key yet:");
+            recovery::new_key(prompt)?
+        }
+        Some(named) => {
+            let age = secrets::identity(&prompt.hidden("Recovery key:")?)?;
+            if secrets::public(&age) != named.key {
+                return Err(recovery::wrong_key());
+            }
+            age
+        }
+    };
     let admin = fleet.admin();
     if !anchored {
         println!("The fleet's newest commits:");
@@ -78,6 +97,7 @@ fn recover(prompt: &mut Prompt, fleet: &Fleet, anchored: bool) -> Result<()> {
     let Some(stage) = checked::stage(prompt)? else {
         bail!("install stopped before the fleet trusted this machine");
     };
+    recovery::claim(&stage.dir, &age)?;
     let staged = Fleet::load_at(&stage.dir)?;
     let entries = crate::trust::pending(&staged)?;
     let mut keys = staged.keys().clone();

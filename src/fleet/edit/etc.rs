@@ -60,7 +60,7 @@ pub fn copy(fleet: &Fleet, rel: &Path, path: &Path, storage: Storage, seen: &See
             if !fleet.etc_open() {
                 bail!("the fleet doesn't list root's key: `mothership trust` it first");
             }
-            let list = fleet.sealed(&[Reader::Root(fleet.type_name.clone())]);
+            let list = fleet.sealed(&[Reader::Root(fleet.type_name.clone())])?;
             bytes = secrets::encrypt_for(&list, &bytes)?;
         }
         let mode = meta.permissions().mode() & 0o7777;

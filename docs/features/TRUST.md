@@ -50,7 +50,7 @@ Commands that change the fleet sign and push their own commit, after showing it:
 
 The recovery key is kept on paper. It signs anything and opens every secret ([SECRETS](SECRETS.md)). Its public halves sit in `mothership.toml`, never in a machine's file, so it works even when every machine is lost.
 
-`mothership recovery` creates it, or replaces it, and prints it once. The paper holds a single age key, and mothership derives the signing key from it, so one written key does both.
+Install creates it on a new fleet's first machine, `mothership recovery` replaces it, and each prints it once. The paper holds a single age key, and mothership derives the signing key from it, so one written key does both.
 
 ### Mothership's own updates
 

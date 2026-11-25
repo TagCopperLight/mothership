@@ -500,7 +500,7 @@ pub fn readers_list(repo: &Repo, source: &Path) -> Result<Vec<String>> {
 
 pub fn sealed_list(repo: &Repo, source: &Path) -> Result<Vec<Recipient>> {
     let readers = homes::owners(&repo.dir, source)?;
-    Ok(repo.sealed(&readers))
+    repo.sealed(&readers)
 }
 
 fn reseal(
@@ -535,7 +535,7 @@ fn reseal(
     for (file, secret) in &all {
         approvals.approve(fleet, &secret.path)?;
         let owners = homes::owners(&fleet.dir, &secret.path)?;
-        let recipients = machines.sealed(&owners, Some(&fleet.recovery));
+        let recipients = machines.sealed(&owners, Some(fleet.named_recovery()?));
         sealed.push((file, encrypt_for(&recipients, &keys.decrypt(file)?)?));
     }
     for (file, bytes) in sealed {

@@ -68,7 +68,7 @@ All of them run with `sudo`, except `version`.
 | `trust <host> <type> [--option <option>]... <name>=<key>...` | Writes a machine's file in `machines/` with its keys, encrypts again the secrets those keys open, adds the keys to GitHub, and prints the code to type on that machine. |
 | `retire <host>` | Deletes a machine's file, removes its keys from GitHub, and lists the secrets you should change. |
 | `secret <service> <name>` | Reads a value and encrypts it into the service's secrets, for the type's root keys and the recovery key. `<service>` may be `<type>/<service>`. |
-| `recovery` | Gives a new fleet its recovery key, new or typed. On a fleet that has one, asks for it, replaces it and encrypts every secret again. |
+| `recovery` | Asks for the fleet's recovery key, replaces it and encrypts every secret again. |
 | `version` | Prints mothership's version. |
 
 ## Choices
