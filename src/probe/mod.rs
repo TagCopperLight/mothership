@@ -190,13 +190,11 @@ fn now() -> Result<u64> {
 
 fn watched(git: &Git, commit: &str) -> Result<Vec<Watched>> {
     let mut watched = Vec::new();
-    for path in git
-        .out(&["ls-tree", "-r", "--name-only", commit, "--", "types"])?
-        .lines()
-    {
-        let Some(service) = services::service_of(Path::new(path)) else {
+    for path in git.files(commit, crate::fleet::TYPES)? {
+        let Some(service) = services::service_of(&path) else {
             continue;
         };
+        let path = path.to_str().expect("a service file's path is UTF-8");
         let text = git.blob(commit, path)?.context("ls-tree listed it")?;
         let images = services::parse(&text).with_context(|| format!("parsing {path}"))?;
         for (name, image) in images {

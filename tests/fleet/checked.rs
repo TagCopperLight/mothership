@@ -460,3 +460,26 @@ fn a_recovery_install_anchors_at_the_newest_commit_the_recovery_key_signed() {
     let tip = repo.commit("Pushed with a stolen login", None);
     assert_eq!(newest_signed(&git, &tip, &signer).unwrap(), signed);
 }
+
+#[test]
+fn a_scoped_signer_may_change_a_path_with_non_ascii_characters() {
+    let repo = Repo::new();
+    let (db, db_file) = repo.key("db");
+    repo.machine("db", &db, r#"["types/db"]"#);
+    let anchor = repo.commit("Signers", None);
+    repo.write("types/db/café", "au lait\n");
+    let signed = repo.commit("Add a café", Some(&db_file));
+
+    let checked = repo.check(&anchor);
+    assert!(checked.refused.is_none());
+    assert_eq!(checked.commit, signed);
+    let git = Git::at(repo.work.join(".git"));
+    assert_eq!(
+        git.changed(&anchor, &signed).unwrap(),
+        [PathBuf::from("types/db/café")]
+    );
+    assert_eq!(
+        git.files(&signed, crate::fleet::TYPES).unwrap(),
+        [PathBuf::from("types/db/café")]
+    );
+}

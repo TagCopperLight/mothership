@@ -17,9 +17,9 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use ssh_key::PrivateKey;
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -107,12 +107,35 @@ impl Git {
         self.out(&["cat-file", "blob", &name]).map(Some)
     }
 
+    pub fn files(&self, commit: &str, dir: &str) -> Result<Vec<PathBuf>> {
+        self.paths(&["ls-tree", "-r", "-z", "--name-only", commit, "--", dir])
+    }
+
+    pub fn changed(&self, from: &str, to: &str) -> Result<Vec<PathBuf>> {
+        self.paths(&[
+            "diff-tree",
+            "-r",
+            "-z",
+            "--name-only",
+            "--no-commit-id",
+            from,
+            to,
+        ])
+    }
+
+    fn paths(&self, args: &[&str]) -> Result<Vec<PathBuf>> {
+        Ok(cmd::output(self.command(args), "git", args)?
+            .split(|&byte| byte == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| PathBuf::from(OsStr::from_bytes(path)))
+            .collect())
+    }
+
     fn machines(&self, commit: &str) -> Result<Machines> {
-        let listed = self.out(&["ls-tree", "--name-only", commit, &format!("{MACHINES}/")])?;
         let mut files = Vec::new();
-        for rel in listed.lines() {
-            let text = self.out(&["cat-file", "blob", &format!("{commit}:{rel}")])?;
-            files.push((PathBuf::from(rel), text));
+        for rel in self.files(commit, MACHINES)? {
+            let text = self.out(&["cat-file", "blob", &format!("{commit}:{}", rel.display())])?;
+            files.push((rel, text));
         }
         Machines::parse(files).with_context(|| format!("reading {MACHINES}/ in {}", short(commit)))
     }
@@ -266,15 +289,7 @@ fn approve(git: &Git, base: &str, commit: &str) -> Result<Option<Signer>> {
             Some(_) => "a key the fleet doesn't list signed it",
         });
     };
-    let changed = git.out(&[
-        "diff-tree",
-        "-r",
-        "--name-only",
-        "--no-commit-id",
-        base,
-        commit,
-    ])?;
-    let changed: Vec<PathBuf> = changed.lines().map(PathBuf::from).collect();
+    let changed = git.changed(base, commit)?;
     sign::allowed(signer, &changed, &before, &after)?;
     if signer.reach == Reach::Versions {
         for path in &changed {
@@ -304,13 +319,11 @@ fn note_inherited(git: &Git, anchor: &str) -> Result<()> {
 }
 
 fn inherited(git: &Git, anchor: &str, unconfirmed: &mut Unconfirmed) -> Result<()> {
-    for path in git
-        .out(&["ls-tree", "-r", "--name-only", anchor, "--", super::TYPES])?
-        .lines()
-    {
-        let Some(service) = services::service_of(Path::new(path)) else {
+    for path in git.files(anchor, super::TYPES)? {
+        let Some(service) = services::service_of(&path) else {
             continue;
         };
+        let path = path.to_str().expect("a service file's path is UTF-8");
         let mut open = services::changed_pins(None, git.blob(anchor, path)?.as_deref());
         let history = git.out(&["rev-list", "--first-parent", anchor, "--", path])?;
         for commit in history.lines() {
@@ -349,18 +362,11 @@ fn note_unconfirmed(git: &Git, steps: &[Step]) -> Result<()> {
     }
     let mut unconfirmed = Unconfirmed::load()?;
     for step in steps {
-        let changed = git.out(&[
-            "diff-tree",
-            "-r",
-            "--name-only",
-            "--no-commit-id",
-            &step.parent,
-            &step.commit,
-        ])?;
-        for path in changed.lines() {
-            let Some(service) = services::service_of(Path::new(path)) else {
+        for path in git.changed(&step.parent, &step.commit)? {
+            let Some(service) = services::service_of(&path) else {
                 continue;
             };
+            let path = path.to_str().expect("a service file's path is UTF-8");
             let pins = services::changed_pins(
                 git.blob(&step.parent, path)?.as_deref(),
                 git.blob(&step.commit, path)?.as_deref(),
@@ -867,7 +873,7 @@ impl Stage {
         cmd::output_with_input(apply, "git", &["apply"], &patch).map(drop)
     }
 
-    fn staged(&self, args: &[&str]) -> Result<String> {
+    fn staged<S: AsRef<OsStr>>(&self, args: &[S]) -> Result<String> {
         let mut command = Git::at(GIT_DIR).command(args);
         command
             .current_dir(&self.dir)
@@ -895,12 +901,11 @@ impl Stage {
         if tree == self.kept {
             return Ok(None);
         }
-        let changed = self.staged(&["diff-tree", "-r", "--name-only", &self.accepted, &tree])?;
-        let changed: Vec<PathBuf> = changed.lines().map(PathBuf::from).collect();
+        let git = Git::at(GIT_DIR);
+        let changed = git.changed(&self.accepted, &tree)?;
         let why = match signer {
             None => Some("this machine signs nothing for the fleet".to_owned()),
             Some(signer) => {
-                let git = Git::at(GIT_DIR);
                 let before = git.machines(&self.accepted)?;
                 sign::allowed(signer, &changed, &before, &git.machines(&tree)?)
                     .err()
@@ -911,10 +916,21 @@ impl Stage {
             self.kept = tree;
             return Ok(None);
         };
-        let undone = self.staged(&["diff-tree", "-r", "--name-only", &self.kept, &tree])?;
-        let paths: Vec<&str> = undone.lines().collect();
+        let undone = git.changed(&self.kept, &tree)?;
         let source = format!("--source={}", self.kept);
-        self.staged(&[&["restore", &source, "--worktree", "--"][..], &paths].concat())?;
+        let restore = [
+            "--literal-pathspecs",
+            "restore",
+            &source,
+            "--worktree",
+            "--",
+        ];
+        let args: Vec<OsString> = restore
+            .iter()
+            .map(OsString::from)
+            .chain(undone.into_iter().map(PathBuf::into_os_string))
+            .collect();
+        self.staged(&args)?;
         self.tree()?;
         Ok(Some(why))
     }
