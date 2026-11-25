@@ -1,7 +1,8 @@
 use crate::{
-    fleet::checked::{Refused, short},
+    fleet::git::short,
     sync::item::{Change, Item, Section},
     sync::kind::Kind,
+    trust::verify::Refused,
 };
 
 pub fn refused(commit: Refused) -> Item {

@@ -1,5 +1,5 @@
 use crate::{
-    fleet::{Fleet, Unsaved},
+    fleet::{Fleet, checkout::Unsaved},
     package::Db,
     services,
     sync::item::{Change, Secret, Section},

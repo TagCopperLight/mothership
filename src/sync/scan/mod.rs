@@ -16,8 +16,9 @@ pub use print::{Columns, heading, line, print_groups, print_section};
 
 use crate::{
     fleet::{
-        self, Fleet, Member, Unsaved,
-        checked::{self, Refused},
+        Fleet, Member,
+        checkout::{self, Unsaved},
+        sync::CURRENT,
     },
     home::chezmoi,
     package::{Db, Package},
@@ -25,6 +26,7 @@ use crate::{
     sync::kind::Kind,
     sync::record::Record,
     sync::revert,
+    trust::verify::Refused,
     util::file,
     util::parallel::join,
     util::style::{Paint, Style},
@@ -231,7 +233,7 @@ impl<'a> Ships<'a> {
 }
 
 pub fn run(refused: Option<Refused>) -> Result<()> {
-    let mut report = collect(Path::new(checked::CURRENT))?;
+    let mut report = collect(Path::new(CURRENT))?;
     report.shown.extend(refused.map(commits::refused));
     let fleet = &report.fleet;
     let style = Style::stdout();
@@ -251,9 +253,9 @@ pub fn run(refused: Option<Refused>) -> Result<()> {
 }
 
 pub fn print_unsaved(fleet: &Fleet, which: Unsaved, style: Style) -> Result<()> {
-    let unsaved = fleet.unsaved(which)?;
+    let unsaved = checkout::unsaved(fleet.admin(), which)?;
     if !unsaved.is_empty() {
-        let git = format!("git -C {} status", fleet::DIR);
+        let git = format!("git -C {} status", checkout::DIR);
         println!(
             "{}  {}",
             style.paint(

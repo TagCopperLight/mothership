@@ -1,5 +1,5 @@
 use super::{DOCKERFILE, Image, Pin, REVISION_LABEL, SERVICES, registry::Client};
-use crate::fleet::checked::{self, Git};
+use crate::fleet::git::{Git, short};
 use anyhow::Result;
 
 pub fn path(service: &str) -> String {
@@ -31,14 +31,14 @@ pub fn built_from(
     if !git.is_ancestor(commit, accepted)? {
         return Ok(Some(format!(
             "{shown} was built from {}, which isn't on the fleet's main as machines accept it",
-            checked::short(commit)
+            short(commit)
         )));
     }
     let path = path(service);
     if git.blob(commit, &path)? != git.blob(accepted, &path)? {
         return Ok(Some(format!(
             "{shown} was built from {}, whose {path} isn't the current one",
-            checked::short(commit)
+            short(commit)
         )));
     }
     Ok(None)

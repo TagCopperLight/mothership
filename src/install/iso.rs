@@ -5,7 +5,7 @@ use super::{
 };
 use crate::trust::update::BINARY;
 use crate::{
-    fleet::{self, Here, Repo, checked},
+    fleet::{Here, Repo, checkout},
     package::Distro,
     system::user,
     trust::ssh,
@@ -85,7 +85,7 @@ pub fn run(flags: &Flags, prompt: &mut Prompt) -> Result<()> {
     file::link(&localtime, &answers::zoneinfo(&timezone))?;
     Here::joining(&hostname, machine).save(root)?;
     carry_ssh(root, &root_user)?;
-    let copy = file::under(root, fleet::DIR);
+    let copy = file::under(root, checkout::DIR);
     if copy.exists() {
         pull_as_owner(&copy)?;
     } else {
@@ -130,7 +130,7 @@ fn carry_ssh(root: &Path, root_user: &user::User) -> Result<()> {
 }
 
 fn pull_as_owner(copy: &Path) -> Result<()> {
-    let origin = checked::origin_of(Path::new(FLEET), || As::Root.command::<&str>("git", &[]))?;
+    let origin = checkout::origin_of(Path::new(FLEET), || As::Root.command::<&str>("git", &[]))?;
     let meta = fs::metadata(copy)?;
     let (uid, gid) = (meta.uid().to_string(), meta.gid().to_string());
     let home = tempfile::tempdir()?;
@@ -149,7 +149,7 @@ fn pull_as_owner(copy: &Path) -> Result<()> {
         .env("HOME", home.path());
         git
     };
-    let theirs = checked::origin_of(copy, as_owner)?;
+    let theirs = checkout::origin_of(copy, as_owner)?;
     if theirs != origin {
         bail!(
             "{} comes from {theirs}, not {origin}: run install with --fleet {theirs}",

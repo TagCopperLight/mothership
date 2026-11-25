@@ -1,5 +1,5 @@
 use crate::{
-    fleet::checked,
+    fleet::checkout,
     system::user::User,
     util::cmd::{self, As},
 };
@@ -78,7 +78,7 @@ pub fn repo(url: &str) -> Option<String> {
 }
 
 fn fleet_repo(admin: &User) -> Result<Option<String>> {
-    Ok(repo(&checked::origin(admin)?))
+    Ok(repo(&checkout::origin(admin)?))
 }
 
 fn listed(admin: &User, kind: Use, repo: &str) -> Result<Vec<Listed>> {

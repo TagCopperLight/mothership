@@ -1,6 +1,12 @@
-use super::{Image, Pin, Service, recipe, registry::Client};
+use super::{Image, Pin, Service, changed_pins, recipe, registry::Client, service_of};
 use crate::{
-    fleet::checked::{self, GIT_DIR, Git},
+    fleet::{
+        TYPES,
+        git::{GIT_DIR, Git},
+        sync,
+    },
+    trust::sign::{Reach, Signer},
+    trust::verify::{self, Step},
     util::file,
 };
 use anyhow::Result;
@@ -44,6 +50,71 @@ fn key(service: &str, image: &str) -> String {
     format!("{service}/{image}")
 }
 
+pub fn note_inherited(git: &Git, anchor: &str) -> Result<()> {
+    let mut unconfirmed = Unconfirmed::load()?;
+    inherited(git, anchor, &mut unconfirmed)?;
+    unconfirmed.save()
+}
+
+fn inherited(git: &Git, anchor: &str, unconfirmed: &mut Unconfirmed) -> Result<()> {
+    for path in git.files(anchor, TYPES)? {
+        let Some(service) = service_of(&path) else {
+            continue;
+        };
+        let path = path.to_str().expect("a service file's path is UTF-8");
+        let mut open = changed_pins(None, git.blob(anchor, path)?.as_deref());
+        let history = git.out(&["rev-list", "--first-parent", anchor, "--", path])?;
+        for commit in history.lines() {
+            if open.is_empty() {
+                break;
+            }
+            let parent = git.rev(&format!("{commit}^1"))?;
+            let old = match &parent {
+                Some(parent) => git.blob(parent, path)?,
+                None => None,
+            };
+            let set = changed_pins(old.as_deref(), git.blob(commit, path)?.as_deref());
+            let by_versions = match &parent {
+                Some(parent) => !matches!(
+                    verify::verify(git, parent, commit),
+                    Ok(Some(Signer {
+                        reach: Reach::Everything | Reach::Folders(_),
+                        ..
+                    })) | Ok(None)
+                ),
+                None => false,
+            };
+            let (now, later): (Vec<_>, Vec<_>) =
+                open.into_iter().partition(|pin| set.contains(pin));
+            unconfirmed.note(&service, now, by_versions);
+            open = later;
+        }
+        unconfirmed.note(&service, open, true);
+    }
+    Ok(())
+}
+
+pub fn note_unconfirmed(git: &Git, steps: &[Step]) -> Result<()> {
+    if steps.is_empty() {
+        return Ok(());
+    }
+    let mut unconfirmed = Unconfirmed::load()?;
+    for step in steps {
+        for path in git.changed(&step.parent, &step.commit)? {
+            let Some(service) = service_of(&path) else {
+                continue;
+            };
+            let path = path.to_str().expect("a service file's path is UTF-8");
+            let pins = changed_pins(
+                git.blob(&step.parent, path)?.as_deref(),
+                git.blob(&step.commit, path)?.as_deref(),
+            );
+            unconfirmed.note(&service, pins, step.reach == Reach::Versions);
+        }
+    }
+    unconfirmed.save()
+}
+
 pub type Origin<'a> = &'a dyn Fn(&str, &Image, &Pin) -> Result<Option<String>>;
 
 pub fn origin(
@@ -53,7 +124,7 @@ pub fn origin(
     pin: &Pin,
 ) -> Result<Option<String>> {
     let git = Git::at(GIT_DIR);
-    let accepted = checked::accepted(&git)?;
+    let accepted = sync::accepted(&git)?;
     recipe::built_from(&git, &accepted, registry, service, image, pin)
 }
 

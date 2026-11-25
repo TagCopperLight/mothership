@@ -1,8 +1,8 @@
 use crate::{
     fleet::edit::{self, Add, Applied, OwnerOnly},
     fleet::{
-        Fleet,
-        checked::{self, Advance, Stage},
+        Fleet, checkout,
+        stage::{self, Advance, Stage},
     },
     sync::item::{Adding, Item, Secret, Section},
     sync::record::Record,
@@ -18,7 +18,7 @@ use anyhow::Result;
 
 pub fn run() -> Result<()> {
     let mut prompt = Prompt::new();
-    let Some(mut stage) = checked::stage(&mut prompt)? else {
+    let Some(mut stage) = stage::stage(&mut prompt)? else {
         return Ok(());
     };
     let report = scan::collect(&stage.dir)?;
@@ -36,7 +36,7 @@ pub fn run() -> Result<()> {
         parts if parts.is_empty() => format!("Review on {}", host::name()?),
         parts => format!("Review on {}: {}", host::name()?, parts.join(", ")),
     };
-    let prepared = stage.prepare(&checked::author(fleet.admin())?, &message, &key)?;
+    let prepared = stage.prepare(&checkout::author(fleet.admin())?, &message, &key)?;
     if prepared.is_none() && answers.reverts.is_empty() {
         return stage.finish();
     }

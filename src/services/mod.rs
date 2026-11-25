@@ -254,7 +254,7 @@ pub fn docker_config(fleet: &Fleet) -> Result<Option<Vec<u8>>> {
     let Some(token) = token(fleet)? else {
         return Ok(None);
     };
-    let origin = crate::fleet::checked::origin(fleet.admin())?;
+    let origin = crate::fleet::checkout::origin(fleet.admin())?;
     let repo = crate::trust::github::repo(&origin).with_context(|| {
         format!("{TOKEN} is a ghcr.io token, and the fleet's origin {origin} isn't on GitHub to name its user")
     })?;

@@ -3,12 +3,16 @@ pub mod recovery;
 pub mod sign;
 pub mod ssh;
 pub mod update;
+pub mod verify;
 
 use crate::{
     fleet::{
-        self, Fleet, Machine, Repo, checked,
+        self, Fleet, Machine, Repo, TYPES,
+        git::{GIT_DIR, Git},
         homes::{self, Home, Reader},
         machines::{self, Entry, Machines, probe_name, same_key},
+        stage::STAGING,
+        sync::CHECKED,
     },
     home::chezmoi,
     probe,
@@ -469,7 +473,7 @@ impl<'p> Readers<'p> {
             return Ok(());
         }
         let shared = homes::target(&fleet.dir, source)?;
-        let Some(before) = checked::linked_when_written(&fleet.dir, &shared)? else {
+        let Some(before) = linked_when_written(&fleet.dir, &shared)? else {
             return Ok(());
         };
         let shown = shared.strip_prefix(&fleet.dir).unwrap_or(&shared).display();
@@ -489,6 +493,55 @@ impl<'p> Readers<'p> {
         }
         Ok(())
     }
+}
+
+fn linked_when_written(dir: &Path, file: &Path) -> Result<Option<Vec<Reader>>> {
+    if dir != Path::new(STAGING) {
+        return Ok(None);
+    }
+    let git = Git::at(GIT_DIR);
+    let base = git
+        .rev(CHECKED)?
+        .context("this machine has checked no commit")?;
+    let rel = file.strip_prefix(dir)?;
+    let rel_text = rel
+        .to_str()
+        .context("a shared file whose name isn't UTF-8")?;
+    let written = git.out(&["log", "-1", "--format=%H", &base, "--", rel_text])?;
+    if written.is_empty() {
+        return Ok(None);
+    }
+    let listing = git.out(&["ls-tree", "-r", "-z", &written, "--", TYPES])?;
+    let mut readers = Vec::new();
+    for entry in listing.split('\0').filter(|entry| !entry.is_empty()) {
+        let Some((meta, path)) = entry.split_once('\t') else {
+            bail!("git ls-tree printed {entry}");
+        };
+        let [mode, _, blob] = meta.split(' ').collect::<Vec<_>>()[..] else {
+            bail!("git ls-tree printed {entry}");
+        };
+        let path = Path::new(path);
+        let reader = match mode {
+            "120000" => homes::owner(Path::new(""), path).ok(),
+            _ => None,
+        };
+        let Some(reader) = reader else {
+            continue;
+        };
+        let target = git.out(&["cat-file", "blob", blob])?;
+        let mut resolved = PathBuf::new();
+        for part in path.parent().unwrap_or(path).join(target).components() {
+            match part {
+                std::path::Component::ParentDir => drop(resolved.pop()),
+                std::path::Component::Normal(name) => resolved.push(name),
+                _ => {}
+            }
+        }
+        if resolved == rel {
+            readers.push(reader);
+        }
+    }
+    Ok(Some(readers))
 }
 
 pub fn readers_list(repo: &Repo, source: &Path) -> Result<Vec<String>> {

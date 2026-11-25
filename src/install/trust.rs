@@ -1,7 +1,9 @@
 use crate::{
     fleet::{
-        self, Fleet,
-        checked::{self, Advance, Anchor, Outcome, Remote},
+        Fleet,
+        checkout::{self, DIR},
+        stage::{self, Advance, Outcome},
+        sync::{self, Anchor, Remote},
     },
     home::snapshot::Snapshot,
     secrets,
@@ -23,12 +25,12 @@ enum Next {
 }
 
 pub fn keys(prompt: &mut Prompt) -> Result<()> {
-    let admin = fleet::admin()?;
+    let admin = checkout::admin()?;
     loop {
-        let anchored = checked::anchored()?;
+        let anchored = sync::anchored()?;
         let fleet = match anchored {
             true => Fleet::load()?,
-            false => Fleet::load_at(Path::new(fleet::DIR))?,
+            false => Fleet::load_at(Path::new(DIR))?,
         };
         crate::trust::create_keys(&fleet)?;
         let command = crate::trust::trust_command(&fleet)?;
@@ -59,7 +61,7 @@ pub fn keys(prompt: &mut Prompt) -> Result<()> {
         )? {
             Some(Next::Code) => {
                 let code = prompt.line("Code:")?;
-                if let Err(e) = checked::sync_from(&admin, Remote::Fetch, Anchor::Code(&code)) {
+                if let Err(e) = sync::sync_from(&admin, Remote::Fetch, Anchor::Code(&code)) {
                     println!("That code doesn't work: {e:#}");
                 }
             }
@@ -83,13 +85,13 @@ fn recover(prompt: &mut Prompt, fleet: &Fleet, anchored: bool) -> Result<()> {
             let age = recovery::new_key(prompt)?;
             if !anchored {
                 println!("The fleet's newest commits:");
-                for line in checked::newest(admin, 5)? {
+                for line in sync::newest(admin, 5)? {
                     println!("  {line}");
                 }
                 if !prompt.confirm("Trust the fleet as it is")? {
                     bail!("install stopped before the fleet trusted this machine");
                 }
-                checked::sync_from(admin, Remote::Skip, Anchor::Tip)?;
+                sync::sync_from(admin, Remote::Skip, Anchor::Tip)?;
             }
             age
         }
@@ -100,12 +102,12 @@ fn recover(prompt: &mut Prompt, fleet: &Fleet, anchored: bool) -> Result<()> {
             }
             if !anchored {
                 let signer = Signer::recovery(&sign::public(&sign::recovery_key(&age))?)?;
-                checked::sync_from(admin, Remote::Skip, Anchor::SignedBy(&signer))?;
+                sync::sync_from(admin, Remote::Skip, Anchor::SignedBy(&signer))?;
             }
             age
         }
     };
-    let Some(stage) = checked::stage(prompt)? else {
+    let Some(stage) = stage::stage(prompt)? else {
         bail!("install stopped before the fleet trusted this machine");
     };
     recovery::claim(&stage.dir, &age)?;
@@ -128,12 +130,12 @@ fn recover(prompt: &mut Prompt, fleet: &Fleet, anchored: bool) -> Result<()> {
         bail!("install stopped before the fleet trusted this machine");
     }
     github::add(admin, &uploads)?;
-    checked::sync(admin, Remote::Skip).map(drop)
+    sync::sync(admin, Remote::Skip).map(drop)
 }
 
 fn author(fleet: &Fleet, prompt: &mut Prompt) -> Result<String> {
     let admin = fleet.admin();
-    if let Some(who) = checked::author_if_set(admin)? {
+    if let Some(who) = checkout::author_if_set(admin)? {
         return Ok(who);
     }
     if let Some(who) = fleet_author(fleet)? {
@@ -164,5 +166,5 @@ fn fleet_author(fleet: &Fleet) -> Result<Option<String>> {
         root.output(&empty, &[OsStr::new("cat"), target.as_os_str()])?,
     )?;
     let path = config.path().to_string_lossy();
-    checked::author_from(|key| checked::git_config(As::Root, &["config", "--file", &path, key]))
+    checkout::author_from(|key| checkout::git_config(As::Root, &["config", "--file", &path, key]))
 }

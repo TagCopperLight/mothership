@@ -1,16 +1,22 @@
 use super::*;
-use ssh_key::{Algorithm, LineEnding, PrivateKey, rand_core::OsRng};
-use std::os::unix::fs::PermissionsExt;
+use crate::fleet::MANIFEST;
+use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    process::Command,
+};
 use tempfile::TempDir;
 
-struct Repo {
+pub struct Repo {
     _dir: TempDir,
-    work: PathBuf,
+    pub work: PathBuf,
     keys: PathBuf,
 }
 
 impl Repo {
-    fn new() -> Repo {
+    pub fn new() -> Repo {
         let dir = TempDir::new().unwrap();
         let work = dir.path().join("fleet");
         let keys = dir.path().join("keys");
@@ -25,7 +31,7 @@ impl Repo {
         repo
     }
 
-    fn git(&self, args: &[&str]) -> String {
+    pub fn git(&self, args: &[&str]) -> String {
         let out = Command::new("git")
             .arg("-C")
             .arg(&self.work)
@@ -42,7 +48,7 @@ impl Repo {
         String::from_utf8(out.stdout).unwrap().trim().to_owned()
     }
 
-    fn key(&self, name: &str) -> (PrivateKey, PathBuf) {
+    pub fn key(&self, name: &str) -> (PrivateKey, PathBuf) {
         let key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).unwrap();
         let path = self.keys.join(name);
         fs::write(&path, key.to_openssh(LineEnding::LF).unwrap().as_bytes()).unwrap();
@@ -50,13 +56,13 @@ impl Repo {
         (key, path)
     }
 
-    fn write(&self, rel: &str, text: &str) {
+    pub fn write(&self, rel: &str, text: &str) {
         let path = self.work.join(rel);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, text).unwrap();
     }
 
-    fn commit(&self, message: &str, by: Option<&Path>) -> String {
+    pub fn commit(&self, message: &str, by: Option<&Path>) -> String {
         self.git(&["add", "-A"]);
         let signing;
         let mut args = vec!["commit", "-q", "--allow-empty", "-m", message];
@@ -84,7 +90,7 @@ impl Repo {
 }
 
 impl Repo {
-    fn machine(&self, name: &str, key: &PrivateKey, signs: &str) {
+    pub fn machine(&self, name: &str, key: &PrivateKey, signs: &str) {
         let public = sign::public(key).unwrap();
         let text = match signs {
             "versions" => format!("type = \"server\"\n[keys]\nprobe = \"{public}\"\n"),
@@ -96,7 +102,7 @@ impl Repo {
     }
 }
 
-const EVERYTHING: &str = "\"everything\"";
+pub const EVERYTHING: &str = "\"everything\"";
 
 #[test]
 fn a_chain_signed_by_listed_keys_passes_and_stops_at_the_first_unsigned_commit() {
@@ -295,29 +301,10 @@ fn a_main_that_left_the_checked_commit_stops_the_check() {
     assert!(error.to_string().starts_with("main doesn't follow"));
 }
 
-#[test]
-fn a_main_and_an_origin_that_split_stop_the_check() {
-    let repo = Repo::new();
-    let first = repo.commit("First", None);
-    let ours = repo.commit("Ours", None);
-    repo.git(&["checkout", "-q", "-b", "theirs", &first]);
-    let theirs = repo.commit("Theirs", None);
-    let git = Git::at(repo.work.join(".git"));
-    git.out(&["update-ref", MAIN, &ours]).unwrap();
-    git.out(&["update-ref", ORIGIN, &first]).unwrap();
-    assert_eq!(tips(&git).unwrap(), (ours.clone(), ours.clone()));
-    git.out(&["update-ref", ORIGIN, &theirs]).unwrap();
-    let error = tips(&git).unwrap_err().to_string();
-    assert!(
-        error.starts_with("main and origin/main have split"),
-        "{error}"
-    );
-}
+pub const OLD: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+pub const NEW: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 
-const OLD: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
-const NEW: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
-
-fn pinned(version: &str, digest: &str) -> String {
+pub fn pinned(version: &str, digest: &str) -> String {
     format!("[images.db]\nimage = \"postgres\"\nversion = \"{version}\"\ndigest = \"{digest}\"\n")
 }
 
@@ -399,66 +386,6 @@ fn a_versions_signer_changes_only_versions_and_digests_within_their_major() {
         repo.check(&digest).refused.unwrap().why,
         "box/probe can't change box, a machine of server"
     );
-}
-
-#[test]
-fn pins_a_versions_signer_sets_wait_until_a_full_signer_changes_them() {
-    let mut unconfirmed = Unconfirmed::default();
-    let pin = |version: &str| services::Pin {
-        version: version.into(),
-        digest: NEW.into(),
-    };
-    unconfirmed.note("server/db", vec![("db".into(), pin("16.5.0"))], true);
-    assert!(unconfirmed.waits("server/db", "db", &pin("16.5.0")));
-    assert!(!unconfirmed.waits("server/db", "db", &pin("16.4.0")));
-    unconfirmed.note("server/db", vec![("db".into(), pin("16.6.0"))], false);
-    assert_eq!(unconfirmed, Unconfirmed::default());
-}
-
-#[test]
-fn a_new_machine_still_checks_the_pins_the_probe_set_before_its_anchor() {
-    let repo = Repo::new();
-    let (laptop, laptop_file) = repo.key("laptop");
-    let (probe, probe_file) = repo.key("probe");
-    repo.machine("laptop", &laptop, EVERYTHING);
-    repo.machine("box", &probe, "versions");
-    let service = "types/server/services/db/service.toml";
-    repo.write(service, &pinned("16.4.3", OLD));
-    repo.commit("Fleet", None);
-    repo.write(service, &pinned("16.5.0", NEW));
-    repo.commit("Probe", Some(&probe_file));
-    repo.write("types/server/system.toml", "packages = []\n");
-    let tip = repo.commit("Unrelated", Some(&laptop_file));
-    let git = Git::at(repo.work.join(".git"));
-    let pin = |version: &str, digest: &str| services::Pin {
-        version: version.into(),
-        digest: digest.into(),
-    };
-    let mut unconfirmed = Unconfirmed::default();
-    inherited(&git, &tip, &mut unconfirmed).unwrap();
-    assert!(unconfirmed.waits("server/db", "db", &pin("16.5.0", NEW)));
-
-    repo.write(service, &pinned("16.6.0", NEW));
-    let full = repo.commit("By hand", Some(&laptop_file));
-    let mut unconfirmed = Unconfirmed::default();
-    inherited(&git, &full, &mut unconfirmed).unwrap();
-    assert_eq!(unconfirmed, Unconfirmed::default());
-}
-
-#[test]
-fn a_recovery_install_anchors_at_the_newest_commit_the_recovery_key_signed() {
-    let repo = Repo::new();
-    let (recovery, recovery_file) = repo.key("recovery");
-    let signer = Signer::recovery(&sign::public(&recovery).unwrap()).unwrap();
-    let git = Git::at(repo.work.join(".git"));
-    let unsigned = repo.commit("Unsigned", None);
-    assert!(newest_signed(&git, &unsigned, &signer).is_err());
-    let signed = repo.commit("Signed", Some(&recovery_file));
-    let (other, other_file) = repo.key("other");
-    repo.machine("other", &other, EVERYTHING);
-    repo.commit("Signed by another key", Some(&other_file));
-    let tip = repo.commit("Pushed with a stolen login", None);
-    assert_eq!(newest_signed(&git, &tip, &signer).unwrap(), signed);
 }
 
 #[test]

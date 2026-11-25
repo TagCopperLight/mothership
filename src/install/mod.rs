@@ -8,7 +8,7 @@ mod repo;
 mod trust;
 
 use crate::{
-    fleet::{self, Fleet, Here, Repo, machines::Machines},
+    fleet::{self, Fleet, Here, Repo, checkout, machines::Machines},
     package::{self, Distro},
     services,
     sync::apply::{self, ServiceManager},
@@ -60,7 +60,7 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
             &started
         }
     };
-    let dir = Path::new(fleet::DIR);
+    let dir = Path::new(checkout::DIR);
     let machine = Here::load()?.machine(&Machines::load(dir)?)?;
     let members = Repo::for_machine(dir.into(), &machine)?.profiles;
     for member in &members {
@@ -72,7 +72,7 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
         let names: Vec<String> = members.iter().map(|m| m.name.clone()).collect();
         adopt(flags, prompt, &names, dir)?;
     }
-    take_carried_key(&fleet::admin()?)?;
+    take_carried_key(&checkout::admin()?)?;
 
     let first_start = !chroot && boot::first_start();
     if first_start {
@@ -92,7 +92,7 @@ fn here(flags: &Flags, prompt: &mut Prompt, chroot: bool) -> Result<()> {
         true => ServiceManager::Missing,
         false => ServiceManager::Running,
     })?;
-    fleet::require_admin_sudo()?;
+    checkout::require_admin_sudo()?;
     if distro == Distro::Debian {
         let listed = Fleet::load()?.listed_packages();
         package::keep_only(listed, &mut || match flags.remove_unlisted {
@@ -114,7 +114,7 @@ fn start_server(flags: &Flags, prompt: &mut Prompt, distro: Distro) -> Result<St
     bootstrap::chezmoi(distro)?;
     let hostname = answers::hostname(flags, prompt)?;
     let admin = answers::admin_name(flags, prompt)?;
-    let dir = Path::new(fleet::DIR);
+    let dir = Path::new(checkout::DIR);
     if !dir.join(".git").exists() {
         let url = answers::fleet_url(flags, prompt)?;
         let owner = match user::by_name(&admin)? {

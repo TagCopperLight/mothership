@@ -4,10 +4,11 @@ pub mod state;
 pub mod unit;
 
 use crate::{
-    fleet::checked::{self, GIT_DIR, Git},
+    fleet::git::{GIT_DIR, Git, short},
     services::{self, recipe, registry::Client},
     trust::github,
     trust::sign,
+    trust::verify,
     util::file,
     util::http::{Curl, Http, Request},
 };
@@ -74,11 +75,11 @@ fn round(setting: &Setting, state: &mut State) -> Result<()> {
     ])?;
     let tip = git.rev(TIP)?.context("the fleet has no main")?;
     let anchor = root_checked()?;
-    let checked = checked::check(&git, &anchor, &tip)?;
+    let checked = verify::check(&git, &anchor, &tip)?;
     if let Some(refused) = checked.refused {
         bail!(
             "machines refuse {} \"{}\" on the fleet's main, so the probe waits: {}",
-            checked::short(&refused.commit),
+            short(&refused.commit),
             refused.subject,
             refused.why
         );
@@ -147,7 +148,7 @@ fn round(setting: &Setting, state: &mut State) -> Result<()> {
         &setting.fleet,
         &format!("{commit}:refs/heads/main"),
     ])?;
-    println!("Pushed {}", checked::short(&commit));
+    println!("Pushed {}", short(&commit));
     failed()
 }
 
@@ -275,7 +276,7 @@ fn commit(
         lines.join("\n")
     );
     let who = format!("{host}/probe <probe@{host}>");
-    checked::signed_commit(git, &tree, base, accepted, &who, &message, key)
+    verify::signed_commit(git, &tree, base, accepted, &who, &message, key)
 }
 
 #[cfg(test)]

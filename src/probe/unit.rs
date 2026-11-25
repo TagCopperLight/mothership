@@ -1,6 +1,6 @@
 use super::state::State;
 use crate::{
-    fleet::{Fleet, checked},
+    fleet::{Fleet, checkout},
     services::{self, Action},
     sync::item::{Change, Item, Section},
     sync::kind::Kind,
@@ -55,7 +55,7 @@ fn service(fleet: &Fleet) -> Result<String> {
         let path = key_path(LOGINS);
         credentials.push_str(&format!("LoadCredential={LOGINS}:{}\n", path.display()));
     }
-    let origin = checked::origin(fleet.admin())?;
+    let origin = checkout::origin(fleet.admin())?;
     Ok(format!(
         "[Unit]\nDescription=mothership's probe, which keeps the fleet's images up to date\n\
          After=network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\n\

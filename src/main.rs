@@ -16,8 +16,10 @@ mod util;
 
 use anyhow::{Context, bail};
 use fleet::{
-    Fleet,
-    checked::{self, Advance, Outcome, Remote},
+    Fleet, checkout,
+    git::short,
+    stage::{self, Advance, Outcome},
+    sync::{self as fleet_sync, CURRENT, Remote},
 };
 use std::process::ExitCode;
 use util::prompt::Prompt;
@@ -109,7 +111,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         package::aur::NoPassword::remove_leftover()?;
     }
     if !matches!(command, Command::Install) {
-        fleet::require_admin_sudo()?;
+        checkout::require_admin_sudo()?;
     }
     let remote = match command {
         Command::Apply | Command::Review | Command::Commit => Some(Remote::Fetch),
@@ -123,7 +125,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         _ => Some(Remote::Skip),
     };
     let refused = match remote {
-        Some(remote) => checked::sync(&fleet::admin()?, remote)?.refused,
+        Some(remote) => fleet_sync::sync(&checkout::admin()?, remote)?.refused,
         None => None,
     };
     if let Some(commit) = &refused
@@ -132,7 +134,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         println!(
             "This machine refuses {} \"{}\" of {}, which claims to be by {}, and what follows \
              it: {}",
-            checked::short(&commit.commit),
+            short(&commit.commit),
             commit.subject,
             commit.date,
             commit.author,
@@ -147,13 +149,13 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         (Command::Recovery, []) => trust::recovery::change(&mut Prompt::new()),
         (Command::Commit, [message]) => {
             let mut prompt = Prompt::new();
-            let admin = fleet::admin()?;
-            let Some(stage) = checked::stage(&mut prompt)? else {
+            let admin = checkout::admin()?;
+            let Some(stage) = stage::stage(&mut prompt)? else {
                 return Ok(());
             };
             stage.take_checkout(&admin)?;
             let key = trust::sign::require_machine_key()?;
-            let who = checked::author(&admin)?;
+            let who = checkout::author(&admin)?;
             let outcome =
                 stage.commit(&admin, &who, message, &key, &mut prompt, Advance::KeepEdits)?;
             if let Outcome::Unchanged(_) = outcome {
@@ -181,8 +183,8 @@ fn run(args: &[String]) -> anyhow::Result<()> {
                 Outcome::Declined => return Ok(()),
                 Outcome::Unchanged(commit) | Outcome::Pushed(commit) => commit,
             };
-            trust::github::add(&fleet::admin()?, &uploads)?;
-            println!("On {host}, type this code: {}", checked::short(&code));
+            trust::github::add(&checkout::admin()?, &uploads)?;
+            println!("On {host}, type this code: {}", short(&code));
             Ok(())
         }
         (Command::Retire, [host]) => {
@@ -193,12 +195,12 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             match outcome {
                 Outcome::Declined => Ok(()),
                 Outcome::Unchanged(_) | Outcome::Pushed(_) => {
-                    trust::github::remove(&fleet::admin()?, host)
+                    trust::github::remove(&checkout::admin()?, host)
                 }
             }
         }
         (Command::Secret, [service, name]) => {
-            let dir = std::path::Path::new(checked::CURRENT);
+            let dir = std::path::Path::new(CURRENT);
             let machine = fleet::Here::load()?.machine(&fleet::machines::Machines::load(dir)?)?;
             let wanted = fleet::edit::secret::Wanted::parse(service, name, &machine.device_type)?;
             let message = format!("Set {} of {}", wanted.name, wanted.shown());
@@ -217,12 +219,12 @@ fn edit_fleet(
 ) -> anyhow::Result<Outcome> {
     let key = trust::sign::require_machine_key()?;
     let mut prompt = Prompt::new();
-    let Some(stage) = checked::stage(&mut prompt)? else {
+    let Some(stage) = stage::stage(&mut prompt)? else {
         return Ok(Outcome::Declined);
     };
     let fleet = Fleet::load_at(&stage.dir)?;
     command(&fleet, &mut prompt)?;
-    let who = checked::author(fleet.admin())?;
+    let who = checkout::author(fleet.admin())?;
     stage.commit(
         fleet.admin(),
         &who,

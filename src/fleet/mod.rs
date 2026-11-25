@@ -7,7 +7,6 @@ use crate::{
     sync::kind::Level,
     system::hardware::{self, Hardware},
     system::user::{self, User},
-    util::cmd::{self, As},
     util::style,
     util::walk,
 };
@@ -17,17 +16,21 @@ use std::{
     collections::BTreeSet,
     fs,
     ops::Deref,
-    os::unix::fs::{MetadataExt, PermissionsExt},
+    os::unix::fs::PermissionsExt,
     path::{Component, Path, PathBuf},
 };
 
-pub mod checked;
+pub mod checkout;
 mod config;
 pub mod edit;
+pub mod git;
 pub mod homes;
 mod logins;
 pub mod machines;
 mod manifest;
+mod recipients;
+pub mod stage;
+pub mod sync;
 
 pub use manifest::{MANIFEST, Manifest, Pin};
 
@@ -37,14 +40,6 @@ pub use config::{
 };
 use homes::Reader;
 use machines::Machines;
-
-pub const DIR: &str = "/var/lib/mothership/fleet";
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Unsaved {
-    Everything,
-    Uncommitted,
-}
 
 pub struct Repo {
     pub dir: PathBuf,
@@ -130,40 +125,15 @@ pub const ETC_DIR: &str = "etc";
 const IGNORE: &str = "ignore.txt";
 pub const USERS: &str = "users";
 
-pub fn admin() -> Result<User> {
-    let meta = fs::metadata(DIR)
-        .with_context(|| format!("reading {DIR}: clone the fleet there as its admin"))?;
-    user::by_uid(meta.uid())
-}
-
-pub fn require_admin_sudo() -> Result<()> {
-    require_sudo(&admin()?)
-}
-
-pub fn require_sudo(admin: &User) -> Result<()> {
-    cmd::bytes(
-        As::Root,
-        "sudo",
-        &["-n", "-l", "-U", &admin.name, "/bin/sh"],
-    )
-    .map(drop)
-    .with_context(|| {
-        format!(
-            "{} can't use sudo, so they must not own the fleet root applies",
-            admin.name
-        )
-    })
-}
-
 impl Fleet {
     pub fn load() -> Result<Self> {
-        Fleet::load_at(Path::new(checked::CURRENT))
+        Fleet::load_at(Path::new(sync::CURRENT))
     }
 
     pub fn load_at(dir: &Path) -> Result<Self> {
         let here = Here::load()?;
         let machine = here.machine(&Machines::load(dir)?)?;
-        let admin = admin()?;
+        let admin = checkout::admin()?;
         let repo = Repo::for_machine(dir.to_path_buf(), &machine)?;
         let mut keys = Keys::default();
         let mut root_keys = Keys::default();
@@ -252,31 +222,6 @@ impl Fleet {
             helper: self.system.aur_helper,
             admin: &self.admin,
         }
-    }
-
-    pub fn unsaved(&self, which: Unsaved) -> Result<Vec<String>> {
-        let args = ["-C", DIR, "status", "--porcelain=v2", "--branch"];
-        let status = cmd::stdout(As::User(&self.admin), "git", &args)?;
-        let changed = status.lines().filter(|l| !l.starts_with('#')).count();
-        let ahead: usize = status
-            .lines()
-            .find_map(|l| l.strip_prefix("# branch.ab +"))
-            .and_then(|ab| ab.split_whitespace().next())
-            .map(str::parse)
-            .transpose()?
-            .unwrap_or(0);
-        let mut unsaved = Vec::new();
-        let everything = which == Unsaved::Everything;
-        if everything && !status.lines().any(|l| l.starts_with("# branch.upstream ")) {
-            unsaved.push("no upstream branch to push to".to_owned());
-        }
-        if changed > 0 {
-            unsaved.push(format!("{} not committed", style::count(changed, "change")));
-        }
-        if everything && ahead > 0 {
-            unsaved.push(format!("{} not pushed", style::count(ahead, "commit")));
-        }
-        Ok(unsaved)
     }
 }
 
@@ -653,12 +598,12 @@ fn chezmoi_config(repo: &Repo, profile: &Profile, user: &User) -> chezmoi::Chezm
         let rel = path
             .strip_prefix(&repo.dir)
             .expect("a profile lives in its fleet");
-        Path::new(checked::CURRENT).join(rel)
+        Path::new(sync::CURRENT).join(rel)
     };
     chezmoi::ChezmoiConfig {
         source: published(profile.home()),
         identity: secrets::key_path(user),
-        recipients: checked::list_path(&repo.type_name, &profile.name),
+        recipients: recipients::list_path(&repo.type_name, &profile.name),
         profile: repo.type_name.clone(),
         user: profile.name.clone(),
         logins: profile.logins.clone(),

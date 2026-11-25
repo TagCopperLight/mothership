@@ -1,7 +1,8 @@
 use crate::{
     fleet::{
-        self, Fleet, MANIFEST, Manifest,
-        checked::{self, Advance, Outcome, Remote},
+        Fleet, MANIFEST, Manifest, checkout,
+        stage::{self, Advance, Outcome},
+        sync::{self, Remote},
     },
     secrets::{self, Keys},
     trust,
@@ -62,9 +63,9 @@ fn name(path: &Path, key: &x25519::Identity) -> Result<()> {
 }
 
 pub fn change(prompt: &mut Prompt) -> Result<()> {
-    let admin = fleet::admin()?;
-    checked::sync(&admin, Remote::Fetch)?;
-    let Some(stage) = checked::stage(prompt)? else {
+    let admin = checkout::admin()?;
+    sync::sync(&admin, Remote::Fetch)?;
+    let Some(stage) = stage::stage(prompt)? else {
         return Ok(());
     };
     let old = secrets::identity(&prompt.hidden("The fleet's recovery key now:")?)?;
@@ -84,7 +85,7 @@ pub fn change(prompt: &mut Prompt) -> Result<()> {
     trust::reseal_everything(&fleet, &keys, prompt)?;
     let key = sign::recovery_key(&old);
     let message = "Change the recovery key";
-    let who = checked::author(&admin)?;
+    let who = checkout::author(&admin)?;
     if let Outcome::Pushed(_) = stage.commit(&admin, &who, message, &key, prompt, Advance::Merge)? {
         println!("The old recovery key opens what git history keeps, so change those secrets too.");
     }
