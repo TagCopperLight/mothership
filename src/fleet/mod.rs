@@ -386,7 +386,7 @@ impl Repo {
         let ignore = Ignore::load(&type_dir.join(IGNORE), Level::Machine)?;
         let machines = Machines::load(&dir)?;
         machines.check(&dir)?;
-        let profiles = profiles(&dir, &machines, &type_dir.join(USERS))?;
+        let profiles = profiles(&dir, &machines, &type_dir)?;
         let services = services::load(&type_dir)?;
         Ok(Repo {
             dir,
@@ -498,6 +498,24 @@ pub fn check_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn users(type_dir: &Path) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    for path in walk::children(&type_dir.join(USERS))? {
+        if !path.is_dir() {
+            bail!(
+                "{} isn't a folder: {USERS}/ holds one folder per user",
+                path.display()
+            );
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .with_context(|| format!("{} is not a user name", path.display()))?;
+        names.push(name.to_owned());
+    }
+    Ok(names)
+}
+
 pub fn type_dir(fleet_dir: &Path, name: &str) -> PathBuf {
     fleet_dir.join(TYPES).join(name)
 }
@@ -557,14 +575,10 @@ impl Profile {
     }
 }
 
-fn profiles(fleet_dir: &Path, machines: &Machines, dir: &Path) -> Result<Vec<Profile>> {
+fn profiles(fleet_dir: &Path, machines: &Machines, type_dir: &Path) -> Result<Vec<Profile>> {
     let mut profiles = Vec::new();
-    for dir in walk::children(dir)? {
-        let name = dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .with_context(|| format!("{} is not a user name", dir.display()))?
-            .to_owned();
+    for name in users(type_dir)? {
+        let dir = type_dir.join(USERS).join(&name);
         let path = dir.join(USER_TOML);
         let config: UserConfig = read_toml(&path)?;
         profiles.push(Profile {
@@ -598,8 +612,9 @@ pub fn check_loads(fleet_dir: &Path) -> Result<()> {
 pub fn check_logins(fleet_dir: &Path) -> Result<()> {
     let machines = Machines::load(fleet_dir)?;
     for type_name in types(fleet_dir)? {
-        for dir in walk::children(&type_dir(fleet_dir, &type_name).join(USERS))? {
-            let path = dir.join(USER_TOML);
+        let type_dir = type_dir(fleet_dir, &type_name);
+        for user in users(&type_dir)? {
+            let path = type_dir.join(USERS).join(user).join(USER_TOML);
             let config: UserConfig = read_toml(&path)?;
             let shown = path.strip_prefix(fleet_dir).unwrap_or(&path);
             logins::resolve(fleet_dir, &machines, shown, &config.ssh_from)?;

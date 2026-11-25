@@ -1,4 +1,4 @@
-use super::{ETC_DIR, TYPES, USERS, type_dir, types};
+use super::{ETC_DIR, TYPES, USERS, type_dir, types, users};
 use crate::{home::chezmoi, secrets, services, util::walk};
 use anyhow::{Context, Result, bail};
 use std::{
@@ -72,10 +72,10 @@ pub fn readers(fleet_dir: &Path) -> Result<Vec<Reader>> {
     let mut all = Vec::new();
     for type_name in types(fleet_dir)? {
         all.push(Reader::Root(type_name.clone()));
-        for dir in walk::children(&type_dir(fleet_dir, &type_name).join(USERS))? {
+        for user in users(&type_dir(fleet_dir, &type_name))? {
             all.push(Reader::Home(Home {
                 type_name: type_name.clone(),
-                user: dir.file_name().unwrap_or_default().to_string_lossy().into(),
+                user,
             }));
         }
     }
@@ -203,23 +203,13 @@ pub fn target(fleet_dir: &Path, link: &Path) -> Result<PathBuf> {
 }
 
 fn all(fleet_dir: &Path) -> Result<Vec<Home>> {
-    let mut homes = Vec::new();
-    for type_name in types(fleet_dir)? {
-        for dir in walk::children(&type_dir(fleet_dir, &type_name).join(USERS))? {
-            if !dir.is_dir() {
-                continue;
-            }
-            let user = dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .with_context(|| format!("{} is not a user name", dir.display()))?;
-            homes.push(Home {
-                type_name: type_name.clone(),
-                user: user.to_owned(),
-            });
-        }
-    }
-    Ok(homes)
+    Ok(readers(fleet_dir)?
+        .into_iter()
+        .filter_map(|reader| match reader {
+            Reader::Home(home) => Some(home),
+            Reader::Root(_) => None,
+        })
+        .collect())
 }
 
 fn links(fleet_dir: &Path) -> Result<Vec<PathBuf>> {

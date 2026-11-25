@@ -194,3 +194,19 @@ fn a_name_is_one_plain_folder_name() {
         assert!(check_name(name).is_err(), "{name}");
     }
 }
+
+#[test]
+fn a_stray_file_among_the_users_stops_the_fleet() {
+    let dir = checkout(SYSTEM);
+    let users = dir.path().join("types/workstation/users");
+    fs::create_dir_all(users.join("me")).unwrap();
+    fs::write(users.join("me").join(USER_TOML), "").unwrap();
+    load(&dir, &[], &Hardware::default()).unwrap();
+    fs::write(users.join("README.md"), "").unwrap();
+    refused(
+        &dir,
+        &[],
+        &Hardware::default(),
+        "README.md isn't a folder: users/ holds one folder per user",
+    );
+}
