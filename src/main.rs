@@ -198,7 +198,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             }
         }
         (Command::Secret, [service, name]) => {
-            let dir = std::path::Path::new(fleet::DIR);
+            let dir = std::path::Path::new(checked::CURRENT);
             let machine = fleet::Here::load()?.machine(&fleet::machines::Machines::load(dir)?)?;
             let wanted = fleet::edit::secret::Wanted::parse(service, name, &machine.device_type)?;
             let message = format!("Set {} of {}", wanted.name, wanted.shown());
