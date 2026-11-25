@@ -73,6 +73,12 @@ fn recover(prompt: &mut Prompt, fleet: &Fleet, anchored: bool) -> Result<()> {
     let admin = fleet.admin();
     let age = match &fleet.recovery {
         None => {
+            if !fleet.machines.signers()?.is_empty() {
+                bail!(
+                    "the fleet names no recovery key, and machines would refuse a key made now: \
+                     type the code `sudo mothership trust` prints on a machine that signs"
+                );
+            }
             println!("The fleet has no recovery key yet:");
             let age = recovery::new_key(prompt)?;
             if !anchored {

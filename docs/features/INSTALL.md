@@ -82,7 +82,7 @@ sequenceDiagram
     N->>G: trusts the fleet from that commit on
 ```
 
-With no trusted machine at hand, the owner types the recovery key instead: install trusts the fleet from the newest commit on `main` the recovery key signed, and checks every commit after it like any machine does. It shows the commits it refuses and asks whether to vouch for them or drop them, then adds its own keys in a commit the recovery key signs. When the recovery key signed no commit, install says so and stops. On a new fleet, no machine signs yet, so install goes straight to the recovery key, and makes it when the fleet has none: it shows the fleet's newest commits, and once the owner accepts them, the same commit names the new key in `mothership.toml`.
+With no trusted machine at hand, the owner types the recovery key instead: install trusts the fleet from the newest commit on `main` the recovery key signed, and checks every commit after it like any machine does. It shows the commits it refuses and asks whether to vouch for them or drop them, then adds its own keys in a commit the recovery key signs. When the recovery key signed no commit, install says so and stops. On a new fleet, no machine signs yet, so install goes straight to the recovery key, and makes it when the fleet has none. Only such a fleet may get its recovery key at install, since machines that sign would refuse a commit signed by a key the fleet never named. When install makes the key, it first shows the fleet's newest commits, and once the owner accepts them, the commit that trusts the machine names the key in `mothership.toml`.
 
 ### Failures
 

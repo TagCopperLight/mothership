@@ -8,6 +8,19 @@ $ mkdir ~/new && git -C /var/lib/mothership/fleet archive HEAD types | tar -x -C
 > git -C ~/new init -q -b main && git -C ~/new add -A &&
 > git -C ~/new -c user.name=Me -c user.email=me@example.com commit -q -m "A new fleet" &&
 > git clone -q --bare ~/new ~/fleet.git
+$ mkdir ~/signed && git -C /var/lib/mothership/fleet archive HEAD types machines | tar -x -C ~/signed &&
+> git -C ~/signed init -q -b main && git -C ~/signed add -A &&
+> git -C ~/signed -c user.name=Me -c user.email=me@example.com commit -q -m "A signed fleet" &&
+> git clone -q --bare ~/signed ~/signed.git
+$ sudo rm -r /var/lib/mothership /etc/mothership
+```
+
+Only a fleet where no machine signs may make its recovery key at install: on any other, machines
+would refuse the commit it signs.
+
+```console
+$ echo r | sudo mothership install --admin me --fleet /home/me/signed.git --type workstation --hostname box 2>&1 | tail -1
+Error: the fleet names no recovery key, and machines would refuse a key made now: type the code `sudo mothership trust` prints on a machine that signs
 $ sudo rm -r /var/lib/mothership /etc/mothership
 ```
 
