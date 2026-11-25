@@ -24,16 +24,34 @@ pub enum ServiceManager {
 
 pub fn run() -> Result<()> {
     let mut prompt = Prompt::new();
-    if let Outcome::Declined = update::follow_fleet(&mut || prompt.confirm("Update"))? {
-        println!("Apply stops: the fleet's changes may need that version.");
+    let Some(fleet) = follow(
+        &mut |question| prompt.confirm(question),
+        ServiceManager::Running,
+    )?
+    else {
         return Ok(());
-    }
-    while round(&mut || prompt.confirm("Apply"), ServiceManager::Running)? {}
-    let fleet = Fleet::load()?;
+    };
     scan::print_unsaved(&fleet, Unsaved::Uncommitted, Style::stdout())?;
+    services_settled()
+}
+
+pub fn unasked(service_manager: ServiceManager) -> Result<()> {
+    follow(&mut |_| Ok(true), service_manager).map(drop)
+}
+
+fn follow(
+    ask: &mut dyn FnMut(&str) -> Result<bool>,
+    service_manager: ServiceManager,
+) -> Result<Option<Fleet>> {
+    if let Outcome::Declined = update::follow_fleet(&mut || ask("Update"))? {
+        println!("Apply stops: the fleet's changes may need that version.");
+        return Ok(None);
+    }
+    while round(&mut || ask("Apply"), service_manager)? {}
+    let fleet = Fleet::load()?;
     usage::keep_completion()?;
     trust::create_keys(&fleet)?;
-    services_settled()
+    Ok(Some(fleet))
 }
 
 fn services_settled() -> Result<()> {
@@ -42,13 +60,6 @@ fn services_settled() -> Result<()> {
         anyhow::bail!("these services need attention:\n{}", problems.join("\n"));
     }
     Ok(())
-}
-
-pub fn unasked(service_manager: ServiceManager) -> Result<()> {
-    update::follow_fleet(&mut || Ok(true))?;
-    while round(&mut || Ok(true), service_manager)? {}
-    usage::keep_completion()?;
-    trust::create_keys(&Fleet::load()?)
 }
 
 fn round(
