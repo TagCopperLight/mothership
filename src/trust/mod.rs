@@ -595,7 +595,7 @@ fn secrets_of(fleet: &Fleet, reader: &Reader) -> Result<Vec<Secret>> {
 fn home_secret(rel: &Path) -> Option<String> {
     let secret = match rel.starts_with(homes::SECRETS) {
         true => rel.to_string_lossy().ends_with(AGE),
-        false => chezmoi::target_of(rel).1,
+        false => chezmoi::target_of(rel).encrypted,
     };
     secret.then(|| homes::shown(rel))
 }

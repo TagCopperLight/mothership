@@ -16,7 +16,7 @@ types/workstation/
     └── ignore.txt
 ```
 
-A home links each shared file it wants, one link per file, and only the homes linking a file get it. Scan reports a shared file no home links. An encrypted file in a type's `etc/` or `services/` can link a shared secret too, which root then opens. A template reads a secret with `{{ include ".secrets/api-key.age" | decrypt }}`, and can read `.profile` (the type) and `.user`. With `ssh_from = ["workstation", "server/dev"]` in `user.toml`, `.authorized_keys` lists the SSH keys of every workstation user and of dev on every server, for an `authorized_keys.tmpl` to write.
+A home links each shared file it wants, one link per file, and only the homes linking a file get it. Scan reports a shared file no home links. An encrypted file in a type's `etc/` or `services/` can link a shared secret too, which root then opens. A template reads a secret with `{{ include ".secrets/api-key.age" | decrypt }}`, and then needs `private_` in its name. It can read `.profile` (the type) and `.user`. With `ssh_from = ["workstation", "server/dev"]` in `user.toml`, `.authorized_keys` lists the SSH keys of every workstation user and of dev on every server, for an `authorized_keys.tmpl` to write.
 
 ```toml
 packages = ["base", "linux", "git"]

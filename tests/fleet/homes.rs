@@ -189,3 +189,32 @@ fn root_links_only_secrets() {
     let error = check(dir.path()).unwrap_err().to_string();
     assert!(error.contains("root links only shared secrets"), "{error}");
 }
+
+#[test]
+fn a_secret_in_a_home_must_be_private() {
+    let dir = fleet();
+    let home = dir.path().join(TAG);
+    fs::write(home.join("encrypted_private_dot_token.age"), "x").unwrap();
+    fs::create_dir(home.join(SECRETS)).unwrap();
+    fs::write(home.join(SECRETS).join("key.age"), "x").unwrap();
+    let reads = r#"{{ include ".secrets/key.age" | decrypt }}"#;
+    fs::write(home.join("private_dot_proxy.tmpl"), reads).unwrap();
+    fs::write(home.join("dot_plain.tmpl"), "{{ .user }}").unwrap();
+    check(dir.path()).unwrap();
+
+    for (name, text, what) in [
+        ("encrypted_dot_netrc.age", "x", "is a secret"),
+        ("dot_proxy.tmpl", reads, "reads a secret"),
+    ] {
+        let path = home.join(name);
+        fs::write(&path, text).unwrap();
+        let error = check(dir.path()).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            format!(
+                "{TAG}/{name} {what}, so only its owner may read it: add `private_` to its name"
+            )
+        );
+        fs::remove_file(path).unwrap();
+    }
+}

@@ -262,7 +262,8 @@ Nothing to apply.
 ```
 
 Back on the laptop, a template takes a secret value from my home's `.secrets/` folder, which
-chezmoi writes nowhere. The laptop trusts the desktop, which may sign everything, and every
+chezmoi writes nowhere. Commit refuses it until its name says only I may read the result. The
+laptop trusts the desktop, which may sign everything, and every
 secret its keys read opens for it.
 
 ```console
@@ -273,9 +274,14 @@ $ printf 'name = "machine"\n' | sudo tee /etc/mothership/machine.toml >/dev/null
 $ cd /var/lib/mothership/fleet/types/workstation/users/me/home && mkdir .secrets &&
 > echo "PROXY-SECRET" | chezmoi encrypt > .secrets/proxy-key.age &&
 > echo '{{ include ".secrets/proxy-key.age" | decrypt | trim }}' > dot_proxy.tmpl &&
+> echo y | sudo mothership commit "Read the proxy key"
+Error: machines couldn't load the fleet after this change, so nothing changed: loading the server type: types/workstation/users/me/home/dot_proxy.tmpl reads a secret, so only its owner may read it: add `private_` to its name
+[exit 1]
+$ cd /var/lib/mothership/fleet/types/workstation/users/me/home && mv dot_proxy.tmpl private_dot_proxy.tmpl &&
 > echo y | sudo mothership commit "Read the proxy key" >/dev/null
-$ echo y | sudo mothership apply >/dev/null && cat ~/.proxy
+$ echo y | sudo mothership apply >/dev/null && cat ~/.proxy && stat -c '%a' ~/.proxy
 PROXY-SECRET
+600
 $ printf '*\ny\n' | sudo mothership trust desktop workstation root="$(sudo grep -o 'age1.*' /root/desktop.txt)" \
 > me="$(grep -o 'age1.*' ~/desktop.txt)" me="$(cat ~/.ssh/id_ed25519.pub)" \
 > signing="$(sudo ssh-keygen -y -f /root/desktop-signing)"
@@ -329,7 +335,7 @@ Commit and push [y/N]? y
 Committed [0-9a-f]{12} Retire machine (re)
 $ ls /var/lib/mothership/fleet/machines
 desktop.toml
-$ chezmoi execute-template < /var/lib/mothership/fleet/types/workstation/users/me/home/dot_proxy.tmpl
+$ chezmoi execute-template < /var/lib/mothership/fleet/types/workstation/users/me/home/private_dot_proxy.tmpl
 PROXY-SECRET
 $ find /var/lib/mothership/fleet -not -user me | wc -l
 0

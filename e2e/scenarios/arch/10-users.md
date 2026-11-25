@@ -173,8 +173,8 @@ On machine, type this code: [0-9a-f]{12} (re)
 $ cd /var/lib/mothership/fleet && mkdir -p shared/.secrets types/workstation/users/{me,dev}/home/.secrets &&
 > echo "SHARED-TOKEN" | chezmoi encrypt > shared/.secrets/token.age &&
 > for user in me dev; do ln -s ../../../../../../shared/.secrets/token.age types/workstation/users/$user/home/.secrets/token.age; done &&
-> echo '{{ include ".secrets/token.age" | decrypt | trim }}' > shared/dot_token.tmpl &&
-> ln -s ../../../../../shared/dot_token.tmpl types/workstation/users/dev/home/dot_token.tmpl &&
+> echo '{{ include ".secrets/token.age" | decrypt | trim }}' > shared/private_dot_token.tmpl &&
+> ln -s ../../../../../shared/private_dot_token.tmpl types/workstation/users/dev/home/private_dot_token.tmpl &&
 > echo y | sudo mothership commit "Share a token" >/dev/null
 $ yes | sudo mothership trust machine workstation dev="$(sudo grep -o 'age1.*' /home/dev/.config/mothership/key.txt)" 
 Re-encrypting:

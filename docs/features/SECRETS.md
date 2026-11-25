@@ -47,8 +47,8 @@ Giving a new reader a copy means opening the file key first, so only a reader ca
 
 ### Two forms of secret
 
-- **A whole file**, such as an SSH key or a network connection. It sits encrypted where the file belongs: as a `.age` file under the type's `etc/`, or in a home with chezmoi's `encrypted_` prefix. Apply writes it decrypted, readable by its owner only.
-- **A value inside a config file**, such as an API key in an app's settings. The value sits in a `.secrets/` folder, put there by review, or by `mothership secret` for a service, and the config file is a template that inserts it when apply writes the file.
+- **A whole file**, such as an SSH key or a network connection. It sits encrypted where the file belongs: as a `.age` file under the type's `etc/`, or in a home with chezmoi's `encrypted_` prefix. Apply writes it decrypted, readable by its owner only.: the fleet doesn't load a home's `encrypted_` file whose name lacks `private_`.
+- **A value inside a config file**, such as an API key in an app's settings. The value sits in a `.secrets/` folder, put there by review, or by `mothership secret` for a service, and the config file is a template that inserts it when apply writes the file. The template's name needs `private_` too, or the fleet doesn't load.
 
 A secret several homes or types need sits once in `shared/.secrets/`, and each place that needs it links to it. It's encrypted for every list that links it. A new link opens nothing by itself: the next command that encrypts the secret again asks before adding the new list.
 

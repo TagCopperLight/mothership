@@ -100,7 +100,37 @@ pub fn check(fleet_dir: &Path) -> Result<()> {
             );
         }
     }
+    for home in all(fleet_dir)? {
+        let source = home.source(fleet_dir);
+        for rel in walk::files(&source)? {
+            check_private(fleet_dir, &source, &rel)?;
+        }
+    }
     Ok(())
+}
+
+fn check_private(fleet_dir: &Path, source: &Path, rel: &Path) -> Result<()> {
+    if rel.starts_with(SECRETS) {
+        return Ok(());
+    }
+    let target = chezmoi::target_of(rel);
+    if target.private {
+        return Ok(());
+    }
+    let path = source.join(rel);
+    let what = if target.encrypted {
+        "is a secret"
+    } else if path.to_string_lossy().ends_with(chezmoi::TEMPLATE)
+        && String::from_utf8_lossy(&fs::read(&path)?).contains(&format!("{SECRETS}/"))
+    {
+        "reads a secret"
+    } else {
+        return Ok(());
+    };
+    bail!(
+        "{} {what}, so only its owner may read it: add `private_` to its name",
+        path.strip_prefix(fleet_dir).unwrap_or(&path).display()
+    )
 }
 
 pub fn owners(fleet_dir: &Path, source: &Path) -> Result<Vec<Reader>> {
@@ -151,8 +181,7 @@ pub fn shown(rel: &Path) -> String {
     if rel.starts_with(SECRETS) {
         return rel.display().to_string();
     }
-    let (path, _) = chezmoi::target_of(rel);
-    format!("~/{}", path.display())
+    format!("~/{}", chezmoi::target_of(rel).path.display())
 }
 
 pub fn target(fleet_dir: &Path, link: &Path) -> Result<PathBuf> {

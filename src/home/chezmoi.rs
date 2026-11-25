@@ -213,7 +213,7 @@ const ATTRIBUTES: [&str; 11] = [
     "modify_",
     "remove_",
     ENCRYPTED,
-    "private_",
+    PRIVATE,
     "readonly_",
     "empty_",
     "executable_",
@@ -222,13 +222,23 @@ const ATTRIBUTES: [&str; 11] = [
     "symlink_",
 ];
 
-pub fn target_of(source: &Path) -> (PathBuf, bool) {
+#[derive(Debug, PartialEq)]
+pub struct Target {
+    pub path: PathBuf,
+    pub encrypted: bool,
+    pub private: bool,
+}
+
+pub fn target_of(source: &Path) -> Target {
     let mut parts: Vec<String> = Vec::new();
     let mut encrypted = false;
+    let mut private = false;
     for part in source.iter() {
         let mut name = part.to_string_lossy().into_owned();
+        private = false;
         while let Some(rest) = ATTRIBUTES.iter().find_map(|a| name.strip_prefix(a)) {
             encrypted |= name.starts_with(ENCRYPTED);
+            private |= name.starts_with(PRIVATE);
             name = rest.to_owned();
         }
         parts.push(match name.strip_prefix("dot_") {
@@ -244,12 +254,17 @@ pub fn target_of(source: &Path) -> (PathBuf, bool) {
             *last = rest.to_owned();
         }
     }
-    (parts.iter().collect(), encrypted)
+    Target {
+        path: parts.iter().collect(),
+        encrypted,
+        private,
+    }
 }
 
 const CONFIG: &str = ".config/chezmoi/chezmoi.toml";
 const STATE: &str = ".config/chezmoi/chezmoistate.boltdb";
 pub const ENCRYPTED: &str = "encrypted_";
+const PRIVATE: &str = "private_";
 pub const TEMPLATE: &str = ".tmpl";
 
 #[cfg(test)]

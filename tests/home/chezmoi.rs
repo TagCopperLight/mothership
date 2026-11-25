@@ -43,11 +43,19 @@ fn a_source_name_decodes_to_its_target() {
         target_of(Path::new(
             "private_dot_ssh/encrypted_private_id_ed25519.age"
         )),
-        (PathBuf::from(".ssh/id_ed25519"), true)
+        Target {
+            path: PathBuf::from(".ssh/id_ed25519"),
+            encrypted: true,
+            private: true,
+        }
     );
     assert_eq!(
-        target_of(Path::new("dot_config/app/settings.json.tmpl")),
-        (PathBuf::from(".config/app/settings.json"), false)
+        target_of(Path::new("private_dot_config/app/settings.json.tmpl")),
+        Target {
+            path: PathBuf::from(".config/app/settings.json"),
+            encrypted: false,
+            private: false,
+        }
     );
 }
 
