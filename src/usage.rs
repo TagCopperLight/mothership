@@ -21,7 +21,7 @@ const COMMANDS: [(&str, &str, &str); 10] = [
     (
         "secret",
         " <service> <name>",
-        "encrypt a value into a service's secrets",
+        "encrypt a service's secret, or ghcr-token alone",
     ),
     (
         "install",

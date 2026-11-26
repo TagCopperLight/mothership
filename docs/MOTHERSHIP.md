@@ -67,7 +67,7 @@ All of them run with `sudo`, except `version`.
 | `commit <message>` | Signs and pushes your own edits in the fleet's folder. It lists the files they change, so you read the edits in a git app first. |
 | `trust <host> <type> [--option <option>]... <name>=<key>...` | Writes a machine's file in `machines/` with its keys, encrypts again the secrets those keys open, adds the keys to GitHub, and prints the code to type on that machine. |
 | `retire <host>` | Deletes a machine's file, removes its keys from GitHub, and lists the secrets you should change. |
-| `secret <service> <name>` | Reads a value and encrypts it into the service's secrets, for the type's root keys and the recovery key. `<service>` may be `<type>/<service>`. |
+| `secret <service> <name>` | Reads a value and encrypts it into the service's secrets, for the type's root keys and the recovery key. `<service>` may be `<type>/<service>`. `secret [<type>/]ghcr-token` encrypts the token that pulls the type's private images from ghcr.io. |
 | `recovery` | Asks for the fleet's recovery key, replaces it and encrypts every secret again. |
 | `version` | Prints mothership's version. |
 

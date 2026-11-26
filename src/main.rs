@@ -155,7 +155,8 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             trust::trust(host, type_name, options, keys)
         }
         (Command::Retire, [host]) => trust::retire(host),
-        (Command::Secret, [service, name]) => fleet::edit::secret::run(service, name),
+        (Command::Secret, [service, name]) => fleet::edit::secret::run(service, Some(name)),
+        (Command::Secret, [token]) => fleet::edit::secret::run(token, None),
         _ => bail!("usage: {}", usage::of(name)),
     }
 }

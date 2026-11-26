@@ -58,3 +58,17 @@ fn a_secret_names_a_service_the_fleet_has() {
     assert!(Wanted::parse("app", "../key", "server").is_err());
     assert!(Wanted::parse("../app", "key", "server").is_err());
 }
+
+#[test]
+fn the_registry_token_is_for_the_types_root_list_and_the_recovery_key() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = age::x25519::Identity::generate();
+    let (fleet, recovery) = fleet(dir.path(), &root);
+    let wanted = Wanted::token("server/ghcr-token", "workstation").unwrap();
+    set(&fleet, &wanted, &mut Prompt::answering("ghp_x\n")).unwrap();
+    let path = dir.path().join("types/server/services/ghcr-token.age");
+    assert_eq!(opens(&root, &path), "ghp_x");
+    assert_eq!(opens(&recovery, &path), "ghp_x");
+    assert!(Wanted::token("server/app", "server").is_err());
+    assert!(Wanted::token("../x/ghcr-token", "server").is_err());
+}

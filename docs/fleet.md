@@ -64,7 +64,7 @@ From the Arch ISO, install also partitions and encrypts the disk:
 
 ## Services
 
-On a server, the account `services` runs each service with its own rootless Docker, and keeps its data in `/srv/<name>/`. Data put there before a service first starts, such as data moved from another machine, becomes the account's. A service folder holds a `compose.yaml` without `image:` lines, the files it mounts, `*.tmpl` templates that read `{{ secret "name" }}`, and `secrets/*.age`, encrypted for the type's root keys, which containers read in `/run/secrets/`. Private images on ghcr.io need `services/ghcr-token.age`, a classic token with only `read:packages`, from which mothership writes Docker's login file. `service.toml` pins each container's image:
+On a server, the account `services` runs each service with its own rootless Docker, and keeps its data in `/srv/<name>/`. Data put there before a service first starts, such as data moved from another machine, becomes the account's. A service folder holds a `compose.yaml` without `image:` lines, the files it mounts, `*.tmpl` templates that read `{{ secret "name" }}`, and `secrets/*.age`, encrypted for the type's root keys, which containers read in `/run/secrets/`. Private images on ghcr.io need `services/ghcr-token.age`, a classic token with only `read:packages`, which `mothership secret [<type>/]ghcr-token` encrypts and from which mothership writes Docker's login file. `service.toml` pins each container's image:
 
 ```toml
 [images.app]
