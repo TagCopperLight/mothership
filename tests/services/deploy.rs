@@ -211,6 +211,29 @@ fn a_new_service_gets_its_files_and_its_data_folder_then_starts() {
 }
 
 #[test]
+fn a_first_start_keeps_the_data_already_in_its_folder() {
+    let mut world = World::new();
+    let engine = Fake::default();
+    let data = world.places.data("app");
+    fs::create_dir_all(data.join("db")).unwrap();
+    fs::write(data.join("db/main.sqlite"), "moved").unwrap();
+    std::os::unix::fs::symlink("/etc/hostname", data.join("db/elsewhere")).unwrap();
+    fs::set_permissions(&data, fs::Permissions::from_mode(0o755)).unwrap();
+    let (_, outcome) = world.deploy(&engine, &world.pin("1.0.0", A), None);
+    assert_eq!(outcome, Outcome::Started);
+    assert_eq!(
+        fs::read_to_string(data.join("db/main.sqlite")).unwrap(),
+        "moved"
+    );
+    assert!(
+        fs::symlink_metadata(data.join("db/elsewhere"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(fs::metadata(&data).unwrap().mode() & 0o777, 0o700);
+}
+
+#[test]
 fn an_update_snapshots_the_data_and_a_failed_one_rolls_back_for_good() {
     let mut world = World::new();
     let engine = Fake::default();

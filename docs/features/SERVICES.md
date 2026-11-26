@@ -96,7 +96,7 @@ A container gets its secrets in one of three ways:
 
 ### Data
 
-Each service keeps its data in `/srv/<name>/`, which mothership creates before the service first starts. No Docker command can touch it.
+Each service keeps its data in `/srv/<name>/`, which mothership creates before the service first starts. When the folder is already there, such as data moved from another machine, mothership gives it and everything in it to `services`, without following links. No Docker command can touch it.
 
 Copying that folder while the service runs can give a broken copy. A database spreads each change over several files and writes them one after the other, so a copy taken in the middle holds half a change, and the database may refuse to open it. Two ways give a copy that works:
 

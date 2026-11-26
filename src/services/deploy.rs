@@ -290,18 +290,33 @@ pub fn binding(places: &Places, name: &str) -> Result<Bindings> {
     })
 }
 
-fn data_dir(places: &Places, name: &str) -> Result<PathBuf> {
+fn data_dir(places: &Places, name: &str, first: bool) -> Result<PathBuf> {
     let data = places.data(name);
-    if fs::symlink_metadata(&data).is_err() {
-        fs::create_dir_all(&places.data)?;
-        fs::create_dir(&data).with_context(|| format!("creating {}", data.display()))?;
-        std::os::unix::fs::chown(&data, Some(places.owner.0), Some(places.owner.1))
-            .with_context(|| format!("giving {} to the services account", data.display()))?;
-        fs::set_permissions(&data, fs::Permissions::from_mode(0o700))?;
-    } else if fs::symlink_metadata(&data)?.is_symlink() {
-        bail!("{} is a link", data.display());
+    match fs::symlink_metadata(&data) {
+        Err(_) => {
+            fs::create_dir_all(&places.data)?;
+            fs::create_dir(&data).with_context(|| format!("creating {}", data.display()))?;
+        }
+        Ok(meta) if meta.is_symlink() => bail!("{} is a link", data.display()),
+        Ok(_) if first => give_tree(&data, places.owner)?,
+        Ok(_) => return Ok(data),
     }
+    std::os::unix::fs::lchown(&data, Some(places.owner.0), Some(places.owner.1))
+        .with_context(|| format!("giving {} to the services account", data.display()))?;
+    fs::set_permissions(&data, fs::Permissions::from_mode(0o700))?;
     Ok(data)
+}
+
+fn give_tree(dir: &Path, (uid, gid): (u32, u32)) -> Result<()> {
+    for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let path = entry?.path();
+        std::os::unix::fs::lchown(&path, Some(uid), Some(gid))
+            .with_context(|| format!("giving {} to the services account", path.display()))?;
+        if fs::symlink_metadata(&path)?.is_dir() {
+            give_tree(&path, (uid, gid))?;
+        }
+    }
+    Ok(())
 }
 
 pub fn env(rendered: &Rendered) -> Vec<(String, String)> {
@@ -581,7 +596,7 @@ fn prepare(
     let service = wanted.service;
     let files = write_files(places, wanted, entry)?;
     let images = write_override(places, service, &service.pins(), Stage::Checked)?;
-    let data = data_dir(places, &service.name)?;
+    let data = data_dir(places, &service.name, entry.running.is_empty())?;
     let shown = || format!("checking {}/{COMPOSE}", service.dir.display());
     let written = project.dir.join(COMPOSE);
     let text =

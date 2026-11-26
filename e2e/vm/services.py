@@ -459,7 +459,10 @@ sudo ip link set {STAND_IN} up
     apply = lambda: vm.run("sudo mothership apply", input="y\n" * 6, check=False, timeout=1800)
     data = partial(data_of, vm)
 
+    vm.run("sudo install -D -m 644 /dev/null /srv/extra/moved/file")
     expect(apply(), "Started app", "Started extra")
+    expect(vm.run("sudo stat -c '%U %a' /srv/extra /srv/extra/moved/file"),
+           "services 700", "services 644")
     assert data("app", "version") == "1.0.0"
     assert data("app", "token") == f"{TOKEN}\n", "the secret reaches /run/secrets/token"
     assert data("app", "conf") == f"token = {TOKEN}\n", "the template is filled in"
