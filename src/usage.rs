@@ -83,12 +83,13 @@ pub fn fish() -> String {
     let mut lines = vec!["complete -c mothership -f".to_owned()];
     for (name, _, about) in COMMANDS {
         lines.push(format!(
-            "complete -c mothership -n __fish_use_subcommand -a {name} -d '{about}'"
+            "complete -c mothership -n __fish_use_subcommand -a {name} -d {}",
+            quoted(about)
         ));
     }
     for (flag, value) in INSTALL_FLAGS {
         let values = match value.contains('|') {
-            true => format!(" -a '{}'", value.replace('|', " ")),
+            true => format!(" -a {}", quoted(&value.replace('|', " "))),
             false => String::new(),
         };
         lines.push(format!(
@@ -96,6 +97,10 @@ pub fn fish() -> String {
         ));
     }
     lines.join("\n") + "\n"
+}
+
+fn quoted(text: &str) -> String {
+    format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
 pub fn keep_completion() -> Result<()> {

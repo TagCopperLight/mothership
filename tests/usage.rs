@@ -19,4 +19,5 @@ fn fish_completes_commands_and_install_values() {
     assert!(fish.contains("-n __fish_use_subcommand -a review -d"));
     assert!(fish.contains("-l layout -x -a 'wipe beside'"));
     assert!(fish.contains("-l fleet -x\n"));
+    assert!(fish.contains("-d 'go through this machine\\'s changes'"));
 }
